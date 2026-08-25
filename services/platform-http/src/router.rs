@@ -19,7 +19,7 @@ use axum::Router;
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
 use galaxie_platform_conta::usuario_da_sessao;
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
-use galaxie_platform_identity::{EstadoOrg, OrgId, Papel};
+use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, UserId};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
@@ -103,6 +103,24 @@ fn papel_str(papel: &Papel) -> &'static str {
     }
 }
 
+/// Inverso de [`papel_str`] — a ALLOWLIST de papéis que o cliente pode ESCREVER (`PATCH` papel). Fora
+/// dela ⇒ `None` (o handler ⇒ 400): o servidor não aceita um papel que não conhece (nem "staff" nem
+/// um valor forjado). `match` exaustivo — papel novo no domínio obriga a decidir se é escrevível.
+fn papel_de_str(s: &str) -> Option<Papel> {
+    match s {
+        "member" => Some(Papel::Member),
+        "org_admin" => Some(Papel::OrgAdmin),
+        _ => None,
+    }
+}
+
+/// Corpo do `PATCH /orgs/{org}/membros/{uid}`: só o papel novo. Campo faltando/tipo errado ⇒ falha
+/// de desserialização ⇒ 400 (o handler não adivinha).
+#[derive(serde::Deserialize)]
+struct MudarPapelReq {
+    papel: String,
+}
+
 /// O membro como sai no fio (contrato §4.3: `{ uid, nome, email, papel }`). DTO na borda (com
 /// `serde`) — o tipo de domínio [`Membro`] fica serde-free. `serde_json` cuida do escaping de
 /// `nome`/`email` (dado de usuário) — por isso não é hand-roll como o corpo de erro.
@@ -155,6 +173,94 @@ async fn listar_membros(
         Ok(membros) => {
             let dto: Vec<MembroDto> = membros.iter().map(MembroDto::from).collect();
             let corpo = serde_json::to_string(&dto).expect("Vec<MembroDto> serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
+/// Carrega o `Org` e AUTORIZA a `acao` sobre ele — o pré-âmbulo comum das rotas org-scoped (mesma
+/// ordem visibilidade→suspensão→papel do `listar_membros`). `Ok` = autorizado; `Err(resp)` = a
+/// resposta pronta (404/403/`org_suspensa`/500) pra o handler devolver.
+async fn org_autorizada(
+    estado: &EstadoBorda,
+    sessao: &galaxie_platform_identity::Sessao,
+    acao: &AcaoAdminOrg,
+    org_id: &OrgId,
+) -> Result<(), Response> {
+    let org = match estado.orgs.buscar(org_id) {
+        Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
+        Ok(None) => return Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
+        Ok(Some(o)) => o,
+    };
+    match autorizar_acao_admin(sessao, acao, &org) {
+        Err(AdminErro::NaoEncontrada) => Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
+        Err(AdminErro::Suspensa) => Err(resposta_de_erro(CodigoErro::OrgSuspensa)),
+        Err(AdminErro::Negado) => Err(resposta_de_erro(CodigoErro::Negado)),
+        Ok(()) => Ok(()),
+    }
+}
+
+/// `DELETE /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — remove um membro. Autz: só `org_admin`
+/// da org (visibilidade→suspensão→papel). `204` se removeu; `404` se o `uid` não era membro (a admin
+/// PODE ver os membros, então não é oráculo).
+///
+/// ⚠️⚠️ **ESTA REMOÇÃO NÃO INVALIDA AS SESSÕES DO ALVO** — o acesso persiste até a sessão expirar
+/// (até **12 h**, `TTL_SESSAO_SEG`). **Enquanto o #1545 não landar, remover é REGISTRO, não
+/// REVOGAÇÃO** (achado do @Altair na review; a invalidação é a fatia #1545, separada de propósito —
+/// `Principal`/`Escopo` estão congelados na sessão, então cortar exige revogar, não checar por
+/// request). Não é silêncio: é ausência DECLARADA (regra do #1562/#1546). Quando o #1545 fiar
+/// `invalidar_do_usuario` do alvo, o botão passa a cortar de verdade.
+async fn remover_membro(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+    Path((org, uid)): Path<(String, String)>,
+) -> Response {
+    let org_id = OrgId(org);
+    if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id).await {
+        return resp;
+    }
+    match estado.membros.remover(&org_id, &UserId(uid)) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(true) => Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .expect("resposta 204 é sempre construível"),
+        Ok(false) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
+    }
+}
+
+/// `PATCH /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — muda o papel. Autz igual; papel fora da
+/// allowlist ⇒ `400`; `uid` não-membro ⇒ `404`; senão `200` com o membro atualizado.
+///
+/// ⚠️⚠️ **MUDAR O PAPEL NÃO REVOGA A SESSÃO ATUAL DO ALVO** — o papel novo só vale na autz a partir
+/// do PRÓXIMO login dele (o `Principal`/`Escopo` da sessão viva está congelado). **Enquanto o #1545
+/// não landar, rebaixar/promover é REGISTRO, não efeito imediato** — mesma janela declarada do
+/// `remover_membro`. O #1545 fecha os dois: invalida a sessão do alvo na escrita.
+async fn mudar_papel_membro(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+    Path((org, uid)): Path<(String, String)>,
+    corpo: axum::body::Bytes,
+) -> Response {
+    let org_id = OrgId(org);
+    // Autz ANTES de processar o corpo: quem não pode não tem o payload lido/aplicado.
+    if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id).await {
+        return resp;
+    }
+    // Papel do corpo — allowlist (fora dela = 400, nunca "papel novo silencioso").
+    let papel = match serde_json::from_slice::<MudarPapelReq>(&corpo).ok().and_then(|r| papel_de_str(&r.papel)) {
+        Some(p) => p,
+        None => return resposta_de_erro(CodigoErro::PayloadInvalido),
+    };
+    match estado.membros.mudar_papel(&org_id, &UserId(uid), papel) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(None) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
+        Ok(Some(m)) => {
+            let corpo = serde_json::to_string(&MembroDto::from(&m)).expect("MembroDto serializa sempre");
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -340,6 +446,10 @@ pub fn rotas(estado: EstadoBorda) -> Router {
         .route("/api/v1/me", get(get_me))
         .route("/api/v1/me/orgs", get(listar_minhas_orgs))
         .route("/api/v1/orgs/{org}/membros", get(listar_membros))
+        .route(
+            "/api/v1/orgs/{org}/membros/{uid}",
+            delete(remover_membro).patch(mudar_papel_membro),
+        )
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
         .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
@@ -960,6 +1070,108 @@ mod tests {
             sem_perfis(),
         );
         (estado, cookie)
+    }
+
+    /// Request com MÉTODO + corpo (as escritas: DELETE/PATCH). Devolve status + corpo.
+    async fn requisicao(estado: EstadoBorda, metodo: &str, caminho: &str, cookie: &str, corpo: &str) -> (StatusCode, Vec<u8>) {
+        let req = Request::builder()
+            .method(metodo)
+            .uri(caminho)
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(corpo.to_owned()))
+            .unwrap();
+        let resp = rotas(estado).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let corpo = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+        (status, corpo)
+    }
+
+    fn borda_acme_com_u2(papel_u2: Papel) -> (EstadoBorda, String) {
+        borda_membros(
+            admin_de("acme"),
+            vec![org_teste("acme")],
+            vec![
+                (OrgId("acme".into()), membro_teste("adm", Papel::OrgAdmin)),
+                (OrgId("acme".into()), membro_teste("u2", papel_u2)),
+            ],
+        )
+    }
+
+    // #1505 escrita — DELETE remove o membro (204) e ele SOME da lista.
+    #[tokio::test]
+    async fn remover_membro_204_e_some_da_lista() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "removeu ⇒ 204");
+        let (s2, corpo) = requisicao(estado, "GET", "/api/v1/orgs/acme/membros", &cookie, "").await;
+        assert_eq!(s2, StatusCode::OK);
+        assert!(!String::from_utf8_lossy(&corpo).contains("\"u2\""), "u2 saiu da lista: {}", String::from_utf8_lossy(&corpo));
+    }
+
+    // DELETE de um uid que NÃO é membro ⇒ 404 (à admin, que pode ver — não é oráculo).
+    #[tokio::test]
+    async fn remover_nao_membro_e_404() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/fantasma", &cookie, "").await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+
+    // PATCH muda o papel (200 + membro atualizado) e a mudança PERSISTE.
+    #[tokio::test]
+    async fn mudar_papel_200_e_persiste() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, corpo) = requisicao(estado.clone(), "PATCH", "/api/v1/orgs/acme/membros/u2", &cookie, r#"{"papel":"org_admin"}"#).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(String::from_utf8_lossy(&corpo).contains("org_admin"), "devolve o membro com papel novo");
+        let (_, lista) = requisicao(estado, "GET", "/api/v1/orgs/acme/membros", &cookie, "").await;
+        let json: serde_json::Value = serde_json::from_slice(&lista).unwrap();
+        let u2 = json.as_array().unwrap().iter().find(|m| m["uid"] == "u2").unwrap();
+        assert_eq!(u2["papel"], "org_admin", "a mudança persistiu no store");
+    }
+
+    // PATCH de um uid que NÃO é membro ⇒ 404 (Ok(None) do store).
+    #[tokio::test]
+    async fn mudar_papel_de_nao_membro_e_404() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado, "PATCH", "/api/v1/orgs/acme/membros/fantasma", &cookie, r#"{"papel":"org_admin"}"#).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+
+    // Papel FORA da allowlist ⇒ 400 (não aceita "staff" nem valor forjado).
+    #[tokio::test]
+    async fn mudar_papel_fora_da_allowlist_e_400() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado, "PATCH", "/api/v1/orgs/acme/membros/u2", &cookie, r#"{"papel":"staff"}"#).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    // Escrita de quem NÃO é admin da org ⇒ 403 (default-deny; o member não administra).
+    #[tokio::test]
+    async fn escrita_de_nao_admin_e_403() {
+        let (estado, cookie) = borda_membros(
+            membro_de("acme"), // sessão de MEMBER, não admin
+            vec![org_teste("acme")],
+            vec![(OrgId("acme".into()), membro_teste("u2", Papel::Member))],
+        );
+        let (s, _) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+    }
+
+    // Escrita em org SUSPENSA ⇒ 403 org_suspensa (o enforcement #1544 vale nas escritas também,
+    // porque passa pelo MESMO `autorizar_acao_admin`).
+    #[tokio::test]
+    async fn escrita_em_org_suspensa_e_403_org_suspensa() {
+        let mut org = org_teste("acme");
+        org.suspender();
+        let (estado, cookie) = borda_membros(
+            admin_de("acme"),
+            vec![org],
+            vec![(OrgId("acme".into()), membro_teste("u2", Papel::Member))],
+        );
+        let (s, corpo) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+        assert!(String::from_utf8_lossy(&corpo).contains("org_suspensa"));
     }
 
     /// Happy path: org_admin da própria org → 200 com a projeção §4.3 `[{uid,nome,email,papel}]`,
