@@ -5,17 +5,18 @@
 # abaixo como comentário e viram card próprio — corrigir aqui sem corrigir no
 # host recriaria a deriva invisível do #1303 com aparência de resolvida.
 #
-# ⚠️ `image: traefik:latest` NÃO é pin. O que roda hoje é **v3.7.10** (medido:
-#    `docker exec traefik-traefik-1 traefik version`). Um `:latest` reinicia
-#    para uma versão diferente sem ninguém pedir. Fica registrado como está,
-#    porque é a verdade; o pin é mudança de produção e vai em card próprio.
+# ✅ PINADO em **v3.7.10** no host E aqui, juntos (#1480, altair 2026-08-25).
+#    Pin NÃO foi upgrade: `traefik:v3.7.10` e `traefik:latest` resolviam para a
+#    MESMA imagem local (`9c3b91d5fb77`) no momento do pin, então o container foi
+#    recriado byte-idêntico. Versão antes e depois: 3.7.10. Subir versão é outro
+#    card, com a sua própria janela.
 #
 # ⚠️ `network_mode: host` — por isso este serviço não tem labels de roteamento;
 #    ele É a borda. As rotas vêm dos labels dos OUTROS containers, via
 #    `providers.docker`.
 services:
   traefik:
-    image: traefik:latest
+    image: traefik:v3.7.10
     restart: unless-stopped
     network_mode: host
     command:
