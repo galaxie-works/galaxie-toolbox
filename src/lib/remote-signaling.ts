@@ -157,8 +157,13 @@ export interface SinalizadorS0 {
    * um atendimento é o mesmo que cair.
    *
    * A resposta chega pelo `onIceServersRenovados`, não como retorno: o servidor
-   * pode demorar ou nunca responder (é aí que o aviso de `devoAvisar` entra), e
-   * uma `Promise` pendurada esconderia isso do agendador.
+   * pode demorar ou nunca responder, e uma `Promise` pendurada esconderia isso
+   * de quem espera.
+   *
+   * **Quem chama é o Rust, não a tela** (desenho do @Altair no card): o relógio
+   * da credencial vive no `RelayState`, que é quem detém a conexão e sabe quando
+   * ela morre. Este método é a *busca* — o FE só a executa porque o socket de
+   * signaling é dele, e some quando o #1129 mover o cliente pro Rust.
    */
   renovarIceServers(): void;
   /** Fecha o WS. */
