@@ -23,7 +23,7 @@ use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
 
-use crate::erro::resposta_de_erro;
+use crate::erro::{resposta_de_erro, resposta_de_falha, Visibilidade};
 use crate::sessao::{EstadoBorda, SessaoAtual, SessaoOculta};
 
 /// Fallback do `Router` — a peça que o @Altair **travou** para a fatia 2. Sem ele, uma rota
@@ -119,18 +119,6 @@ impl<'a> From<&'a Membro> for MembroDto<'a> {
     }
 }
 
-/// `500` de armazém indisponível numa superfície VISÍVEL (`/orgs/{org}`). Falha de INFRA, não erro
-/// de contrato — segue o formato `{"erro":...}` por consistência, mas fica fora do `CodigoErro`
-/// (que é 4xx de cliente). ⚠️ Em superfície OCULTA (`/admin/*`) a falha de store sai pelo **mesmo
-/// 404**, não por aqui (regra do @Altair) — isso entra quando o `/admin/orgs` ganhar store real.
-fn resposta_indisponivel() -> Response {
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"erro":"indisponivel"}"#))
-        .expect("resposta 500 é sempre construível")
-}
-
 /// `GET /api/v1/orgs/{org}/membros` (contrato §4.3) — lista os membros da org.
 ///
 /// Ordem que É a segurança (fundação #1469): **404 antes de 403**. Carrega o `Org` (o
@@ -147,7 +135,7 @@ async fn listar_membros(
 
     // (1) Carrega o Org pra autz. Infra caiu ⇒ 500 (superfície visível). NÃO existe ⇒ 404.
     let org = match estado.orgs.buscar(&org_id) {
-        Err(ErroArmazem::Indisponivel) => return resposta_indisponivel(),
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
         Ok(None) => return resposta_de_erro(CodigoErro::NaoEncontrado),
         Ok(Some(o)) => o,
     };
@@ -161,7 +149,7 @@ async fn listar_membros(
 
     // (3) Dados. Infra caiu ⇒ 500; senão 200 com a projeção do contrato.
     match estado.membros.listar(&org_id) {
-        Err(ErroArmazem::Indisponivel) => resposta_indisponivel(),
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
         Ok(membros) => {
             let dto: Vec<MembroDto> = membros.iter().map(MembroDto::from).collect();
             let corpo = serde_json::to_string(&dto).expect("Vec<MembroDto> serializa sempre");
