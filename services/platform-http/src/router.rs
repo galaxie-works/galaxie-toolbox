@@ -19,6 +19,7 @@ use axum::Router;
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
 use galaxie_platform_conta::usuario_da_sessao;
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
+use galaxie_platform_identity::sessao::ArmazemSessao;
 use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, UserId};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
@@ -208,27 +209,36 @@ async fn org_autorizada(
 /// da org (visibilidade→suspensão→papel). `204` se removeu; `404` se o `uid` não era membro (a admin
 /// PODE ver os membros, então não é oráculo).
 ///
-/// ⚠️⚠️ **ESTA REMOÇÃO NÃO INVALIDA AS SESSÕES DO ALVO** — o acesso persiste até a sessão expirar
-/// (até **12 h**, `TTL_SESSAO_SEG`). **Enquanto o #1545 não landar, remover é REGISTRO, não
-/// REVOGAÇÃO** (achado do @Altair na review; a invalidação é a fatia #1545, separada de propósito —
-/// `Principal`/`Escopo` estão congelados na sessão, então cortar exige revogar, não checar por
-/// request). Não é silêncio: é ausência DECLARADA (regra do #1562/#1546). Quando o #1545 fiar
-/// `invalidar_do_usuario` do alvo, o botão passa a cortar de verdade.
+/// 🔑 **A remoção REVOGA o acesso NA HORA (#1545):** ao remover, invalida TODAS as sessões vivas do
+/// alvo no servidor — o botão CORTA, não só registra. `Principal`/`Escopo` estão congelados na sessão,
+/// então cortar exige REVOGAR (não dá pra checar por request como a suspensão). ⚠️ Colateral NOMEADO
+/// e aceito (@Altair): invalidar todas as sessões desloga o alvo das OUTRAS orgs também — sobre-revogar
+/// é o lado seguro (o custo é relogar; revogação cirúrgica exigiria mutar sessão viva, mecanismo novo
+/// pra ganho pequeno). Só revoga se REMOVEU de fato (não em não-membro).
 async fn remover_membro(
     State(estado): State<EstadoBorda>,
     SessaoAtual(sessao): SessaoAtual,
     Path((org, uid)): Path<(String, String)>,
 ) -> Response {
     let org_id = OrgId(org);
+    let alvo = UserId(uid);
     if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id).await {
         return resp;
     }
-    match estado.membros.remover(&org_id, &UserId(uid)) {
+    match estado.membros.remover(&org_id, &alvo) {
         Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        Ok(true) => Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(Body::empty())
-            .expect("resposta 204 é sempre construível"),
+        Ok(true) => {
+            // #1545: revoga NA HORA — mata todas as sessões do alvo (colateral aceito acima).
+            estado
+                .armazem
+                .lock()
+                .expect("armazém de sessão não deve estar envenenado")
+                .invalidar_do_usuario(&alvo);
+            Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(Body::empty())
+                .expect("resposta 204 é sempre construível")
+        }
         Ok(false) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
     }
 }
@@ -236,10 +246,10 @@ async fn remover_membro(
 /// `PATCH /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — muda o papel. Autz igual; papel fora da
 /// allowlist ⇒ `400`; `uid` não-membro ⇒ `404`; senão `200` com o membro atualizado.
 ///
-/// ⚠️⚠️ **MUDAR O PAPEL NÃO REVOGA A SESSÃO ATUAL DO ALVO** — o papel novo só vale na autz a partir
-/// do PRÓXIMO login dele (o `Principal`/`Escopo` da sessão viva está congelado). **Enquanto o #1545
-/// não landar, rebaixar/promover é REGISTRO, não efeito imediato** — mesma janela declarada do
-/// `remover_membro`. O #1545 fecha os dois: invalida a sessão do alvo na escrita.
+/// 🔑 **Mudar o papel REVOGA a sessão do alvo NA HORA (#1545):** como `Principal`/`Escopo` estão
+/// congelados na sessão, o papel novo não valeria até o próximo login — então a escrita invalida as
+/// sessões vivas do alvo, forçando o relogin que carrega o papel novo. Mesmo colateral aceito do
+/// `remover` (desloga das outras orgs). Só revoga se a mudança ACONTECEU (não em não-membro).
 async fn mudar_papel_membro(
     State(estado): State<EstadoBorda>,
     SessaoAtual(sessao): SessaoAtual,
@@ -256,10 +266,17 @@ async fn mudar_papel_membro(
         Some(p) => p,
         None => return resposta_de_erro(CodigoErro::PayloadInvalido),
     };
-    match estado.membros.mudar_papel(&org_id, &UserId(uid), papel) {
+    let alvo = UserId(uid);
+    match estado.membros.mudar_papel(&org_id, &alvo, papel) {
         Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
         Ok(None) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
         Ok(Some(m)) => {
+            // #1545: revoga NA HORA — o papel novo vale no relogin forçado.
+            estado
+                .armazem
+                .lock()
+                .expect("armazém de sessão não deve estar envenenado")
+                .invalidar_do_usuario(&alvo);
             let corpo = serde_json::to_string(&MembroDto::from(&m)).expect("MembroDto serializa sempre");
             Response::builder()
                 .status(StatusCode::OK)
@@ -1172,6 +1189,62 @@ mod tests {
         let (s, corpo) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
         assert_eq!(s, StatusCode::FORBIDDEN);
         assert!(String::from_utf8_lossy(&corpo).contains("org_suspensa"));
+    }
+
+    /// Borda com sessão do ADMIN + sessão VIVA do alvo `u2` (member de acme). Devolve as duas cookies.
+    fn borda_admin_e_alvo() -> (EstadoBorda, String, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let (id_adm, _) = emitir_sessao(&mut armazem, admin_de("acme"), AGORA);
+        let cookie_adm = format!("{NOME_COOKIE_SESSAO}={}", id_adm.0);
+        let sessao_u2 = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u2".into()), org: OrgId("acme".into()) },
+            Escopo::de_orgs([OrgId("acme".into())]),
+        );
+        let (id_u2, _) = emitir_sessao(&mut armazem, sessao_u2, AGORA);
+        let cookie_u2 = format!("{NOME_COOKIE_SESSAO}={}", id_u2.0);
+        let mut orgs = ArmazemOrgMemoria::novo();
+        orgs.inserir(org_teste("acme"));
+        let mut membros = ArmazemMembroMemoria::novo();
+        membros.inserir(OrgId("acme".into()), membro_teste("adm", Papel::OrgAdmin));
+        membros.inserir(OrgId("acme".into()), membro_teste("u2", Papel::Member));
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis());
+        (estado, cookie_adm, cookie_u2)
+    }
+
+    // #1545 — REMOVER revoga a sessão do alvo NA HORA (não em 12h). u2 logado ⇒ /me/orgs 200; admin
+    // remove u2 ⇒ /me/orgs de u2 vira 401. Mutante que pule `invalidar_do_usuario` deixa u2 em 200 ⇒ morre.
+    #[tokio::test]
+    async fn remover_revoga_a_sessao_do_alvo_na_hora() {
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let (antes, ..) = resposta_crua(estado.clone(), &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(antes, StatusCode::OK, "u2 está logado ANTES da remoção");
+        let (del, _) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie_adm, "").await;
+        assert_eq!(del, StatusCode::NO_CONTENT);
+        let (depois, ..) = resposta_crua(estado, &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(depois, StatusCode::UNAUTHORIZED, "a remoção REVOGOU a sessão do u2 imediatamente");
+    }
+
+    // #1545 — MUDAR PAPEL também revoga (força o relogin que carrega o papel novo).
+    #[tokio::test]
+    async fn mudar_papel_revoga_a_sessao_do_alvo() {
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let (antes, ..) = resposta_crua(estado.clone(), &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(antes, StatusCode::OK);
+        let (patch, _) = requisicao(estado.clone(), "PATCH", "/api/v1/orgs/acme/membros/u2", &cookie_adm, r#"{"papel":"org_admin"}"#).await;
+        assert_eq!(patch, StatusCode::OK);
+        let (depois, ..) = resposta_crua(estado, &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(depois, StatusCode::UNAUTHORIZED, "a mudança de papel revogou a sessão do u2");
+    }
+
+    // #1545 — remover NÃO-MEMBRO (404) NÃO revoga ninguém (não invalida quem não removeu).
+    #[tokio::test]
+    async fn remover_nao_membro_nao_revoga() {
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let (del, _) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/fantasma", &cookie_adm, "").await;
+        assert_eq!(del, StatusCode::NOT_FOUND);
+        // u2 (que NÃO foi tocado) segue logado.
+        let (u2, ..) = resposta_crua(estado, &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(u2, StatusCode::OK, "remover fantasma não derruba u2");
     }
 
     /// Happy path: org_admin da própria org → 200 com a projeção §4.3 `[{uid,nome,email,papel}]`,
