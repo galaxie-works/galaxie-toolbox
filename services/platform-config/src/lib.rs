@@ -154,13 +154,22 @@ mod tests {
         }
     }
 
-    // A allowlist é exatamente o conjunto declarado (nem mais, nem menos) — pega uma chave
-    // removida por engano ou uma adicionada sem querer.
+    // A allowlist é fronteira de segurança: TRAVA o conjunto por afirmação positiva, não só
+    // o mecanismo. Acrescentar/remover chave em CHAVES_WEB QUEBRA aqui de propósito — uma pref
+    // de segurança entrando por engano falha, não passa em silêncio (achado da Lúmen no #1471;
+    // o `for k in CHAVES_WEB` anterior era tautológico: `chave_configuravel(k)` É
+    // `CHAVES_WEB.contains(k)` e `k` vinha da própria lista).
     #[test]
-    fn allowlist_e_exatamente_o_conjunto_web() {
-        for k in CHAVES_WEB {
-            assert!(chave_configuravel(k), "{k} devia ser configurável");
-        }
+    fn allowlist_trava_o_conjunto_nao_so_o_mecanismo() {
+        assert_eq!(
+            CHAVES_WEB,
+            &["app.tema", "app.idioma", "app.densidade", "app.notificacoes", "app.tela_inicial"],
+            "mudou a allowlist da web: isto é fronteira de segurança — atualize aqui de propósito"
+        );
+    }
+
+    #[test]
+    fn chave_configuravel_rejeita_prefixo_e_vazio() {
         assert!(!chave_configuravel("app.")); // prefixo não basta
         assert!(!chave_configuravel("")); // vazio nunca
     }
