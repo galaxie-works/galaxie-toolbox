@@ -18,7 +18,7 @@ use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
 use galaxie_platform_conta::usuario_da_sessao;
-use galaxie_platform_config::{configs_do_usuario, ConfigItem};
+use galaxie_platform_config::{configs_do_usuario, ConfigErro, ConfigItem};
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
 use galaxie_platform_identity::sessao::ArmazemSessao;
 use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, UserId};
@@ -421,13 +421,22 @@ async fn get_me_config(State(estado): State<EstadoBorda>, SessaoAtual(sessao): S
         Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
         Ok(p) => p,
     };
-    // O domínio decide (owner-scope/allowlist/validação). `Err(ValorInvalido)` = uma pref gravada não
-    // cabe no tipo da chave = INCONSISTÊNCIA de dado (não falha do cliente): log distinto + 500, como
-    // o `/me` — o cliente não conserta, mas o alerta não pode confundir infra com dado ruim.
+    // O domínio decide (owner-scope/allowlist/validação). A borda NÃO achata as variantes (2 achados
+    // do @Altair na PR #1579): cada uma tem a sua direção segura, e o log NÃO pode afirmar uma causa
+    // pelas três.
     let itens = match configs_do_usuario(&sessao, None, prefs_brutas) {
         Ok(itens) => itens,
-        Err(_e) => {
-            tracing::error!(uid = %uid.0, "GET /me/config: pref inconsistente com a forma da chave (dado, não infra)");
+        // `NaoEncontrado` = owner-scope: config de OUTRO principal. **Hoje LATENTE** (passo `None` como
+        // alvo ⇒ o scope resolve pro próprio e nunca nega), mas a borda PROPAGA o 404 anti-oráculo do
+        // domínio em vez de o converter em 500 — senão, quando `/users/{id}/config` existir, pedir a
+        // config alheia viraria oráculo pela DIFERENÇA de status. Rejeição uniforme, cliente-causada.
+        Err(ConfigErro::NaoEncontrado) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        // As outras = INCONSISTÊNCIA de dado no read path (pref gravada fora do tipo; ou `ChaveNaoPermitida`,
+        // que só o write path emite — inalcançável aqui, mas o `match` é EXAUSTIVO por desenho): o cliente
+        // não conserta ⇒ 500. O log NOMEIA a variante (`erro = ?e`), não afirma UMA causa pelas três
+        // (a lição do "diagnóstico ≠ falha") — e não confunde dado ruim com infra fora.
+        Err(e @ (ConfigErro::ValorInvalido | ConfigErro::ChaveNaoPermitida)) => {
+            tracing::error!(uid = %uid.0, erro = ?e, "GET /me/config: pref inconsistente com o registro (dado, não infra)");
             return resposta_de_falha(Visibilidade::Visivel);
         }
     };
@@ -706,6 +715,33 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "/me/config SOBREVIVE à suspensão (survive-list #1544)");
         let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
         assert_eq!(json.as_array().map(Vec::len), Some(1), "a pref do usuário volta com a org suspensa: {corpo:?}");
+    }
+
+    /// **Achado do @Altair na #1579 (arm de dado-inconsistente).** Pref gravada que NÃO cabe no tipo da
+    /// chave (`app.notificacoes` é `Booleano`, mas o store tem `"sim"`) ⇒ `configs_do_usuario` devolve
+    /// `ValorInvalido` = INCONSISTÊNCIA de DADO (não falha do cliente, não infra) ⇒ a borda responde 500
+    /// e loga a variante nomeada. Guarda a direção segura: dado ruim é 500, não um item ilegal no fio nem
+    /// um panic. (O arm `NaoEncontrado`→404 anti-oráculo é LATENTE via `/me/config` — só o alcança uma
+    /// rota com alvo na path; nasce com o teste dela quando `/users/{id}/config` existir.)
+    #[tokio::test]
+    async fn me_config_pref_inconsistente_da_500() {
+        use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave};
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut prefs = ArmazemPrefMemoria::novo();
+        // `"sim"` não é `"true"`/`"false"`: o construtor de `Booleano` recusa ⇒ `ValorInvalido`.
+        prefs.semear(
+            UserId("u1".into()),
+            vec![("app.notificacoes".into(), "sim".into(), FormaDaChave::Booleano)],
+        );
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), Arc::new(prefs));
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/me/config").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "pref fora do tipo = dado inconsistente ⇒ 500");
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
