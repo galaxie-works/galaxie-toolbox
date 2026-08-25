@@ -32,6 +32,12 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/
 
+# Build do Rust (Cargo) — SEM âncora: pega o target/ de QUALQUER crate, em qualquer
+# profundidade (services/*/target, etc). Antes cada crate carregava o seu .gitignore e
+# um crate novo que esquecesse caía com o target/ inteiro no git (aconteceu no #1543).
+# Rede estrutural: não depende mais de todo crate novo lembrar. (pedido do Altair)
+target/
+
 # Artefatos locais
 *.pdb
 artifacts/qa-visual/
