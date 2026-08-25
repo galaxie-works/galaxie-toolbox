@@ -174,6 +174,58 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     expect(pedidos.some((u) => u.includes("/orgs/"))).toBe(false);
   });
 
+  // ── Domínios: o painel que o contrato v1.3 destravou ─────────────────────
+  // Só `dominios` ganhou shape declarado (`[{ dominio, estado }]`). `settings`
+  // diz "mesmo shape do PATCH" — que não declara corpo — e `assinatura` espelha
+  // um `PUT` cuja shape nasce com o #1470. Por isso só este painel virou tela.
+
+  it("domínios: renderiza os dois estados que o contrato declara", async () => {
+    fetchFalso(() =>
+      json([
+        { dominio: "acme.com", estado: "verificado" },
+        { dominio: "acme.dev", estado: "pendente" },
+      ]),
+    );
+    const { container } = render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+    // Vai pra aba de domínios.
+    const abaDominios = [...container.querySelectorAll("nav button")].find(
+      (b) => b.textContent === t.dominios,
+    );
+    abaDominios?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await waitFor(() => expect(screen.getByText("acme.com")).toBeTruthy());
+    expect(screen.getByText(t.verificado)).toBeTruthy();
+    expect(screen.getByText(t.pendente)).toBeTruthy();
+  });
+
+  it("domínios: lista vazia diz que não há, em vez de tabela vazia", async () => {
+    fetchFalso(() => json([]));
+    const { container } = render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+    [...container.querySelectorAll("nav button")]
+      .find((b) => b.textContent === t.dominios)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await waitFor(() => expect(screen.getByText(t.semDominios)).toBeTruthy());
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("domínios: 403 e 404 seguem DISTINTOS — a máquina de estados é uma só", async () => {
+    // O painel novo reusa `useRecurso`. Se alguém duplicar a máquina, esta
+    // asserção é a que cobra: a distinção 403≠404 tem que valer aqui também,
+    // sem ninguém ter escrito de novo.
+    fetchFalso(() => json({}, 404));
+    const { container } = render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+    [...container.querySelectorAll("nav button")]
+      .find((b) => b.textContent === t.dominios)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await waitFor(() => expect(screen.getByText(t.naoEhSuaOrg)).toBeTruthy());
+    expect(screen.queryByText(t.semPermissao)).toBeNull();
+  });
+
   it("i18n: as duas línguas do DoD renderizam", () => {
     fetchFalso(() => json([]));
     render(<AdminOrgPage idioma="en" org="acme" />);

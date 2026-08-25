@@ -62,6 +62,13 @@ export interface Dicionario {
   // lacuna fechar; até lá a tela diz o que não sabe, em vez de eu inventar.
   orgIndefinida: string;
   orgIndefinidaDetalhe: string;
+  // #1490 fatia 5 — painel de domínios (contrato v1.3). `verificado`/`pendente`
+  // são os DOIS valores que o doc declara; nomear os dois aqui é o que impede a
+  // UI de inventar um terceiro.
+  estado: string;
+  verificado: string;
+  pendente: string;
+  semDominios: string;
   // #1492 — back-office (staff). `naoEncontrado` é o texto de rota inexistente:
   // o contrato manda 404 pra não-staff "não revela o back-office", então a tela
   // não pode ter frase sobre staff nem permissão — dizer desfaz o 404.
@@ -122,6 +129,10 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     orgIndefinida: "Organização não identificada",
     orgIndefinidaDetalhe:
       "Ainda não é possível saber a qual organização esta sessão pertence.",
+    estado: "Estado",
+    verificado: "Verificado",
+    pendente: "Pendente",
+    semDominios: "Nenhum domínio reivindicado",
     backOffice: "Back-office",
     listaPendente: "A lista de organizações entra quando o contrato definir o formato.",
     naoEncontrado: "Página não encontrada",
@@ -177,6 +188,10 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     orgIndefinida: "Organization not identified",
     orgIndefinidaDetalhe:
       "We can't yet tell which organization this session belongs to.",
+    estado: "Status",
+    verificado: "Verified",
+    pendente: "Pending",
+    semDominios: "No domains claimed",
     backOffice: "Back office",
     listaPendente: "The organization list lands once the contract defines its shape.",
     naoEncontrado: "Page not found",
