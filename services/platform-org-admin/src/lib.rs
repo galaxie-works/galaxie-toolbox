@@ -21,7 +21,7 @@
 #![forbid(unsafe_code)]
 
 use galaxie_platform_identity::{
-    autorizar, resolver_org, Decisao, Operacao, Org, ResolveErro, Sessao,
+    autorizar, resolver_org, Decisao, Operacao, Org, OrgId, ResolveErro, Sessao,
 };
 
 /// Ações administrativas de uma org. Enum FECHADO: [`autorizar_acao_admin`] faz um `match`
@@ -55,6 +55,29 @@ pub enum AdminErro {
     Negado,
 }
 
+/// A CAPACIDADE ([`Operacao`]) que uma ação admin-org exige. `match` EXAUSTIVO sem catch-all:
+/// **variante nova NÃO COMPILA** até ganhar um braço aqui — e escolher o braço É a decisão
+/// "isto é instância do esqueleto ratificado, ou é capacidade nova?".
+///
+/// Hoje TODA ação mapeia pra `GerirOrg { org }` (a `Operacao` ratificada da fundação #1469) — é o
+/// braço que o gate estreitado do @Altair (#1538) declara self-merge. Uma variante que precise de
+/// OUTRA `Operacao` é autz estruturalmente nova: o teste `toda_acao_admin_mapeia_para_a_operacao_
+/// ratificada` fica VERMELHO, e esse vermelho é o gatilho pra chamar o arquiteto ANTES de mergear.
+/// A guarda é mecânica (compilador + teste), não julgamento humano.
+fn operacao_de(acao: &AcaoAdminOrg, org: &OrgId) -> Operacao {
+    match acao {
+        AcaoAdminOrg::ListarMembros
+        | AcaoAdminOrg::ConvidarMembro
+        | AcaoAdminOrg::RemoverMembro
+        | AcaoAdminOrg::MudarPapelMembro
+        | AcaoAdminOrg::ListarDominios
+        | AcaoAdminOrg::ReivindicarDominio
+        | AcaoAdminOrg::VerificarDominio
+        | AcaoAdminOrg::EditarSettings
+        | AcaoAdminOrg::GerirAssinatura => Operacao::GerirOrg { alvo: org.clone() },
+    }
+}
+
 /// Autoriza uma `acao` admin sobre `org_alvo` para a `sessao`.
 ///
 /// 1. **Visibilidade** ([`resolver_org`]): se o solicitante não vê a org (não é dela nem
@@ -79,21 +102,9 @@ pub fn autorizar_acao_admin(
         ResolveErro::NaoEncontrada => AdminErro::NaoEncontrada,
     })?;
 
-    // (2) `match` EXAUSTIVO por ação: hoje toda ação admin-org exige `GerirOrg` da própria
-    // org. Ação nova NÃO COMPILA até ganhar um braço aqui (default-deny por construção).
-    let op = match acao {
-        AcaoAdminOrg::ListarMembros
-        | AcaoAdminOrg::ConvidarMembro
-        | AcaoAdminOrg::RemoverMembro
-        | AcaoAdminOrg::MudarPapelMembro
-        | AcaoAdminOrg::ListarDominios
-        | AcaoAdminOrg::ReivindicarDominio
-        | AcaoAdminOrg::VerificarDominio
-        | AcaoAdminOrg::EditarSettings
-        | AcaoAdminOrg::GerirAssinatura => Operacao::GerirOrg {
-            alvo: org_alvo.id.clone(),
-        },
-    };
+    // (2) A CAPACIDADE que a ação exige. Extraído pra `operacao_de` — inspecionável sem passar
+    // pela autorização inteira, e é onde a guarda do gate estreitado do @Altair mora (#1538).
+    let op = operacao_de(acao, &org_alvo.id);
 
     match autorizar(sessao, &op) {
         Decisao::Permitido => Ok(()),
@@ -248,5 +259,33 @@ mod tests {
             autorizar_acao_admin(&s, &AcaoAdminOrg::EditarSettings, &org("orgA")),
             Err(AdminErro::Negado)
         );
+    }
+
+    // ⚠️ A GUARDA do gate estreitado do @Altair (#1538): toda ação admin-org mapeia pra a `Operacao`
+    // RATIFICADA (`GerirOrg`). A LISTA É LITERAL DE PROPÓSITO — não um `for` sobre variantes
+    // derivadas: o valor está em quem acrescentar uma variante ter de ADICIONÁ-LA aqui à mão, e
+    // nesse momento perguntar-se se é mesmo instância do esqueleto ratificado. Se uma variante nova
+    // sair de `GerirOrg`, este teste fica VERMELHO — o convite pra CHAMAR O ARQUITETO antes de
+    // mergear. Tira a classificação "instância ou autz nova?" do julgamento e põe no compilador+teste.
+    #[test]
+    fn toda_acao_admin_mapeia_para_a_operacao_ratificada() {
+        let alvo = OrgId("acme".into());
+        for acao in [
+            AcaoAdminOrg::ListarMembros,
+            AcaoAdminOrg::ConvidarMembro,
+            AcaoAdminOrg::RemoverMembro,
+            AcaoAdminOrg::MudarPapelMembro,
+            AcaoAdminOrg::ListarDominios,
+            AcaoAdminOrg::ReivindicarDominio,
+            AcaoAdminOrg::VerificarDominio,
+            AcaoAdminOrg::EditarSettings,
+            AcaoAdminOrg::GerirAssinatura,
+        ] {
+            assert_eq!(
+                operacao_de(&acao, &alvo),
+                Operacao::GerirOrg { alvo: alvo.clone() },
+                "{acao:?} saiu da Operacao ratificada (GerirOrg) — é autz nova, CHAMA O ARQUITETO antes de mergear"
+            );
+        }
     }
 }
