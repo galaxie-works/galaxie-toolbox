@@ -206,8 +206,14 @@ async fn org_autorizada(
 
 /// `DELETE /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — remove um membro. Autz: só `org_admin`
 /// da org (visibilidade→suspensão→papel). `204` se removeu; `404` se o `uid` não era membro (a admin
-/// PODE ver os membros, então não é oráculo). ⚠️ **NÃO invalida a sessão do removido** — isso é o
-/// #1545 (fatia à parte): até lá, a sessão do removido sobrevive ao TTL. Janela DECLARADA, não silenciosa.
+/// PODE ver os membros, então não é oráculo).
+///
+/// ⚠️⚠️ **ESTA REMOÇÃO NÃO INVALIDA AS SESSÕES DO ALVO** — o acesso persiste até a sessão expirar
+/// (até **12 h**, `TTL_SESSAO_SEG`). **Enquanto o #1545 não landar, remover é REGISTRO, não
+/// REVOGAÇÃO** (achado do @Altair na review; a invalidação é a fatia #1545, separada de propósito —
+/// `Principal`/`Escopo` estão congelados na sessão, então cortar exige revogar, não checar por
+/// request). Não é silêncio: é ausência DECLARADA (regra do #1562/#1546). Quando o #1545 fiar
+/// `invalidar_do_usuario` do alvo, o botão passa a cortar de verdade.
 async fn remover_membro(
     State(estado): State<EstadoBorda>,
     SessaoAtual(sessao): SessaoAtual,
@@ -228,9 +234,12 @@ async fn remover_membro(
 }
 
 /// `PATCH /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — muda o papel. Autz igual; papel fora da
-/// allowlist ⇒ `400`; `uid` não-membro ⇒ `404`; senão `200` com o membro atualizado. ⚠️ o papel novo
-/// só passa a valer na autz a partir da PRÓXIMA sessão do alvo até o #1545 (o papel da sessão atual
-/// está congelado no login — mesma janela do `remover`).
+/// allowlist ⇒ `400`; `uid` não-membro ⇒ `404`; senão `200` com o membro atualizado.
+///
+/// ⚠️⚠️ **MUDAR O PAPEL NÃO REVOGA A SESSÃO ATUAL DO ALVO** — o papel novo só vale na autz a partir
+/// do PRÓXIMO login dele (o `Principal`/`Escopo` da sessão viva está congelado). **Enquanto o #1545
+/// não landar, rebaixar/promover é REGISTRO, não efeito imediato** — mesma janela declarada do
+/// `remover_membro`. O #1545 fecha os dois: invalida a sessão do alvo na escrita.
 async fn mudar_papel_membro(
     State(estado): State<EstadoBorda>,
     SessaoAtual(sessao): SessaoAtual,
