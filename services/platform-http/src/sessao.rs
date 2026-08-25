@@ -11,6 +11,7 @@ use axum::http::header;
 use axum::http::request::Parts;
 use axum::response::Response;
 
+use galaxie_platform_back_office::Auditor;
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
 use galaxie_platform_web::contrato::CodigoErro;
@@ -25,18 +26,29 @@ use crate::erro::resposta_de_erro;
 /// existe exatamente pra isso. O **relógio é injetável** (`agora`) porque a expiração (#1504
 /// absoluto / #1512 ocioso) é time-aware: os testes controlam o tempo em vez de dormir, e a prod
 /// passa `SystemTime`.
+///
+/// O **`auditor` é OBRIGATÓRIO** (não `Option`, nem default no-op): a cond. 4 (@Altair) exige que
+/// a autz de back-office emita sempre, e um default silencioso deixaria a prod esquecer — o mesmo
+/// furo do "handler esquece", movido pra montagem. `Arc<dyn …>` pra o axum compartilhar entre
+/// threads e os testes inspecionarem o mesmo sink por um clone.
 pub struct Borda {
     pub armazem: Mutex<ArmazemMemoria>,
     pub agora: fn() -> u64,
+    pub auditor: Arc<dyn Auditor + Send + Sync>,
 }
 
 impl Borda {
-    /// Constrói o estado a partir de um armazém e um relógio. Envolve em `Arc` para o axum
-    /// clonar barato entre handlers.
-    pub fn nova(armazem: ArmazemMemoria, agora: fn() -> u64) -> Arc<Self> {
+    /// Constrói o estado a partir de um armazém, um relógio e um auditor. Envolve em `Arc` para o
+    /// axum clonar barato entre handlers.
+    pub fn nova(
+        armazem: ArmazemMemoria,
+        agora: fn() -> u64,
+        auditor: Arc<dyn Auditor + Send + Sync>,
+    ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
             agora,
+            auditor,
         })
     }
 }
