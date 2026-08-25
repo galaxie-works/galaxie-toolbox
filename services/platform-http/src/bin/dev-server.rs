@@ -57,11 +57,11 @@ async fn main() -> Result<()> {
 
     // (2) Dados de dev pros 200: uma org, um membro, um domínio verificado + um pendente.
     let mut orgs = ArmazemOrgMemoria::novo();
-    orgs.inserir(Org {
-        id: OrgId(ORG_DEV.into()),
-        dominios: BTreeSet::from([format!("{ORG_DEV}.com")]),
-        tenant_m365: None,
-    });
+    orgs.inserir(Org::nova(
+        OrgId(ORG_DEV.into()),
+        BTreeSet::from([format!("{ORG_DEV}.com")]),
+        None,
+    ));
     let mut membros = ArmazemMembroMemoria::novo();
     membros.inserir(
         OrgId(ORG_DEV.into()),

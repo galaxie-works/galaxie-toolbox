@@ -206,11 +206,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn org(id: &str) -> Org {
-        Org {
-            id: OrgId(id.into()),
-            dominios: BTreeSet::from([format!("{id}.com")]),
-            tenant_m365: None,
-        }
+        Org::nova(OrgId(id.into()), BTreeSet::from([format!("{id}.com")]), None)
     }
 
     #[test]
