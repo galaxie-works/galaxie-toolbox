@@ -27,9 +27,14 @@ use galaxie_platform_identity::{OrgId, UserId};
 /// a `Usuario` nominal, nunca grupo, sem re-delegação —, que o tipo terá de IMPEDIR por construção.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capacidade {
-    /// Acesso ao Bridge.
-    AcessoBridge,
-    /// Acesso ao Astro IA.
+    /// **Licença de USO do Bridge — NÃO é controle de acesso ao dado.** O Bridge fala com o M365
+    /// usando a credencial do PRÓPRIO usuário; negar esta capacidade é EMPACOTAMENTO COMERCIAL, não
+    /// proteção — a pessoa abre a mesma porta pelo Outlook (medição do @Altair). O nome diz `Licenca`
+    /// (não `Acesso`) de propósito: daqui a 6 meses "negado" não pode ser lido como "o dado está
+    /// protegido", porque nunca foi nosso. Contrasta com [`Capacidade::AcessoAstroIA`].
+    LicencaBridge,
+    /// Acesso ao Astro IA — controle REAL: o Astro IA é recurso NOSSO, então negar de fato barra o
+    /// uso (diferente da licença do Bridge). Por isso `Acesso`, não `Licenca`.
     AcessoAstroIA,
 }
 
@@ -39,7 +44,7 @@ impl Capacidade {
     #[must_use]
     pub fn slug(self) -> &'static str {
         match self {
-            Capacidade::AcessoBridge => "acesso_bridge",
+            Capacidade::LicencaBridge => "licenca_bridge",
             Capacidade::AcessoAstroIA => "acesso_astro_ia",
         }
     }
@@ -126,11 +131,11 @@ mod tests {
     #[test]
     fn ac1_resolucao_e_uniao_nunca_intersecao() {
         let concessoes = [
-            conceder("u1", Capacidade::AcessoBridge, "acme"),
+            conceder("u1", Capacidade::LicencaBridge, "acme"),
             conceder("u1", Capacidade::AcessoAstroIA, "acme"),
         ];
         let efetivas = capacidades_efetivas(&concessoes, &u("u1"), &org("acme"));
-        assert!(efetivas.contains(&Capacidade::AcessoBridge));
+        assert!(efetivas.contains(&Capacidade::LicencaBridge));
         assert!(efetivas.contains(&Capacidade::AcessoAstroIA));
         assert_eq!(efetivas.len(), 2, "união das duas, não interseção (que daria vazio)");
     }
@@ -140,16 +145,16 @@ mod tests {
     // mutante que fizesse a resolução não-monotônica (removesse algo ao ver outra concessão) morre.
     #[test]
     fn ac2_negar_nao_e_representavel_uniao_e_monotona() {
-        let so_bridge = [conceder("u1", Capacidade::AcessoBridge, "acme")];
+        let so_bridge = [conceder("u1", Capacidade::LicencaBridge, "acme")];
         let bridge_e_astro = [
-            conceder("u1", Capacidade::AcessoBridge, "acme"),
+            conceder("u1", Capacidade::LicencaBridge, "acme"),
             conceder("u1", Capacidade::AcessoAstroIA, "acme"),
         ];
         let menos = capacidades_efetivas(&so_bridge, &u("u1"), &org("acme"));
         let mais = capacidades_efetivas(&bridge_e_astro, &u("u1"), &org("acme"));
         // Acrescentar a concessão de Astro NÃO tira o Bridge — o conjunto só cresce (⊆).
         assert!(menos.is_subset(&mais), "acrescentar concessão nunca remove capacidade (sem negativa)");
-        assert!(mais.contains(&Capacidade::AcessoBridge), "o Bridge sobrevive ao acréscimo");
+        assert!(mais.contains(&Capacidade::LicencaBridge), "o Bridge sobrevive ao acréscimo");
     }
 
     // AC3 — default VAZIO: sem concessão que atinja, capacidades efetivas = ∅ (ausência = negação).
@@ -157,27 +162,27 @@ mod tests {
     fn ac3_default_vazio() {
         let nenhuma: [Concessao; 0] = [];
         assert!(capacidades_efetivas(&nenhuma, &u("u1"), &org("acme")).is_empty());
-        assert!(!tem_capacidade(&nenhuma, &u("u1"), Capacidade::AcessoBridge, &org("acme")));
+        assert!(!tem_capacidade(&nenhuma, &u("u1"), Capacidade::LicencaBridge, &org("acme")));
     }
 
     // A concessão é POR org (alvo) e POR sujeito: não vaza pra outra org nem pra outro usuário.
     #[test]
     fn concessao_e_escopada_a_org_e_ao_sujeito() {
-        let concessoes = [conceder("u1", Capacidade::AcessoBridge, "acme")];
+        let concessoes = [conceder("u1", Capacidade::LicencaBridge, "acme")];
         // outra org ⇒ não atinge
         assert!(capacidades_efetivas(&concessoes, &u("u1"), &org("globex")).is_empty(), "não vaza pra outra org");
         // outro usuário ⇒ não atinge
         assert!(capacidades_efetivas(&concessoes, &u("u2"), &org("acme")).is_empty(), "não vaza pra outro usuário");
         // o dono, na org certa ⇒ tem
-        assert!(tem_capacidade(&concessoes, &u("u1"), Capacidade::AcessoBridge, &org("acme")));
+        assert!(tem_capacidade(&concessoes, &u("u1"), Capacidade::LicencaBridge, &org("acme")));
     }
 
     // Concessões duplicadas (mesma capacidade 2×) colapsam — união é conjunto, não multiset.
     #[test]
     fn concessoes_duplicadas_colapsam() {
         let concessoes = [
-            conceder("u1", Capacidade::AcessoBridge, "acme"),
-            conceder("u1", Capacidade::AcessoBridge, "acme"),
+            conceder("u1", Capacidade::LicencaBridge, "acme"),
+            conceder("u1", Capacidade::LicencaBridge, "acme"),
         ];
         assert_eq!(capacidades_efetivas(&concessoes, &u("u1"), &org("acme")).len(), 1);
     }
@@ -185,8 +190,8 @@ mod tests {
     // O slug é exaustivo e estável (guarda de AC4: capacidade nova não compila sem braço).
     #[test]
     fn slug_estavel_por_capacidade() {
-        assert_eq!(Capacidade::AcessoBridge.slug(), "acesso_bridge");
+        assert_eq!(Capacidade::LicencaBridge.slug(), "licenca_bridge");
         assert_eq!(Capacidade::AcessoAstroIA.slug(), "acesso_astro_ia");
-        assert_ne!(Capacidade::AcessoBridge.slug(), Capacidade::AcessoAstroIA.slug());
+        assert_ne!(Capacidade::LicencaBridge.slug(), Capacidade::AcessoAstroIA.slug());
     }
 }
