@@ -162,8 +162,31 @@ export interface SinalizadorS0 {
    *
    * **Quem chama é o Rust, não a tela** (desenho do @Altair no card): o relógio
    * da credencial vive no `RelayState`, que é quem detém a conexão e sabe quando
-   * ela morre. Este método é a *busca* — o FE só a executa porque o socket de
-   * signaling é dele, e some quando o #1129 mover o cliente pro Rust.
+   * ela morre. Este método é a *busca* — o FE a executa porque o socket de
+   * signaling é dele.
+   *
+   * ── Isto NÃO tem data de validade (retratação do @Altair, 25/08) ──────────
+   * Aqui dizia *"some quando o #1129 mover o cliente pro Rust"*. **Está errado, e
+   * o autor da frase a retratou**: o #1129 move a **chave** do device pro Rust,
+   * não o **socket**. O DoD dele guarda a chave fora do TS (*"teste que falha se
+   * a CHAVE PRIVADA aparecer no lado TS"*); se o socket fosse migrar, o critério
+   * natural seria *"nenhum WebSocket de signaling em TS"* — e não é o que está lá.
+   *
+   * A fronteira que vale, e é ela que decide as próximas fatias sem precisar
+   * perguntar de novo:
+   *
+   *   • **WebView = plano de CONTROLE** — signaling, pareamento, estado de
+   *     conexão, o que a tela mostra. É onde este arquivo mora, e fica.
+   *   • **Rust = plano de DADOS** — `str0m`, cliente TURN, a mídia, e (a partir
+   *     do #1129) a chave do device.
+   *
+   * A credencial atravessa a fronteira uma vez por renovação — ordem de grandeza
+   * de um quarto de hora. Não é custo que justifique mover o socket.
+   *
+   * Registro o erro em vez de só apagá-lo porque a forma dele reincide: o #1129
+   * **nunca disse** quem fica com o socket, e a frase tratou o silêncio como
+   * afirmação. Quem reler daqui a seis meses merece saber que a pergunta foi
+   * feita e respondida — não encontrar o texto limpo e refazê-la.
    */
   renovarIceServers(): void;
   /** Fecha o WS. */
