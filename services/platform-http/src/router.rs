@@ -245,8 +245,18 @@ struct PerfilDto<'a> {
 async fn get_me(State(estado): State<EstadoBorda>, SessaoAtual(sessao): SessaoAtual) -> Response {
     let uid = usuario_da_sessao(&sessao);
     match estado.perfis.buscar(uid) {
+        // Infra fora do ar: falha nossa, transitória.
         Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        Ok(None) => resposta_de_falha(Visibilidade::Visivel),
+        // INVARIANTE: sessão ⟹ perfil (ambos nascem no callback OAuth; o dev-server semeia os dois).
+        // `Ok(None)` — sessão VÁLIDA sem perfil — é INCONSISTÊNCIA de dado, NÃO infra caída. É a mesma
+        // conflação que o `Result` do armazém OAuth desfaz uma camada abaixo (@Altair, review do #1543),
+        // e ela não pode voltar aqui: um incidente de infra e um dado inconsistente têm de ser
+        // DISTINGUÍVEIS no log/alerta. O HTTP é o mesmo 500 (o cliente não conserta nenhum — não há
+        // 2º construtor de erro, a regra anti-oráculo segue), mas o LOG diz qual é.
+        Ok(None) => {
+            tracing::error!(uid = %uid.0, "GET /me: sessão válida sem perfil — invariante (sessão ⟹ perfil) violada");
+            resposta_de_falha(Visibilidade::Visivel)
+        }
         Ok(Some(perfil)) => {
             let dto = PerfilDto {
                 nome: &perfil.nome,
@@ -410,6 +420,32 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
         assert!(json.get("idioma").is_none(), "idioma ausente some do JSON: {corpo:?}");
+    }
+
+    /// **#1544 — GET /me na SURVIVE-LIST (gêmeo do `me_orgs_sobrevive`, pedido do @Altair).** REGRA
+    /// que a lista significa: toda rota da survive-list (`/me`, `/me/orgs`, logout) NASCE com o seu
+    /// teste de sobrevivência. `u1` é membro da orgA SUSPENSA e tem perfil ⇒ `/me` = 200 com o perfil
+    /// (não passa pela autz de org). Se alguém "harmonizar" e meter a suspensão no caminho do `/me`,
+    /// acharia orgA suspensa ⇒ 403, e SÓ este teste fica vermelho.
+    #[tokio::test]
+    async fn me_sobrevive_a_suspensao() {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut perfis = ArmazemPerfilMemoria::novo();
+        perfis.inserir(UserId("u1".into()), Perfil { nome: "Ana".into(), email: "ana@x.com".into(), idioma: None });
+        let mut orgs = ArmazemOrgMemoria::novo();
+        let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
+        org.suspender();
+        orgs.inserir(org);
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), sem_membros(), sem_dominios(), Arc::new(perfis));
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
+        assert_eq!(status, StatusCode::OK, "/me SOBREVIVE à suspensão (survive-list #1544)");
+        assert!(String::from_utf8_lossy(&corpo).contains("Ana"), "com o perfil, pra tela poder explicar");
     }
 
     /// GET /me sem sessão ⇒ 401 (superfície visível; `/me` não é segredo).
