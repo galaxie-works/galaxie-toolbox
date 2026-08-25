@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -103,5 +104,10 @@ async fn main() -> Result<()> {
     eprintln!("  Ex.: curl -H 'Cookie: {cookie}' http://localhost:8080/api/v1/orgs/{ORG_DEV}/membros");
     eprintln!("──────────────────────────────────────────────────────────────");
 
-    servir(borda, Config::from_env()?).await
+    // ⚠️ Escuta SÓ em `127.0.0.1` (achado do @Altair, #1540): este bin cunha uma sessão válida e
+    // IMPRIME o cookie — em `0.0.0.0` qualquer um no mesmo segmento de rede alcançaria as rotas. O
+    // `127.0.0.1` é hardcoded, NÃO `from_env`: expor tem de ser um ato deliberado e visível, nunca
+    // o default herdado da produção. A porta segue configurável (o Pollux precisa saber qual é).
+    let addr = SocketAddr::from(([127, 0, 0, 1], Config::from_env()?.porta));
+    servir(borda, addr).await
 }
