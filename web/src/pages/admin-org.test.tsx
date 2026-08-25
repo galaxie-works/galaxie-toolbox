@@ -15,6 +15,7 @@
 // é o que SAIU — a URL de verdade, com prefixo e tudo.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AdminOrgPage } from "./admin-org";
 import { CAMINHOS } from "@/lib/org";
 import { DICIONARIOS } from "@/i18n";
@@ -172,6 +173,49 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
       expect(screen.getByText(DICIONARIOS["pt-BR"].orgIndefinida)).toBeTruthy(),
     );
     expect(pedidos.some((u) => u.includes("/orgs/"))).toBe(false);
+  });
+
+  // ── 401: o defeito que só a borda REAL revelou ───────────────────────────
+  // Nenhum duplo devolvia 401, então o 401 caía em `erro`, a descoberta ficava
+  // nula, e a tela dizia "organização não identificada" a quem simplesmente
+  // **não estava logado**. Achado contra o binário de verdade (#1505 fatia 1),
+  // com 54 testes verdes ao lado — verde que não cobre um status não prova nada
+  // sobre ele.
+
+  it("401 na descoberta ⇒ vai pro LOGIN, não fala de organização", async () => {
+    fetchFalso(() => json({ erro: "nao_autenticado" }, 401));
+    render(
+      <MemoryRouter initialEntries={["/admin/org"]}>
+        <Routes>
+          <Route path="/admin/org" element={<AdminOrgPage idioma="pt-BR" />} />
+          <Route path="/login" element={<p>TELA DE LOGIN</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByText("TELA DE LOGIN")).toBeTruthy());
+    // A mensagem errada NÃO pode aparecer: ela manda o usuário procurar
+    // problema de org quando o problema é ausência de sessão.
+    expect(
+      screen.queryByText(DICIONARIOS["pt-BR"].orgIndefinida),
+    ).toBeNull();
+  });
+
+  it("401 num painel (org já conhecida) também vai pro login", async () => {
+    fetchFalso(() => json({ erro: "nao_autenticado" }, 401));
+    render(
+      <MemoryRouter initialEntries={["/admin/org"]}>
+        <Routes>
+          <Route
+            path="/admin/org"
+            element={<AdminOrgPage idioma="pt-BR" org="acme" />}
+          />
+          <Route path="/login" element={<p>TELA DE LOGIN</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByText("TELA DE LOGIN")).toBeTruthy());
+    expect(screen.queryByText(DICIONARIOS["pt-BR"].semPermissao)).toBeNull();
+    expect(screen.queryByText(DICIONARIOS["pt-BR"].erroCarregar)).toBeNull();
   });
 
   // ── Domínios: o painel que o contrato v1.3 destravou ─────────────────────

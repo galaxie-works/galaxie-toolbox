@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import {
   DICIONARIOS,
   idiomaAtual,
@@ -81,12 +82,20 @@ export function AdminOrgPage({
   const t = DICIONARIOS[idioma];
   const [aba, setAba] = useState<Aba>("membros");
   const [descoberta, setDescoberta] = useState<string | null>(org ?? null);
+  const [semSessao, setSemSessao] = useState(false);
 
   useEffect(() => {
     if (org) return; // injetada: não perguntar
     let vivo = true;
     void minhasOrgs().then((r) => {
       if (!vivo) return;
+      // 401 é falta de LOGIN, não de org. Sem isto a tela dizia "organização
+      // não identificada" a quem simplesmente não está logado — defeito MEDIDO
+      // contra a borda real, que nenhum duplo revelava.
+      if (r.estado === "naoAutenticado") {
+        setSemSessao(true);
+        return;
+      }
       // Uma org por principal hoje; a lista existe pro dia em que forem várias.
       // Pegar a primeira é escolha do CLIENTE sobre o que exibir — não sobre o
       // que pode. Quando houver mais de uma, isto vira um seletor.
@@ -98,6 +107,10 @@ export function AdminOrgPage({
       vivo = false;
     };
   }, [org]);
+
+  // Mesmo sinal que a tela de conta usa (#1489): a não-autenticação manda ao
+  // login, não a uma mensagem que descreve outro problema.
+  if (semSessao) return <Navigate to="/login" replace />;
 
   const orgAtual = org ?? descoberta;
 
@@ -146,6 +159,7 @@ export function AdminOrgPage({
 
 type EstadoRecurso =
   | "carregando"
+  | "naoAutenticado"
   | "naoEhAdmin"
   | "naoEhSuaOrg"
   | "erro"
@@ -186,6 +200,9 @@ function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
   const membros = dados ?? [];
 
   if (estado === "carregando") return <p>{t.carregando}</p>;
+  // 401 = sem sessão ⇒ login. Vem ANTES de 403/404 porque "não estás logado"
+  // não é um caso de permissão dentro da org — é a ausência de sessão.
+  if (estado === "naoAutenticado") return <Navigate to="/login" replace />;
   // Duas negativas, duas mensagens. Ver `lib/org.ts`: quem leva 403 já é da org
   // e a instrução "peça a um admin" é acionável; quem leva 404 não pertence, e a
   // mensagem não pode confirmar que a org existe.
@@ -232,6 +249,7 @@ function PainelDominios({ idioma, org }: { idioma: Idioma; org: string }) {
   const { estado, dados } = useRecurso<Dominio[]>(CAMINHOS.dominios(org));
 
   if (estado === "carregando") return <p>{t.carregando}</p>;
+  if (estado === "naoAutenticado") return <Navigate to="/login" replace />;
   if (estado === "naoEhAdmin")
     return <Aviso titulo={t.semPermissao} detalhe={t.semPermissaoDetalhe} />;
   if (estado === "naoEhSuaOrg")
