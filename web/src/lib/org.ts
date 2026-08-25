@@ -19,8 +19,18 @@ import { chamar } from "@/lib/api";
 
 type Papel = "org_admin" | "member";
 
+/**
+ * Um membro da org, **como o contrato devolve** em `GET /orgs/{org}/membros`:
+ * `[{ uid, nome, email, papel }]`.
+ *
+ * Eu tinha escrito `{ id, email, papel }` — inventei `id` e perdi `nome`, porque
+ * quando escrevi não havia shape no contrato. A guarda de rotas não pegou: ela
+ * confere CAMINHO, não CORPO. Por isso esta fatia acrescenta a asserção de
+ * campos (`pollux-1490-contrato-fe.test.ts`), que teria pego no ato.
+ */
 export interface Membro {
-  id: string;
+  uid: string;
+  nome: string;
   email: string;
   papel: Papel;
 }
@@ -83,6 +93,29 @@ export type Resultado<T> =
   /** 404 — não pertence à org (ou ela não existe). Não pode saber qual dos dois. */
   | { estado: "naoEhSuaOrg" }
   | { estado: "erro"; motivo: string };
+
+/**
+ * Uma org do principal, como o contrato devolve em `GET /me/orgs`.
+ *
+ * ⚠️ **`papel` decide o que MOSTRAR, jamais o que PERMITIR.** A amarra é do
+ * @Altair, escrita no contrato: a lista é conveniência do cliente, nunca
+ * concessão. Quem autoriza é o `autorizar` no servidor, e o `{org}` das rotas
+ * de admin segue conferido contra a sessão. Se algum dia esta tela liberar uma
+ * ação porque `papel === "org_admin"`, o defeito não é a UI ficar bonita demais
+ * — é ter transformado uma dica de renderização em decisão de acesso.
+ */
+export interface OrgDoPrincipal {
+  org: string;
+  papel: string;
+}
+
+/**
+ * As orgs do principal da sessão. Hoje é uma; o contrato devolve lista porque
+ * `me.org` singular "seria correto agora e mentira depois" (@Altair).
+ */
+export function minhasOrgs(): Promise<Resultado<OrgDoPrincipal[]>> {
+  return buscar<OrgDoPrincipal[]>("/me/orgs");
+}
 
 export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
   let resposta: Response;

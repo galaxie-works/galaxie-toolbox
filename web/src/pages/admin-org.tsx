@@ -5,7 +5,7 @@ import {
   type Idioma,
   type Dicionario,
 } from "@/i18n";
-import { buscar, CAMINHOS, type Membro } from "@/lib/org";
+import { buscar, minhasOrgs, CAMINHOS, type Membro } from "@/lib/org";
 
 // Admin da org (#1490) — UI de membros / domínios / settings / assinatura.
 //
@@ -20,10 +20,12 @@ import { buscar, CAMINHOS, type Membro } from "@/lib/org";
 // então mostro" continuaria mostrando se o papel local mentisse. Esta pergunta
 // primeiro e mostra depois.
 //
-// ⚠️ ESCOPO DESTA FATIA: o par #1475-BE não existe ainda (Ready, sem dono).
-// Portanto o AC2 e o AC3 **não estão provados de ponta a ponta** — o que está
-// provado aqui é a metade do cliente (a UI reage à negativa e nunca endereça
-// org alheia). A outra metade nasce com o BE.
+// ⚠️ ESCOPO (atualizado 24/08 ~23:5xZ): o #1475-BE foi entregue e o contrato
+// v1.2 já traz rotas E shapes do admin. O que ainda não existe é a **borda
+// HTTP** (#1505) — os crates `platform-*` são bibliotecas. Portanto AC2 e AC3
+// seguem **não provados de ponta a ponta**; o que está provado aqui é a metade
+// do cliente: a UI reage à negativa, distingue 403 de 404, e não inventa nem
+// rota nem campo (as duas guardas do canal que barra).
 
 type Aba = "membros" | "dominios" | "settings" | "assinatura";
 
@@ -55,10 +57,13 @@ const ROTULO: Record<Aba, ChaveDeTexto> = {
 /**
  * `org` é o identificador da organização, exigido pelo contrato (`/orgs/{org}`).
  *
- * É opcional porque **ainda não existe fonte pra ele**: `GET /me` não devolve a
- * org e não há `GET /me/orgs`. Levantei a lacuna com o @alcor/@Altair. Enquanto
- * não fecha, a tela DIZ que não sabe qual org — em vez de eu escolher um lugar
- * de onde tirar o valor, que é o que o invariante 6 do contrato impede.
+ * A fonte dele é o **`GET /me/orgs`**, que o @Altair criou pra fechar a lacuna
+ * que eu levantei: o cliente não guarda slug de lugar nenhum — pergunta ao
+ * servidor quais orgs a SESSÃO tem. A prop segue existindo para os testes
+ * poderem injetar; quando ausente, a tela descobre sozinha.
+ *
+ * Enquanto a descoberta não volta (ou volta vazia), a tela DIZ que não sabe —
+ * em vez de chutar uma org, que é o que o invariante 6 impede.
  */
 export function AdminOrgPage({
   idioma = idiomaAtual(),
@@ -69,6 +74,26 @@ export function AdminOrgPage({
 }) {
   const t = DICIONARIOS[idioma];
   const [aba, setAba] = useState<Aba>("membros");
+  const [descoberta, setDescoberta] = useState<string | null>(org ?? null);
+
+  useEffect(() => {
+    if (org) return; // injetada: não perguntar
+    let vivo = true;
+    void minhasOrgs().then((r) => {
+      if (!vivo) return;
+      // Uma org por principal hoje; a lista existe pro dia em que forem várias.
+      // Pegar a primeira é escolha do CLIENTE sobre o que exibir — não sobre o
+      // que pode. Quando houver mais de uma, isto vira um seletor.
+      if (r.estado === "pronto" && r.dados.length > 0) {
+        setDescoberta(r.dados[0]?.org ?? null);
+      }
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [org]);
+
+  const orgAtual = org ?? descoberta;
 
   return (
     <main className="min-h-screen bg-neutral-50 p-6">
@@ -95,15 +120,15 @@ export function AdminOrgPage({
       </nav>
 
       <section className="mx-auto mt-4 max-w-4xl rounded-2xl border border-neutral-200 bg-white p-6">
-        {!org ? (
+        {!orgAtual ? (
           <Aviso titulo={t.orgIndefinida} detalhe={t.orgIndefinidaDetalhe} />
         ) : aba === "membros" ? (
-          <PainelMembros idioma={idioma} org={org} />
+          <PainelMembros idioma={idioma} org={orgAtual} />
         ) : (
           <PainelPendente
             titulo={t[ROTULO[aba]]}
             idioma={idioma}
-            caminho={CAMINHOS[aba](org)}
+            caminho={CAMINHOS[aba](orgAtual)}
           />
         )}
       </section>
@@ -148,15 +173,18 @@ function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
     <table className="w-full text-left text-sm">
       <thead>
         <tr className="text-neutral-500">
+          <th className="pb-2 font-medium">{t.nome}</th>
           <th className="pb-2 font-medium">{t.email}</th>
           <th className="pb-2 font-medium">{t.papel}</th>
         </tr>
       </thead>
       <tbody>
         {membros.map((m) => (
-          <tr key={m.id} className="border-t border-neutral-100">
-            <td className="py-2 text-neutral-900">{m.email}</td>
+          <tr key={m.uid} className="border-t border-neutral-100">
+            <td className="py-2 text-neutral-900">{m.nome}</td>
+            <td className="py-2 text-neutral-600">{m.email}</td>
             <td className="py-2 text-neutral-600">
+              {/* Rótulo do papel — leitura, não permissão. Ver `lib/org.ts`. */}
               {m.papel === "org_admin" ? t.papelAdmin : t.papelMembro}
             </td>
           </tr>
