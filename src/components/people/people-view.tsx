@@ -1493,10 +1493,7 @@ export function PeopleView({
               >
                 {listPane}
               </ResizablePanel>
-              <ResizableHandle
-                withHandle
-                className="mx-1.5 bg-transparent hover:bg-border"
-              />
+              <ResizableHandle withHandle />
               <ResizablePanel
                 defaultSize={62}
                 minSize={detailMinSize}

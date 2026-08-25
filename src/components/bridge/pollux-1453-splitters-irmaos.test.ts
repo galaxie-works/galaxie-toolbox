@@ -81,14 +81,19 @@ test("#1453: as três divisórias do Bridge não divergem entre si", () => {
   }
 });
 
-test("#1453: o handle dá sinal de que é arrastável (hover)", () => {
-  // O AC do card em letra: hoje o do sidebar não dava sinal nenhum. Pinado à
-  // parte porque `withHandle` e hover são duas afirmações diferentes — a
-  // primeira é o punho, esta é o feedback.
-  for (const h of FONTES.flatMap((f) => handlesDe(f.arquivo, f.onde))) {
-    assert.ok(
-      h.classes.some((c) => c.startsWith("hover:")),
-      `"${h.onde}" não tem realce de hover: nada avisa ao usuário que dá pra arrastar.`,
-    );
-  }
+test("#1453/#1279: o handle dá sinal de que é arrastável (hover) — agora do PONTO ÚNICO", () => {
+  // O AC do card em letra: o handle precisa avisar que é arrastável (hover).
+  // #1279 CONSOLIDOU o padrão (incl. o hover) no default de `ResizableHandle`
+  // (ui/resizable.tsx) e TIROU o className dos usos — o teste acima prova que os
+  // 3 do Bridge não divergem (todos herdam), então o SINAL de hover se confere
+  // no ponto único, não em cada uso (senão este gate reprovaria o próprio fix
+  // que centralizou o hover). Se algum uso VOLTAR a trazer o hover no className,
+  // o gate do #1279 (`resizable-ponto-unico.test.ts`) reprova.
+  const dono = readFileSync("src/components/ui/resizable.tsx", "utf8");
+  const m = dono.match(/data-slot="resizable-handle"[\s\S]*?cn\(\s*"([^"]*)"/);
+  const classesDefault = (m?.[1] ?? "").split(/\s+/);
+  assert.ok(
+    classesDefault.some((c) => c.startsWith("hover:")),
+    "o default do ResizableHandle (ui/resizable.tsx) perdeu o realce de hover: nada avisa ao usuário que dá pra arrastar.",
+  );
 });

@@ -1713,7 +1713,7 @@ export function ControlRoomScreen({
               idioma={idioma}
             />
           </ResizablePanel>
-          <ResizableHandle withHandle className="mx-1.5 bg-transparent hover:bg-border" />
+          <ResizableHandle withHandle />
           <ResizablePanel defaultSize={62} minSize={35} className="overflow-hidden">
             {dadosDaCaixaAtiva && selecionados.size > 0 ? (
               <MultiSelecaoContexto

@@ -813,7 +813,7 @@ export function ExplorerShell({
           </aside>
         </ResizablePanel>
 
-        <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
+        <ResizableHandle withHandle />
 
         <ResizablePanel id="content" order={2} defaultSize={53} minSize={30}>
           {/* #854: a toolbar (navbar + views/filtro) fica no TOPO da content-area,
@@ -930,7 +930,7 @@ export function ExplorerShell({
 
         {mostrarInspector && (
           <>
-            <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
+            <ResizableHandle withHandle />
             <ResizablePanel
               id="inspector"
               order={3}
