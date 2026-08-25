@@ -210,12 +210,16 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > muda por transição** (`Org::nova`→`Provisionada`, `Org::suspender`→`Suspensa`; sem literal público
 > nem setter — ninguém forja "suspensa"); (2) **desconhecido no FE = neutro, nunca permissivo**
 > (forward-compat da string do lado do cliente; no BE o enum é fechado); (3) a 3ª — **`suspensa`
-> nega** (ponto de imposição, ver §3 e §4.5). A checagem é **por request, lida do armazém** (vale no
-> ato, sem a corrida de "matar sessões") e mora **DENTRO da autz de org** (que já recebe `&Org`), não
-> nos handlers — senão um handler novo esquece e a suspensão vale em 5 rotas de 6. A autz lê `estado`,
-> **nunca** claim (`tenant_m365`/`dominios`). **Sobrevivem à suspensão** (senão o usuário não alcança
-> a tela que explica): `/me`, `/me/orgs` (com a org listada e o `estado` marcado — é daqui que a tela
-> tira o nome) e `DELETE /session`. Tudo org-scoped: bloqueado. Corpo do `GET /admin/orgs`:
+> nega** (ponto de imposição, ver §3). A checagem SERÁ **por request, lida do armazém** (vale no ato,
+> sem a corrida de "matar sessões") e MORARÁ **DENTRO da autz de org** (que já recebe `&Org`), não nos
+> handlers — senão um handler novo esquece e a suspensão vale em 5 rotas de 6. A autz lerá `estado`,
+> **nunca** claim (`tenant_m365`/`dominios`). ⚠️ **Esta v1.4 fecha o CONTRATO + o TIPO (`EstadoOrg`,
+> `OrgSuspensa`, ordem, corpo dos GET); o *enforcement* — a autz consultando `esta_suspensa` e negando
+> — é a fatia #1544, ainda não escrita.** O tipo já traz `Org::suspender`/`Org::reativar` (as duas
+> transições — suspender sem volta era armadilha); QUEM reativa e com que peso é decisão do PO, mora na
+> autz. **Sobreviverão à suspensão** (senão o usuário não alcança a tela que explica): `/me`,
+> `/me/orgs` (com a org listada e o `estado` marcado — é daqui que a tela tira o nome, então `/me/orgs`
+> fica FORA da checagem de suspensão) e `DELETE /session`. Tudo org-scoped: bloqueado. Corpo do `GET /admin/orgs`:
 > `[{ org, dominios: [string], estado: "provisionada" | "suspensa" }]` (sem `tenant_m365` — claim
 > sensível, staff não precisa). O *enforcement* na borda + a tela são a fatia de implementação (#1544);
 > esta v1.4 fecha o CONTRATO (tipo + vocabulário `org_suspensa`) que ela precisa para nascer.
@@ -232,13 +236,15 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 `v1` é este documento + `platform-web/src/contrato.rs`. Mudança incompatível ⇒ `/api/v2` + nova
 tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bump.
 
-**v1.4 (25/08):** fecha o item que a v1.3 separou — o PO decidiu que **suspender DERRUBA o acesso**
-(#1544). Entra: `CodigoErro::OrgSuspensa` (`403`, slug `org_suspensa`, distinto de `negado`); a ordem
-de checagem **visibilidade → suspensão → papel** (§3); o `estado` da org como tipo **privado/só por
-transição** (`EstadoOrg::{Provisionada,Suspensa}` em `platform-identity`); a survive-list (`/me`,
-`/me/orgs`, `DELETE /session`) e o corpo do `GET /admin/orgs`. O *enforcement* na borda + a tela são
-implementação (#1544). Adição compatível (novo código de erro + novo estado, sem quebrar rota), sem
-bump de `/v1`.
+**v1.4 (25/08):** o PO decidiu que **suspender DERRUBA o acesso** (#1544). Esta v1.4 fecha o
+**CONTRATO + o TIPO**, NÃO o enforcement: entra `CodigoErro::OrgSuspensa` (`403`, slug `org_suspensa`,
+distinto de `negado`); a ordem de checagem **visibilidade → suspensão → papel** (§3); o `estado` da org
+como tipo **privado/só por transição** (`EstadoOrg::{Provisionada,Suspensa}` em `platform-identity`,
+com `suspender` E `reativar` — porta de mão única era armadilha, review do @Altair); a survive-list
+(`/me`, `/me/orgs`, `DELETE /session`, fora da checagem) e o corpo do `GET /admin/orgs`. ⚠️ **O
+*enforcement* — a autz lendo `estado` e negando — é a fatia #1544, ainda não escrita**: nenhuma linha
+de produção consulta a suspensão nesta v1.4. Adição compatível (novo código de erro + novo estado, sem
+quebrar rota), sem bump de `/v1`.
 
 **v1.3 (25/08):** leituras que faltavam em §4.3 (`GET` de `dominios`/`settings`/`assinatura` — lacuna
 do @Pollux #1490, "não se gere o que não se vê"; um `GET` por recurso, autorizado igual à escrita) +

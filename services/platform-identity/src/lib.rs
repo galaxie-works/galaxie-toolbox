@@ -103,8 +103,11 @@ impl Principal {
 
 /// Ciclo de vida da org (#1544 / contrato §4.5). `Provisionada` = ativa; `Suspensa` = acesso
 /// CORTADO (o PO decidiu "derruba o acesso"). Enum FECHADO: a autz faz `match` exaustivo, então
-/// um estado novo OBRIGA a decidir sua política (não há default permissivo). **A autz LÊ este
-/// estado** (é o que ela deve fazer — @Altair #1544), mas nunca lê claim (`tenant_m365`/`dominios`).
+/// um estado novo OBRIGA a decidir sua política (não há default permissivo). O *enforcement*
+/// (#1544, próxima fatia) é que LERÁ este estado — a autz de org consulta [`Org::esta_suspensa`]
+/// antes do papel e devolve o negado de suspensão; **esta fatia entrega o tipo + o contrato, não o
+/// enforcement** (nenhuma linha de produção lê `estado` ainda). A autz nunca lê claim
+/// (`tenant_m365`/`dominios`) — ler `estado` é exatamente o que ela deve fazer, ler claim não.
 ///
 /// Condição do @Altair (ratificada com o `estado`): **desconhecido no FE = neutro, nunca
 /// permissivo** — mas isso é do lado do FE (forward-compat de string); aqui, no BE, o enum é
@@ -124,8 +127,12 @@ pub enum EstadoOrg {
 /// o domínio não controla a entidade (armadilha (b)).
 ///
 /// **`estado` é PRIVADO e só muda por TRANSIÇÃO** (condição 1 do @Altair): nasce `Provisionada`
-/// em [`Org::nova`] e vira `Suspensa` só por [`Org::suspender`] — não há literal público nem
-/// setter, então ninguém forja "suspensa" (ou "não suspensa") por fora. Leitura por [`Org::estado`].
+/// em [`Org::nova`], vira `Suspensa` por [`Org::suspender`] e VOLTA por [`Org::reativar`] — não há
+/// literal público nem setter, então ninguém forja "suspensa" (ou "não suspensa") por fora. As duas
+/// transições existem porque "suspender" lê-se como REVERSÍVEL em qualquer produto (uma org suspensa
+/// por falta de pagamento tem de poder voltar); a porta de mão única era uma lacuna (@Altair na review
+/// do #1551). O PESO da reativação (staff comum? exige mais?) é decisão do PO — mora na AUTZ, não no
+/// tipo. Leitura por [`Org::estado`]/[`Org::esta_suspensa`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Org {
     pub id: OrgId,
@@ -154,10 +161,19 @@ impl Org {
         matches!(self.estado, EstadoOrg::Suspensa)
     }
 
-    /// TRANSIÇÃO: suspende a org (staff, via back-office). Idempotente. O único caminho para
+    /// TRANSIÇÃO: suspende a org (staff, via back-office). Idempotente. Único caminho para
     /// `Suspensa` — não há setter de `estado`, então "suspensa" nunca vem de um literal forjado.
     pub fn suspender(&mut self) {
         self.estado = EstadoOrg::Suspensa;
+    }
+
+    /// TRANSIÇÃO INVERSA: reativa a org (volta a `Provisionada`). Idempotente. Existe porque
+    /// suspensão sem volta é armadilha — o staff que suspende por falta de pagamento tem de poder
+    /// reativar ao regularizar. QUEM pode reativar e com que peso (staff comum vs algo a mais) é
+    /// decisão do PO, e mora na AUTZ que chama isto — não no tipo. O tipo só garante que o caminho
+    /// de volta EXISTE e passa por transição (nunca por literal).
+    pub fn reativar(&mut self) {
+        self.estado = EstadoOrg::Provisionada;
     }
 }
 
@@ -341,6 +357,24 @@ mod tests {
         // de `estado` — o único caminho para `Suspensa` é `suspender()`. Se um campo público ou
         // um `Org { .., estado }` externo existisse, esta linha de comentário não bastaria: a
         // prova é o `estado` ser privado (o compilador recusa o literal fora do crate).
+    }
+
+    // #1544 (review do @Altair): suspender NÃO é porta de mão única — `reativar` volta pra
+    // Provisionada. Sem isto, uma org suspensa por falta de pagamento nunca mais reativa.
+    #[test]
+    fn reativar_desfaz_a_suspensao() {
+        let mut o = org("acme");
+        o.suspender();
+        assert!(o.esta_suspensa());
+        o.reativar();
+        assert_eq!(o.estado(), EstadoOrg::Provisionada, "reativar volta pra Provisionada");
+        assert!(!o.esta_suspensa());
+        // Round-trip completo e idempotente: dá pra suspender de novo depois de reativar.
+        o.suspender();
+        assert!(o.esta_suspensa(), "o ciclo suspender→reativar→suspender é livre");
+        o.reativar();
+        o.reativar();
+        assert!(!o.esta_suspensa(), "reativar é idempotente");
     }
 
     // AC1 — a sessão carrega o que o SERVIDOR estabeleceu (principal + escopo); não há
