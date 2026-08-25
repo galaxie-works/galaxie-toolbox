@@ -20,6 +20,7 @@
 
 #![forbid(unsafe_code)]
 
+use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{
     autorizar, resolver_org, Decisao, Operacao, Org, OrgId, ResolveErro, Sessao,
 };
@@ -42,6 +43,27 @@ pub enum AcaoAdminOrg {
     VerificarDominio,
     EditarSettings,
     GerirAssinatura,
+}
+
+impl AcaoAdminOrg {
+    /// Nome ESTÁVEL e namespaced da ação, para a auditoria (#1571 cond. 1 do @Altair). `match`
+    /// EXAUSTIVO sem `_`: ação nova não compila até ganhar seu nome aqui — o `&str` do fio é
+    /// produzido pelo enum FECHADO, nunca por um literal de call site (typo não vira registro de
+    /// auditoria errado). Namespace `org_admin.` não colide com `back_office.` na mesma trilha.
+    #[must_use]
+    pub fn acao_nome(&self) -> &'static str {
+        match self {
+            AcaoAdminOrg::ListarMembros => "org_admin.listar_membros",
+            AcaoAdminOrg::ConvidarMembro => "org_admin.convidar_membro",
+            AcaoAdminOrg::RemoverMembro => "org_admin.remover_membro",
+            AcaoAdminOrg::MudarPapelMembro => "org_admin.mudar_papel_membro",
+            AcaoAdminOrg::ListarDominios => "org_admin.listar_dominios",
+            AcaoAdminOrg::ReivindicarDominio => "org_admin.reivindicar_dominio",
+            AcaoAdminOrg::VerificarDominio => "org_admin.verificar_dominio",
+            AcaoAdminOrg::EditarSettings => "org_admin.editar_settings",
+            AcaoAdminOrg::GerirAssinatura => "org_admin.gerir_assinatura",
+        }
+    }
 }
 
 /// Resultado negativo de uma ação admin. Dois motivos DISTINTOS, na ordem que não vaza
@@ -101,8 +123,34 @@ fn operacao_de(acao: &AcaoAdminOrg, org: &OrgId) -> Operacao {
 /// COMPORTAMENTAL: esta função **nunca lê** `org_alvo.tenant_m365`; a única fonte de
 /// autorização é a `Sessao` (o `Principal` da Galaxie). Provado por `ac3_claim_m365_nao_concede_admin`
 /// (planta o claim + Member ⇒ `Negado`), que mata o mutante que leria o claim pra conceder.
+/// **AUDITA nos DOIS ramos (#1571, simetria com `autorizar_back_office`):** toda decisão —
+/// permitida E negada (incl. `NaoEncontrada`/`Suspensa`) — emite um [`EventoAutz`] pelo
+/// `auditor`, obrigatório na assinatura. Como é a FUNÇÃO que emite (não o handler), superfície
+/// nova nasce auditada — "auditado" vira propriedade da autz, não de quem a chamou. O negado é o
+/// sinal (admin sem papel, org invisível/suspensa); só o sucesso perderia dez tentativas seguidas.
 #[must_use = "a decisão de autorização admin tem de ser respeitada — ignorá-la reabre AC1/AC2/AC3"]
 pub fn autorizar_acao_admin(
+    sessao: &Sessao,
+    acao: &AcaoAdminOrg,
+    org_alvo: &Org,
+    auditor: &dyn Auditor,
+) -> Result<(), AdminErro> {
+    let resultado = decidir_acao_admin(sessao, acao, org_alvo);
+    // EMITE SEMPRE, antes de devolver — os dois ramos. O ator é o principal que tentou (id, nunca
+    // claim); o alvo é o **id** da org (nunca o `Org`/claims). O nome vem do `acao_nome()` fechado.
+    auditor.registrar(&EventoAutz {
+        ator: sessao.principal().usuario(),
+        acao: acao.acao_nome(),
+        alvo: Some(&org_alvo.id),
+        resultado: if resultado.is_ok() { ResultadoAutz::Permitido } else { ResultadoAutz::Negado },
+    });
+    resultado
+}
+
+/// A DECISÃO pura (sem auditoria), na ordem que não vaza: visibilidade (404) → suspensão (403) →
+/// capacidade (403). Separada pra [`autorizar_acao_admin`] auditar AMBOS os ramos sem duplicar a
+/// lógica. Privada: a auditoria é obrigatória, então ninguém chama a decisão sem emitir.
+fn decidir_acao_admin(
     sessao: &Sessao,
     acao: &AcaoAdminOrg,
     org_alvo: &Org,
@@ -135,7 +183,18 @@ pub fn autorizar_acao_admin(
 mod tests {
     use super::*;
     use galaxie_platform_identity::{Escopo, OrgId, Principal, Sessao, UserId};
+    use std::cell::RefCell;
     use std::collections::BTreeSet;
+
+    /// Auditor no-op pros testes de DECISÃO (a EMISSÃO é testada à parte, com o espião).
+    struct AuditorNulo;
+    impl Auditor for AuditorNulo {
+        fn registrar(&self, _e: &EventoAutz) {}
+    }
+    /// Atalho: decide com auditor nulo — os testes de decisão não checam a emissão.
+    fn autz(s: &Sessao, acao: &AcaoAdminOrg, org_alvo: &Org) -> Result<(), AdminErro> {
+        autorizar_acao_admin(s, acao, org_alvo, &AuditorNulo)
+    }
 
     fn org(id: &str) -> Org {
         Org::nova(OrgId(id.into()), BTreeSet::new(), None)
@@ -158,7 +217,7 @@ mod tests {
     fn ac1_member_nao_administra() {
         let s = sessao_membro("u1", "orgA");
         assert_eq!(
-            autorizar_acao_admin(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
+            autz(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
             Err(AdminErro::Negado)
         );
     }
@@ -176,7 +235,7 @@ mod tests {
     fn suspensa_corta_ate_o_admin() {
         let s = sessao_admin("u1", "orgA");
         assert_eq!(
-            autorizar_acao_admin(&s, &AcaoAdminOrg::ListarMembros, &org_suspensa("orgA")),
+            autz(&s, &AcaoAdminOrg::ListarMembros, &org_suspensa("orgA")),
             Err(AdminErro::Suspensa),
             "org suspensa nega mesmo quem tem papel de admin"
         );
@@ -189,7 +248,7 @@ mod tests {
     fn suspensa_vem_antes_do_papel() {
         let s = sessao_membro("u1", "orgA");
         assert_eq!(
-            autorizar_acao_admin(&s, &AcaoAdminOrg::RemoverMembro, &org_suspensa("orgA")),
+            autz(&s, &AcaoAdminOrg::RemoverMembro, &org_suspensa("orgA")),
             Err(AdminErro::Suspensa),
             "membro de org suspensa vê Suspensa, não Negado (suspensão governa o papel)"
         );
@@ -202,7 +261,7 @@ mod tests {
     fn suspensa_e_invisivel_para_nao_membro() {
         let forasteiro = sessao_membro("u1", "orgB"); // membro da orgB, não da orgA
         assert_eq!(
-            autorizar_acao_admin(&forasteiro, &AcaoAdminOrg::ListarMembros, &org_suspensa("orgA")),
+            autz(&forasteiro, &AcaoAdminOrg::ListarMembros, &org_suspensa("orgA")),
             Err(AdminErro::NaoEncontrada),
             "não-membro não descobre a suspensão da org alheia (visibilidade antes de suspensão)"
         );
@@ -237,7 +296,7 @@ mod tests {
             AcaoAdminOrg::GerirAssinatura,
         ] {
             assert_eq!(
-                autorizar_acao_admin(&membro, &acao, &org_com_m365),
+                autz(&membro, &acao, &org_com_m365),
                 Err(AdminErro::Negado),
                 "o tenant M365 na Org não pode conceder {acao:?} a um member (role do Graph ≠ autz)"
             );
@@ -249,7 +308,7 @@ mod tests {
     fn ac2_org_alheia_e_404_nao_403() {
         let s = sessao_admin("u1", "orgA");
         assert_eq!(
-            autorizar_acao_admin(&s, &AcaoAdminOrg::ListarMembros, &org("orgB")),
+            autz(&s, &AcaoAdminOrg::ListarMembros, &org("orgB")),
             Err(AdminErro::NaoEncontrada)
         );
     }
@@ -263,7 +322,7 @@ mod tests {
         // "seria owner no M365"; na Galaxie, Member:
         let quase_admin = sessao_membro("u1", "orgA");
         assert_eq!(
-            autorizar_acao_admin(&quase_admin, &AcaoAdminOrg::GerirAssinatura, &org("orgA")),
+            autz(&quase_admin, &AcaoAdminOrg::GerirAssinatura, &org("orgA")),
             Err(AdminErro::Negado),
             "role 'owner' do M365 não pode virar autorização — só AdminOrg da Galaxie"
         );
@@ -285,7 +344,7 @@ mod tests {
             AcaoAdminOrg::GerirAssinatura,
         ] {
             assert_eq!(
-                autorizar_acao_admin(&s, &acao, &org("orgA")),
+                autz(&s, &acao, &org("orgA")),
                 Ok(()),
                 "org_admin devia poder {acao:?} na própria org"
             );
@@ -302,7 +361,7 @@ mod tests {
             Escopo::vazio(),
         );
         assert_eq!(
-            autorizar_acao_admin(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
+            autz(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
             Err(AdminErro::Negado)
         );
     }
@@ -316,7 +375,7 @@ mod tests {
             Escopo::vazio(),
         );
         assert_eq!(
-            autorizar_acao_admin(&s, &AcaoAdminOrg::EditarSettings, &org("orgA")),
+            autz(&s, &AcaoAdminOrg::EditarSettings, &org("orgA")),
             Err(AdminErro::Negado)
         );
     }
@@ -347,5 +406,72 @@ mod tests {
                 "{acao:?} saiu da Operacao ratificada (GerirOrg) — é autz nova, CHAMA O ARQUITETO antes de mergear"
             );
         }
+    }
+
+    // ---- #1571: a autz EMITE auditoria nos DOIS ramos (simetria com o back-office) ----
+
+    /// (ator, nome da ação, alvo, resultado) — o que o espião captura de cada `EventoAutz`.
+    type EventoEspiado = (UserId, String, Option<OrgId>, ResultadoAutz);
+    #[derive(Default)]
+    struct AuditorEspiao {
+        eventos: RefCell<Vec<EventoEspiado>>,
+    }
+    impl Auditor for AuditorEspiao {
+        fn registrar(&self, e: &EventoAutz) {
+            self.eventos
+                .borrow_mut()
+                .push((e.ator.clone(), e.acao.to_string(), e.alvo.cloned(), e.resultado));
+        }
+    }
+
+    // AC1+AC2 — permitido E negado emitem; o negado registra o ATOR e a ação tentada (a superfície
+    // grande que estava CEGA). Mutante que emitisse só num ramo faz `len()` cair pra 1.
+    #[test]
+    fn autz_emite_evento_em_permitido_e_negado() {
+        let espiao = AuditorEspiao::default();
+        assert!(autorizar_acao_admin(
+            &sessao_admin("u1", "orgA"),
+            &AcaoAdminOrg::ListarMembros,
+            &org("orgA"),
+            &espiao
+        )
+        .is_ok());
+        assert!(autorizar_acao_admin(
+            &sessao_membro("u2", "orgA"),
+            &AcaoAdminOrg::RemoverMembro,
+            &org("orgA"),
+            &espiao
+        )
+        .is_err());
+
+        let ev = espiao.eventos.borrow();
+        assert_eq!(ev.len(), 2, "toda decisão emite — não só o sucesso");
+        assert_eq!(
+            ev[0],
+            (UserId("u1".into()), "org_admin.listar_membros".to_string(),
+             Some(OrgId("orgA".into())), ResultadoAutz::Permitido)
+        );
+        assert_eq!(
+            ev[1],
+            (UserId("u2".into()), "org_admin.remover_membro".to_string(),
+             Some(OrgId("orgA".into())), ResultadoAutz::Negado),
+            "o negado registra ator+ação tentada — a superfície grande não some"
+        );
+    }
+
+    // O ramo NaoEncontrada (org invisível ao solicitante) TAMBÉM audita (Negado): tentar admin numa
+    // org que não se vê é sinal, e o alvo nomeia o que se tentou tocar.
+    #[test]
+    fn autz_audita_ate_org_invisivel() {
+        let espiao = AuditorEspiao::default();
+        let forasteiro = sessao_admin("x", "outra"); // admin de OUTRA org — orgA é invisível
+        assert_eq!(
+            autorizar_acao_admin(&forasteiro, &AcaoAdminOrg::ListarMembros, &org("orgA"), &espiao),
+            Err(AdminErro::NaoEncontrada)
+        );
+        let ev = espiao.eventos.borrow();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].3, ResultadoAutz::Negado, "org invisível também vira evento negado auditado");
+        assert_eq!(ev[0].2, Some(OrgId("orgA".into())), "o alvo nomeia a org que ele tentou tocar");
     }
 }

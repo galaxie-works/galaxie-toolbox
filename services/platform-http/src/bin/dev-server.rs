@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use galaxie_platform_back_office::{Auditor, EventoAutz};
+use galaxie_platform_identity::auditoria::{Auditor, EventoAutz};
 use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria, Dominio, EstadoDominio, Membro,
 };

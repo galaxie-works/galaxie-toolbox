@@ -161,7 +161,7 @@ async fn listar_membros(
     };
 
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel) — o `autorizar_acao_admin` faz a ordem.
-    match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarMembros, &org) {
+    match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarMembros, &org, &*estado.auditor) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
         Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
@@ -197,7 +197,7 @@ async fn org_autorizada(
         Ok(None) => return Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Ok(Some(o)) => o,
     };
-    match autorizar_acao_admin(sessao, acao, &org) {
+    match autorizar_acao_admin(sessao, acao, &org, &*estado.auditor) {
         Err(AdminErro::NaoEncontrada) => Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Err(AdminErro::Suspensa) => Err(resposta_de_erro(CodigoErro::OrgSuspensa)),
         Err(AdminErro::Negado) => Err(resposta_de_erro(CodigoErro::Negado)),
@@ -328,7 +328,7 @@ async fn listar_dominios(
     };
 
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel).
-    match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarDominios, &org) {
+    match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarDominios, &org, &*estado.auditor) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
         Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
@@ -485,7 +485,7 @@ mod tests {
     use galaxie_platform_web::emitir_sessao;
 
     use crate::sessao::{Borda, SessaoAtual};
-    use galaxie_platform_back_office::{Auditor, EventoAutz, ResultadoAutz};
+    use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
     use galaxie_platform_identity::armazem::{
         ArmazemDominio, ArmazemDominioMemoria, ArmazemMembro, ArmazemMembroMemoria, ArmazemOrg,
         ArmazemOrgMemoria, Dominio, ErroArmazem, EstadoDominio, Membro,
@@ -595,14 +595,14 @@ mod tests {
     /// Auditor que CAPTURA (Mutex — é `Send + Sync` pro estado da borda) pros testes da cond. 4.
     #[derive(Default)]
     struct AuditorEspiao {
-        eventos: MutexStd<Vec<(UserId, AcaoBackOffice, ResultadoAutz)>>,
+        eventos: MutexStd<Vec<(UserId, String, ResultadoAutz)>>,
     }
     impl Auditor for AuditorEspiao {
         fn registrar(&self, e: &EventoAutz) {
             self.eventos
                 .lock()
                 .unwrap()
-                .push((e.ator.clone(), e.acao.clone(), e.resultado));
+                .push((e.ator.clone(), e.acao.to_string(), e.resultado));
         }
     }
 
@@ -1029,7 +1029,7 @@ mod tests {
         assert_eq!(ev[0].2, ResultadoAutz::Permitido, "staff → permitido auditado");
         assert_eq!(
             ev[1],
-            (UserId("u1".into()), AcaoBackOffice::ListarOrgs, ResultadoAutz::Negado),
+            (UserId("u1".into()), "back_office.listar_orgs".to_string(), ResultadoAutz::Negado),
             "não-staff → negado auditado, com o ator que tentou (não some)"
         );
     }

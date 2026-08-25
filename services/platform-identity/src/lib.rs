@@ -37,6 +37,11 @@ pub mod sessao;
 /// no crate que POSSUI a entidade, com `Result` desde o dia um. Impl em memória; Postgres é fatia.
 pub mod armazem;
 
+/// Auditoria de decisões de autz (#1571, @Altair): o sink (`Auditor`) e o evento SEMÂNTICO
+/// (`EventoAutz`) na FUNDAÇÃO, pra TODA função de autz (back-office, admin-org, e as próximas)
+/// emitir pelo MESMO sink — "auditado" vira propriedade da autz, não de qual crate a chamou.
+pub mod auditoria;
+
 /// Id opaco de um humano. Newtype pra não confundir com `OrgId` nem com um id de device.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UserId(pub String);
