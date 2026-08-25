@@ -155,19 +155,56 @@ test("#1490 — a porta não declara rota que o contrato não tem", () => {
  * `:` ou `,`. Aproximação deliberada: o objetivo não é validar o tipo, é
  * detectar **campo que o FE usa e o contrato não tem**.
  */
+/**
+ * Parte uma linha de tabela nas suas células, honrando o escape `\|`.
+ *
+ * Um `split("|")` cru quebra a célula ao meio toda vez que o doc escreve uma
+ * união (`"ativa"\|"inadimplente"`), e aí as colunas seguintes andam de lugar.
+ * É a MESMA classe do erro que eu já tinha cometido lendo coluna por posição —
+ * só que aqui quem desloca é o conteúdo, não o formato da tabela.
+ */
+function celulasDaLinha(linha: string): string[] {
+  return linha
+    .split(/(?<!\\)\|/)
+    .map((c) => c.replace(/\\\|/g, "|").trim());
+}
+
+/**
+ * A célula de SUCESSO de uma linha: a primeira, depois da rota, que traz um
+ * código HTTP.
+ *
+ * Por que "a primeira com status" e não uma posição fixa: as tabelas do doc têm
+ * colunas diferentes por seção (a de admin tem `Ação`, a de conta não). E por
+ * que não "qualquer célula da linha" — que era o que eu fazia — está no teste
+ * de regressão logo abaixo: a linha do `GET /auth/{provedor}` tem
+ * `provedor ∈ {microsoft, microsoft-personal, google}` nas **Notas**, e isso é
+ * uma allowlist de provedores, não um corpo de resposta. A guarda lia aquilo
+ * como "os campos que a rota devolve".
+ *
+ * O estrago não era um falso positivo qualquer: a asserção que existe pra
+ * fechar a porta ("ou ela não declara corpo") passava com lixo NÃO-VAZIO — ou
+ * seja, falhava ABERTO justamente onde ela devia falhar fechado.
+ */
+function celulaDeSucesso(celulas: string[]): string | null {
+  for (const c of celulas.slice(3)) {
+    if (/(^|[^0-9])[1-5][0-9][0-9]([^0-9]|$)/.test(c)) return c;
+  }
+  return null;
+}
+
 function camposDaRota(rota: string): Set<string> | null {
   const doc = readFileSync(CONTRATO, "utf8");
   for (const linha of doc.split("\n")) {
     if (!linha.startsWith("|")) continue;
-    const celulas = linha.split("|").map((c) => c.trim());
+    const celulas = celulasDaLinha(linha);
     if (celulas[2]?.replace(/`/g, "") !== rota) continue;
-    // Varre as células DEPOIS da rota, em vez de escolher uma por posição.
-    // Duas armadilhas, ambas expostas por asserção e não por leitura:
-    //  1. as tabelas do doc têm colunas diferentes por seção (a de admin tem
-    //     `Operação`, a de conta não) — pegar `length-2` lia a coluna errada;
-    //  2. incluir a célula da ROTA fazia o regex casar o `{org}` do caminho
-    //     como se fosse campo do corpo, e aí TODO campo real virava "inventado".
-    const chaves = celulas.slice(3).join(" ").match(/\{([^}]*)\}/);
+    // Só a célula de SUCESSO. Incluir a da ROTA fazia o `{org}` do caminho
+    // virar campo; incluir as NOTAS fazia a allowlist do `/auth/{provedor}`
+    // virar corpo. Nos dois casos o defeito é o mesmo: ler chaves de onde o
+    // contrato não declara corpo.
+    const sucesso = celulaDeSucesso(celulas);
+    if (!sucesso) continue;
+    const chaves = sucesso.match(/\{([^}]*)\}/);
     if (!chaves?.[1]) continue;
     const campos = new Set<string>();
     for (const parte of chaves[1].split(",")) {
@@ -285,6 +322,51 @@ test("#1490 — o FE não inventa CAMPO que o contrato não tem", () => {
         `não devolve — o FE está inventando o corpo:\n  ${inventados.join("\n  ")}`,
     );
   }
+});
+
+test("#1490 — a leitura de campos não confunde NOTA com corpo (regressão)", () => {
+  // Achado por sonda, não por leitura: varri TODA rota do contrato perguntando
+  // de qual célula saíam as chaves. Uma respondeu errado.
+  //
+  // `GET /auth/{provedor}` não declara corpo (devolve `302`). O que ele tem é
+  // `provedor ∈ {microsoft, microsoft-personal, google}` nas Notas — allowlist
+  // de provedores. A versão anterior juntava todas as células depois da rota e
+  // pegava o primeiro `{...}`, então lia aqueles nomes como campos.
+  //
+  // Por que isso importa mais do que parece: `camposDaRota` devolvendo
+  // NÃO-VAZIO é o que faz a asserção `size > 0` passar. Uma rota sem corpo
+  // declarado passava a ter "corpo", e a guarda que devia falhar FECHADA
+  // (contrato manda primeiro) falhava ABERTA. Foi o que barrou o `/admin/orgs`
+  // hoje — e só barrou porque as Notas dele, por sorte, não têm chaves.
+  assert.equal(
+    camposDaRota("/auth/{provedor}"),
+    null,
+    "`/auth/{provedor}` não declara corpo (302); ler as Notas dele como corpo " +
+      "faz a guarda aprovar campo inventado",
+  );
+
+  // O outro lado: as rotas que DE FATO declaram corpo continuam sendo lidas —
+  // senão o conserto acima seria só a guarda ficando cega, que passa igual.
+  for (const [rota, esperados] of [
+    ["/me/orgs", ["org", "papel", "estado"]],
+    ["/orgs/{org}/membros", ["uid", "nome", "email", "papel"]],
+    ["/orgs/{org}/dominios", ["dominio", "estado"]],
+  ] as const) {
+    const lidos = camposDaRota(rota);
+    assert.ok(lidos, `parei de ler o corpo de \`${rota}\` — guarda cega passa igual`);
+    for (const campo of esperados) {
+      assert.ok(
+        lidos.has(campo),
+        `\`${rota}\`: perdi o campo \`${campo}\` (li: ${[...lidos].join(", ")})`,
+      );
+    }
+  }
+
+  // E a linha que o `\|` escapado quebrava: a união do `status` fragmentava a
+  // célula num `split("|")` cru, e as colunas seguintes andavam de lugar.
+  const assinatura = camposDaRota("/me/assinatura");
+  assert.ok(assinatura?.has("plano") && assinatura.has("status"),
+    `união com \`\\|\` deslocou as colunas (li: ${assinatura ? [...assinatura].join(", ") : "null"})`);
 });
 
 test("#1490 — ninguém contorna a porta de rede (fetch cru fora do api.ts)", () => {
