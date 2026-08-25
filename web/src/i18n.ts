@@ -61,6 +61,12 @@ export interface Dicionario {
   // então mandar pedir acesso a ele é mandar a pessoa ao lugar errado.
   orgSuspensa: string;
   orgSuspensaDetalhe: string;
+  // Quando a FAIXA da página já anunciou a suspensão, o painel não repete a
+  // mesma frase — diz o que é DELE: este conteúdo não vem. Achado na e2e do
+  // composto (25/08): faixa e painel reportavam o mesmo fato com o mesmo texto,
+  // e a tela gaguejava. Nenhum duplo mostrava isso, porque cada teste exercitava
+  // um caminho só; só o composto contra a borda real põe os dois na mesma tela.
+  orgSuspensaPainel: string;
   naoEhSuaOrg: string;
   naoEhSuaOrgDetalhe: string;
   // Estado TEMPORÁRIO: o contrato exige `/orgs/{org}` mas não há rota de onde
@@ -132,6 +138,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     orgSuspensa: "Organização suspensa",
     orgSuspensaDetalhe:
       "O acesso está suspenso. Fale com o suporte para reativar a organização.",
+    orgSuspensaPainel:
+      "Este conteúdo fica indisponível enquanto a organização estiver suspensa.",
     // Deliberadamente vago: não confirma nem nega que a organização exista.
     naoEhSuaOrg: "Organização não encontrada",
     naoEhSuaOrgDetalhe: "Confira se você está na conta certa.",
@@ -194,6 +202,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     orgSuspensa: "Organization suspended",
     orgSuspensaDetalhe:
       "Access is suspended. Contact support to reactivate the organization.",
+    orgSuspensaPainel:
+      "This content is unavailable while the organization is suspended.",
     // Deliberadamente vago: não confirma nem nega que a organização exista.
     naoEhSuaOrg: "Organization not found",
     naoEhSuaOrgDetalhe: "Check whether you're in the right account.",
