@@ -135,10 +135,21 @@ Sob `/orgs/{org}`; `{org}` é conferido contra a sessão via `autorizar_acao_adm
 | `POST` | `/orgs/{org}/membros` | sim | `ConvidarMembro` | `201` |
 | `DELETE` | `/orgs/{org}/membros/{uid}` | sim | `RemoverMembro` | `204` |
 | `PATCH` | `/orgs/{org}/membros/{uid}` | sim | `MudarPapelMembro` | `200` |
+| `GET` | `/orgs/{org}/dominios` | não | `ListarDominios` | `200` `[{ dominio, estado: "pendente"\|"verificado" }]` |
 | `POST` | `/orgs/{org}/dominios` | sim | `ReivindicarDominio` | `201` pendente |
 | `POST` | `/orgs/{org}/dominios/{dom}/verificacao` | sim | `VerificarDominio` | `200` \| `422` (DNS não confere) |
+| `GET` | `/orgs/{org}/settings` | não | `LerSettings` | `200` (mesmo shape do `PATCH`) |
 | `PATCH` | `/orgs/{org}/settings` | sim | `EditarSettings` | `200` |
+| `GET` | `/orgs/{org}/assinatura` | não | `LerAssinatura` | `200` (espelha o corpo do `PUT`) |
 | `PUT` | `/orgs/{org}/assinatura` | sim | `GerirAssinatura` | `200` |
+
+> **v1.3 — leituras que faltavam (lacuna do @Pollux no #1490):** só `membros` tinha `GET`; "não se
+> gere o que não se vê". Escolha de desenho (o @Pollux ofereceu `GET` agregado `/orgs/{org}` **ou** um
+> por recurso, "à escolha do BE): **um `GET` por recurso**, espelhando cada escrita 1:1 — cada leitura
+> é autorizada **igual à sua escrita** (mesmo `{org}` conferido contra a sessão; org alheia ⇒ `404`,
+> própria org sem papel ⇒ `403`), sem acoplar recursos e sem o cliente supor estado antes de um `PATCH`.
+> `assinatura`: a shape concreta nasce com o **#1470** (Stripe, bloqueado no PO) — a leitura só espelha
+> o corpo do `PUT` quando ele existir. Novas `AcaoAdminOrg`: `ListarDominios`/`LerSettings`/`LerAssinatura`.
 
 > **⚠️ Reivindicar domínio NÃO devolve `409` cross-tenant (fix do @Altair — era um ORÁCULO):** se a
 > org A pede `acme.com` e leva `409` porque a org B reivindicou, A **descobre que a Acme é cliente** —
@@ -164,7 +175,7 @@ suspender são rotas SEPARADAS (fix do @Altair):** colapsá-las tornaria a audit
 payload, e **suspender é a operação mais destrutiva do produto** — merece a sua própria linha e log.
 | Método | Rota | Muta? | Sucesso | Notas |
 |---|---|---|---|---|
-| `GET` | `/admin/orgs` | não | `200` | só staff; não-staff ⇒ `404` (não revela o back-office) |
+| `GET` | `/admin/orgs` | não | `200` (corpo em aberto — ver nota `estado`) | só staff; não-staff ⇒ `404` (não revela o back-office) |
 | `POST` | `/admin/orgs/{org}/provisionamento` | sim | `202` | provisiona; auditado |
 | `POST` | `/admin/orgs/{org}/suspensao` | sim | `202` | **suspende (destrutivo); auditado à parte** |
 
@@ -174,7 +185,22 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > nome de erro (`Negado`) vira `403` no admin-org (§4.3, o solicitante JÁ é da org) e `404` aqui — **não
 > é incoerência a harmonizar**, é o invariante 1 aplicado a cada contexto. A auditoria grava a
 > `AcaoBackOffice` específica (provisionar/suspender/…), não uma `Operacao` genérica.
+>
+> **O `404` vale também pro NÃO-AUTENTICADO (v1.3, achado do @Altair na borda #1505 fatia 2):** sem
+> sessão, `/admin/*` devolve **`404`, não `401`** — um `401` já revelaria a existência do back-office
+> a quem nem sessão tem ("fechar a porta e deixar a janela"). É o único ponto do contrato onde a
+> AUSÊNCIA de sessão não vira `401`: nas superfícies visíveis (`/me`, `/orgs/{org}/…`) sem sessão é
+> `401` (dizer "autentique-se" não revela nada); só onde a existência é o segredo o não-autenticado
+> cai no mesmo `404`. **Custo aceito e nomeado:** um staff com sessão expirada recebe `404` e não
+> distingue "não sou staff" de "minha sessão venceu" — o preço de o back-office não se anunciar.
 
+> **`estado` da org + corpo do `GET /admin/orgs` — DEFERIDOS (separados desta v1.3 a pedido do
+> @Altair):** o campo `estado` foi ratificado com 3 condições, mas a 3ª — **o que `suspensa` FAZ**
+> (nega acesso vs. rótulo administrativo) — é decisão de PRODUTO (PO), roteada via @Mira. O `estado`
+> só entra fechado quando essa frase existir, e não vale acoplar as leituras §4.3 (aprovadas sem
+> ressalva) a uma pergunta sobre outra seção. Volta num PR próprio quando o PO decidir; até lá, o
+> corpo de `GET /admin/orgs` fica em aberto (o back-office ainda devolve `[]` honesto, sem store).
+>
 > **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
 > estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
 > propriedades da TABELA. Os invariantes **1, 2, 5, 6** são comportamentais — vivem na borda (#1505)
@@ -186,6 +212,13 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 
 `v1` é este documento + `platform-web/src/contrato.rs`. Mudança incompatível ⇒ `/api/v2` + nova
 tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bump.
+
+**v1.3 (25/08):** leituras que faltavam em §4.3 (`GET` de `dominios`/`settings`/`assinatura` — lacuna
+do @Pollux #1490, "não se gere o que não se vê"; um `GET` por recurso, autorizado igual à escrita) +
+a regra do NÃO-autenticado→`404` em `/admin/*` (§4.5, achado do @Altair na borda). O corpo de
+`GET /admin/orgs` com `estado` foi **separado** (decisão do @Altair) e volta num PR próprio quando o
+PO decidir o que `suspensa` FAZ — não vale prender as leituras a uma pergunta de produto sobre outra
+seção. Tudo adição compatível (append), sem bump de `/v1`.
 
 **v1.2 (24/08):** §2 reescrita pro **modelo federado** (decisão @Altair — nem M365-only nem
 email/senha); `POST /session` removido (o login nasce do callback verificado); `GET /me/orgs`

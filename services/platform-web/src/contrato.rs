@@ -55,10 +55,16 @@ pub const CONTRATO: &[Rota] = &[
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/membros",                  muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     Rota { metodo: Metodo::Delete, caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    // Leitura de cada recurso ANTES da escrita (v1.3, lacuna do @Pollux #1490): "não se gere o que
+    // não se vê" — sobretudo settings, cujo PATCH sem GET obriga o cliente a SUPOR o estado atual.
+    // Cada GET é autorizado igual à sua escrita (mesmo {org} conferido contra a sessão); org alheia ⇒ 404.
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/dominios",                 muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // Reivindicar é livre/pendente (201) — SEM 409 cross-tenant (era oráculo); a guarda é a verificação.
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios",                 muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios/{dom}/verificacao", muta: true, sucesso: 200, autenticada: true, so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/settings",                 muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/settings",                 muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/assinatura",               muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     Rota { metodo: Metodo::Put,    caminho: "/api/v1/orgs/{org}/assinatura",               muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // 4.4 Config do app — user-scoped (/me/config), NÃO org (fix @Castor)
     Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/config",                           muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
