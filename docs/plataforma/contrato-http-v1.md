@@ -194,11 +194,29 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > cai no mesmo `404`. **Custo aceito e nomeado:** um staff com sessão expirada recebe `404` e não
 > distingue "não sou staff" de "minha sessão venceu" — o preço de o back-office não se anunciar.
 
-> **`estado` da org (v1.3, ratifico @Altair pendente):** a lista de back-office precisa mostrar
-> `provisionada`/`suspensa` pra ser acionável (senão o staff não sabe se provisiona ou suspende). É um
-> conceito de **ciclo de vida** que `provisionar`/`suspender` já implicam, mas que `Org` (hoje `{ id,
-> dominios, tenant_m365 }`) ainda não carrega — modelado na fatia de persistência. **NÃO** expõe
-> `tenant_m365` (claim sensível; o staff não precisa dele pra provisionar/suspender — mínimo necessário).
+> **`estado` da org (v1.3, RATIFICADO pelo @Altair com 3 condições):** a lista de back-office precisa
+> mostrar `provisionada`/`suspensa` pra ser acionável (senão o staff não sabe se provisiona ou
+> suspende). É um conceito de **ciclo de vida** que `provisionar`/`suspender` já implicam, mas que
+> `Org` (hoje `{ id, dominios, tenant_m365 }`) ainda não carrega — modelado na fatia de persistência.
+> **NÃO** expõe `tenant_m365` (claim sensível; mínimo necessário).
+>
+> 1. **No modelo, `estado` é PRIVADO e só muda por transição** (`provisionar`/`suspender`) — nunca
+>    campo livre em `Org`. Um `pub estado` daria um segundo caminho pra suspender, e o tipo é que
+>    garante a ausência de porta lateral (mesma doutrina de `Sessao::estabelecer`/`Escopo`), não a
+>    revisão. (Constraint da fatia de persistência que introduzir o campo.)
+> 2. **No FE, `estado` é união ABERTA: valor desconhecido ⇒ neutro e SEM AÇÃO, jamais `provisionada`.**
+>    Um terceiro estado vai existir (`em_provisionamento`, `encerrada`); o cliente TOLERA desconhecido
+>    (renderiza neutro) em vez de uma união fechada que quebraria — acrescentar variante **não** é
+>    breaking de `/v1`. Cair pro permissivo (mostrar suspensa como ativa) é **falha de segurança com
+>    cara de bug de UI**, proibido.
+> 3. ⚠️ **O que `suspensa` FAZ é decisão de PRODUTO (PO), roteada via @Mira — o `estado` só entra
+>    fechado quando esta frase existir.** Sem ponto de imposição, `suspender` não suspende nada (os
+>    membros seguem entrando) e vira botão-que-mente — o *"gate que nasce cego é pior que gate nenhum"*
+>    (#1428). Duas saídas, ambas ESCRITAS no contrato quando o PO decidir: **(a) `suspensa` NEGA** — a
+>    autz de ações com escopo de org consulta o estado; org suspensa ⇒ negado com o **mesmo código das
+>    outras negativas** (não pode virar oráculo "existe e está suspensa"); **(b) `suspensa` é RÓTULO
+>    administrativo** e o contrato diz explicitamente que **não** corta acesso. **Até o PO responder,
+>    o contrato NÃO afirma corte de acesso** e o back-office-list não deve ser lido como imposição.
 >
 > **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
 > estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
