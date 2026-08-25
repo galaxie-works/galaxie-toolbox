@@ -109,6 +109,17 @@ export const CAMINHOS = {
  */
 export type Resultado<T> =
   | { estado: "pronto"; dados: T }
+  /**
+   * 401 — **sem sessão**. Não é erro de carregamento: é falta de login, e a UI
+   * manda ao `/login` (mesmo sinal que o `use-carregar` do #1489 já usa).
+   *
+   * Nasceu de um defeito MEDIDO contra a borda real: sem cookie, o
+   * `GET /me/orgs` devolvia 401, isso caía em `erro`, a descoberta ficava nula e
+   * a tela dizia *"organização não identificada"* — mandando o usuário procurar
+   * problema de org quando o problema era não estar logado. Os testes não
+   * pegaram porque nenhum duplo devolvia 401; só o servidor de verdade devolve.
+   */
+  | { estado: "naoAutenticado" }
   /** 403 — é da org, mas não é admin dela. Pode saber que a org existe. */
   | { estado: "naoEhAdmin" }
   /** 404 — não pertence à org (ou ela não existe). Não pode saber qual dos dois. */
@@ -147,6 +158,7 @@ export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
   } catch (e) {
     return { estado: "erro", motivo: e instanceof Error ? e.message : "rede" };
   }
+  if (resposta.status === 401) return { estado: "naoAutenticado" };
   if (resposta.status === 403) return { estado: "naoEhAdmin" };
   if (resposta.status === 404) return { estado: "naoEhSuaOrg" };
   if (!resposta.ok) {
