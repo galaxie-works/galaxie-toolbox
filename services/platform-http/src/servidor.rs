@@ -121,10 +121,27 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(ArmazemMembroMemoria::novo()),
         Arc::new(ArmazemDominioMemoria::novo()),
     );
-    let app = rotas(borda);
+    // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
+    servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await
+}
 
-    // `0.0.0.0`: atrás do Traefik, que termina o TLS de entrada e encaminha na mesma origem.
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.porta));
+/// Relógio de produção exposto: o `dev-server` (fatia 2) usa o MESMO `SystemTime` — a sessão
+/// semeada tem prazos NORMAIS (condição 2 do @Altair: sessão de dev não é mais poderosa que a real).
+pub fn agora_de_producao() -> u64 {
+    agora_unix()
+}
+
+/// Serve uma `Borda` JÁ MONTADA no `addr` DADO — o mecanismo de bind+serve, compartilhado pelo
+/// binário de produção ([`serve`], que monta a Borda vazia sem auth e escuta em `0.0.0.0`) e pelo
+/// `dev-server` (fatia 2, que monta a Borda com sessão semeada e escuta só em `127.0.0.1`).
+///
+/// ⚠️ **O `addr` é DECISÃO DO CHAMADOR, não uma constante do projeto (achado do @Altair, #1540):**
+/// o `0.0.0.0` que é certo atrás do Traefik é o FURO num binário que cunha sessão e imprime cookie.
+/// Por isso o bind não vive aqui — cada bin escolhe onde escuta, e a diferença é a segurança.
+/// A SEMEADURA também não mora aqui — mora no bin do dev-server (condição 1: se ficasse na lib atrás
+/// de flag, alguém a ligaria um dia).
+pub async fn servir(borda: crate::EstadoBorda, addr: SocketAddr) -> Result<()> {
+    let app = rotas(borda);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind em {addr}"))?;

@@ -273,9 +273,11 @@ jobs:
         run: cargo test
 
       # #1505: borda HTTP (Router axum). axum/tokio, sem OpenSSL (TLS é do Traefik).
+      # `--all-features` liga a feature `dev` p/ COMPILAR o bin `dev-server` (gated, #1540) — senão
+      # o CI não o veria (só é construído com --features dev). O prod (main.rs) sai em qualquer caso.
       - name: services/platform-http (borda Router)
         working-directory: services/platform-http
-        run: cargo test
+        run: cargo test --all-features
 
       # #1473: conta/perfil (/me) — domínio puro do scoping à sessão, depende da fundação.
       - name: services/platform-conta (conta/perfil /me)
@@ -369,7 +371,7 @@ jobs:
 
       - name: clippy platform-http (-D warnings — nasceu limpo)
         working-directory: services/platform-http
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       # #1473: conta/perfil (/me) entra no gate de clippy no mesmo PR do teste (RB7).
       - name: clippy platform-conta (-D warnings)

@@ -9,6 +9,20 @@ edition = "2021"
 license = "UNLICENSED"
 publish = false
 
+# O binário de PRODUÇÃO (`src/main.rs`) sai por padrão. O `dev-server` (porta de sessão sintética,
+# fatia 2 do #1505) só é CONSTRUÍDO com `--features dev` — achado do @Altair (#1540): um
+# `cargo build --release` normal NÃO deve produzi-lo, senão a garantia "não está no artefato" dependia
+# de um Dockerfile cuidadoso. Isto NÃO é a "flag" recusada no desenho (que escolheria caminho DENTRO
+# do artefato de prod) — aqui a feature decide se um binário SEPARADO nasce; o `main` segue sem uma
+# linha de semeadura, ligada ou não.
+[features]
+dev = []
+
+[[bin]]
+name = "dev-server"
+path = "src/bin/dev-server.rs"
+required-features = ["dev"]
+
 [dependencies]
 # `tokio` + `http1` habilitam `axum::serve` (o binário sobe o servidor). O TLS de ENTRADA é do
 # Traefik (mesma origem) — nada de OpenSSL aqui. Sem `json`: os corpos são montados à mão / via serde_json.
