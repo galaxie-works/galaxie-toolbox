@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
-use galaxie_platform_back_office::{AcaoBackOffice, Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_conta::ArmazemPerfilMemoria;
 use galaxie_platform_config::ArmazemPrefMemoria;
 use galaxie_platform_identity::armazem::{
@@ -57,17 +57,6 @@ struct EventoAuditoriaLog<'a> {
     alvo: &'a str,
 }
 
-/// Nome de contrato da ação pro log — explícito, não `Debug` (que carregaria o id embutido e mudaria
-/// se alguém renomeasse a variante).
-fn acao_nome(acao: &AcaoBackOffice) -> &'static str {
-    match acao {
-        AcaoBackOffice::ListarOrgs => "listar_orgs",
-        AcaoBackOffice::ProvisionarOrg(_) => "provisionar_org",
-        AcaoBackOffice::VerificarOrg(_) => "verificar_org",
-        AcaoBackOffice::SuspenderOrg(_) => "suspender_org",
-    }
-}
-
 /// Auditor de produção **INTERINO**: emite o evento como linha JSON estruturada em stdout, que o
 /// coletor (OpenObserve) raspa. O DESTINO próprio (fatia (b) do #1505, cardada com a @Mira) troca
 /// isto por um emissor que sai da caixa; até lá, stdout estruturado já é a direção certa (sair do
@@ -81,11 +70,13 @@ impl Auditor for AuditorLog {
             ResultadoAutz::Negado => "negado",
         };
         let ev = EventoAuditoriaLog {
-            tipo: "autz_backoffice",
+            // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
+            // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
+            tipo: "autz",
             ator: &e.ator.0,
-            acao: acao_nome(e.acao),
+            acao: e.acao,
             resultado,
-            alvo: e.acao.alvo().map(|o| o.0.as_str()).unwrap_or(""),
+            alvo: e.alvo.map(|o| o.0.as_str()).unwrap_or(""),
         };
         // Se a serialização falhar (não deve, campos são `&str`), não emitir é melhor que emitir lixo.
         if let Ok(linha) = serde_json::to_string(&ev) {

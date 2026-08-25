@@ -11,7 +11,7 @@ use axum::http::header;
 use axum::http::request::Parts;
 use axum::response::Response;
 
-use galaxie_platform_back_office::Auditor;
+use galaxie_platform_identity::auditoria::Auditor;
 use galaxie_platform_conta::ArmazemPerfil;
 use galaxie_platform_config::ArmazemPref;
 use galaxie_platform_identity::armazem::{ArmazemDominio, ArmazemMembro, ArmazemOrg};

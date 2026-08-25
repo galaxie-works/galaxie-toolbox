@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
-use galaxie_platform_back_office::{Auditor, EventoAutz};
+use galaxie_platform_identity::auditoria::{Auditor, EventoAutz};
 use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria, Dominio, EstadoDominio, Membro,
 };
@@ -40,6 +40,11 @@ impl Auditor for AuditorDev {
 }
 
 const ORG_DEV: &str = "dev-org";
+/// 2ª org, SUSPENSA, pro composto do #1544 (pedido da @Íris): provar `403 org_suspensa` + a faixa
+/// do FE contra a borda REAL. Vem com a PRÓPRIA sessão de admin — `resolver_org` dá visibilidade por
+/// `principal.org == alvo` (não por escopo), então uma org suspensa sem dono que a veja daria 404
+/// (invisível), NÃO o 403 do composto.
+const ORG_DEV_SUSPENSA: &str = "dev-org-suspensa";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -57,6 +62,18 @@ async fn main() -> Result<()> {
     );
     let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, agora_de_producao());
 
+    // (1b) 2ª sessão: admin da org SUSPENSA (composto do #1544, @Íris). MESMO armazém, prazos NORMAIS
+    // (mesmo relógio). Espelha `borda_admin_org(true)` do router: um `AdminOrg` cujo PRINCIPAL É a org
+    // suspensa — só assim `resolver_org` a vê (visibilidade→suspensão→papel) e a suspensão governa ⇒ 403.
+    let sessao_susp = Sessao::estabelecer(
+        Principal::AdminOrg {
+            usuario: UserId("dev-admin-susp".into()),
+            org: OrgId(ORG_DEV_SUSPENSA.into()),
+        },
+        Escopo::de_orgs([OrgId(ORG_DEV_SUSPENSA.into())]),
+    );
+    let (id_susp, _sc2) = emitir_sessao(&mut armazem, sessao_susp, agora_de_producao());
+
     // (2) Dados de dev pros 200: uma org, um membro, um domínio verificado + um pendente.
     let mut orgs = ArmazemOrgMemoria::novo();
     orgs.inserir(Org::nova(
@@ -64,6 +81,14 @@ async fn main() -> Result<()> {
         BTreeSet::from([format!("{ORG_DEV}.com")]),
         None,
     ));
+    // A 2ª org, SUSPENSA (composto do #1544): domínio próprio pra não colidir com o da `ORG_DEV`.
+    let mut org_susp = Org::nova(
+        OrgId(ORG_DEV_SUSPENSA.into()),
+        BTreeSet::from([format!("{ORG_DEV_SUSPENSA}.com")]),
+        None,
+    );
+    org_susp.suspender();
+    orgs.inserir(org_susp);
     let mut membros = ArmazemMembroMemoria::novo();
     membros.inserir(
         OrgId(ORG_DEV.into()),
@@ -81,6 +106,16 @@ async fn main() -> Result<()> {
             nome: "Segundo Membro".into(),
             email: "m2@dev-org.com".into(),
             papel: Papel::Member,
+        },
+    );
+    // O admin da org SUSPENSA — membro pra que a rota seja real; a suspensão governa antes do papel.
+    membros.inserir(
+        OrgId(ORG_DEV_SUSPENSA.into()),
+        Membro {
+            uid: UserId("dev-admin-susp".into()),
+            nome: "Admin (Org Suspensa)".into(),
+            email: "admin@dev-org-suspensa.com".into(),
+            papel: Papel::OrgAdmin,
         },
     );
     let mut dominios = ArmazemDominioMemoria::novo();
@@ -128,6 +163,11 @@ async fn main() -> Result<()> {
     eprintln!("  Cookie pro caminho PERMITIDO (injeta no request/browser):");
     eprintln!("    {cookie}");
     eprintln!("  Ex.: curl -H 'Cookie: {cookie}' http://localhost:8080/api/v1/orgs/{ORG_DEV}/membros");
+    let cookie_susp = format!("{NOME_COOKIE_SESSAO}={}", id_susp.0);
+    eprintln!("  ─");
+    eprintln!("  Cookie pro composto ORG SUSPENSA (#1544 — admin de '{ORG_DEV_SUSPENSA}'):");
+    eprintln!("    {cookie_susp}");
+    eprintln!("  Ex.: curl -H 'Cookie: {cookie_susp}' http://localhost:8080/api/v1/orgs/{ORG_DEV_SUSPENSA}/membros  # ⇒ 403 org_suspensa");
     eprintln!("──────────────────────────────────────────────────────────────");
 
     // ⚠️ Escuta SÓ em `127.0.0.1` (achado do @Altair, #1540): este bin cunha uma sessão válida e
