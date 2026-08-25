@@ -1,0 +1,15 @@
+# Conta/perfil (/me) da plataforma web — #1473 (épico #1265). Depende da fundação #1469.
+# Crate STANDALONE (padrão da casa em services/*) — DOMÍNIO PURO: o scoping de `/me` à
+# sessão, sem I/O, sem rede, sem OpenSSL → `cargo test` local e instantâneo. A borda HTTP
+# (rotas /me/*) e a persistência são fatias seguintes que CHAMAM esta lógica.
+[package]
+name = "galaxie-platform-conta"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# A fundação de identidade/autorização (#1469): Principal, Sessao, UserId. É dela que o
+# escopo de `/me` sai — nunca de um id/payload do cliente.
+galaxie-platform-identity = { path = "../platform-identity" }

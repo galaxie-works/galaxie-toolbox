@@ -79,7 +79,11 @@ export type ClientMessage =
   | { type: "presence"; device_id: string }
   | { type: "create_assisted_session"; ttl_seconds?: number }
   | { type: "redeem_assisted_session"; code: string }
-  | { type: "signal"; peer_id: string; kind: SignalKind; payload: string };
+  | { type: "signal"; peer_id: string; kind: SignalKind; payload: string }
+  // #1148: pede credencial TURN FRESCA pela conexão JÁ autenticada — sem
+  // refazer pareamento nem novo código de 8 dígitos. Variante unitária no
+  // `protocol.rs` (`ClientMessage::RenewIceServers`), então só o `type` viaja.
+  | { type: "renew_ice_servers" };
 
 /** Mensagens que o SERVER envia (tag `type`, snake_case). */
 export type ServerMessage =
@@ -95,6 +99,11 @@ export type ServerMessage =
   | { type: "assisted_session_code"; code: string; expires_at_unix_seconds: number }
   | { type: "session_paired"; peer_id: string }
   | { type: "signal"; peer_id: string; kind: SignalKind; payload: string }
+  // #1148: resposta ao `renew_ice_servers`. MESMO shape do `ice_servers` do
+  // `registered` (`protocol.rs`: `Vec<IceServer>`), com `expires_at` novo — é o
+  // que permite reusar o `mapearIceServers` em vez de escrever um paralelo que
+  // divergiria na primeira mudança de campo.
+  | { type: "ice_servers_renewed"; ice_servers: IceServer[] }
   | { type: "error"; code: ErrorCodeS0; message: string };
 
 /** Um signal (SDP/ICE) já no formato do wiring/`remote.ts`. */
@@ -115,6 +124,16 @@ export interface SinalizadorHandlers {
   onErro: (code: ErrorCodeS0, message: string) => void;
   /** Conexão do WS caiu. */
   onFechado?: () => void;
+  /**
+   * #1148: chegou credencial TURN nova (resposta ao `renovarIceServers`).
+   *
+   * Quem recebe **sobrepõe antes de substituir**: `setConfiguration({iceServers})`
+   * + `restartIce()` com a PeerConnection preservada. A alocação antiga só morre
+   * depois de a nova estar viva — o `use-auth-secret` do coturn amarra a
+   * alocação ao username que a criou, então renovar credencial NÃO é o mesmo que
+   * manter a sessão (correção do @Altair no card).
+   */
+  onIceServersRenovados?: (iceServers: IceServer[]) => void;
 }
 
 /**
@@ -130,6 +149,23 @@ export interface SinalizadorS0 {
   resgatarSessao(code: string): void;
   /** Encaminha um signal (SDP/ICE) pro peer pareado. */
   enviarSinal(peerId: string, sinal: Sinal): void;
+  /**
+   * #1148: pede credencial TURN fresca pela conexão JÁ autenticada.
+   *
+   * Sem novo código de 8 dígitos e sem refazer pareamento — é o ponto inteiro
+   * da rota: a sessão *relayed* precisa sobreviver ao TTL, e reparear no meio de
+   * um atendimento é o mesmo que cair.
+   *
+   * A resposta chega pelo `onIceServersRenovados`, não como retorno: o servidor
+   * pode demorar ou nunca responder, e uma `Promise` pendurada esconderia isso
+   * de quem espera.
+   *
+   * **Quem chama é o Rust, não a tela** (desenho do @Altair no card): o relógio
+   * da credencial vive no `RelayState`, que é quem detém a conexão e sabe quando
+   * ela morre. Este método é a *busca* — o FE só a executa porque o socket de
+   * signaling é dele, e some quando o #1129 mover o cliente pro Rust.
+   */
+  renovarIceServers(): void;
   /** Fecha o WS. */
   fechar(): void;
 }
@@ -278,6 +314,16 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
         );
         break;
       }
+      case "ice_servers_renewed": {
+        // #1148: reusa o MESMO mapeador do `registered`. O `protocol.rs` declara
+        // o mesmo `Vec<IceServer>` nos dois, e um mapeador paralelo divergiria
+        // na primeira mudança de campo — que é exatamente o tipo de defeito que
+        // só aparece 30 minutos dentro de um atendimento real.
+        handlers?.onIceServersRenovados?.(
+          mapearIceServers(msg.ice_servers as unknown as IceServerBruto[]),
+        );
+        break;
+      }
       case "assisted_session_code":
         handlers?.onCodigo?.(msg.code, msg.expires_at_unix_seconds);
         break;
@@ -409,6 +455,10 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
         kind: sinal.kind,
         payload: sinal.payload,
       });
+    },
+    renovarIceServers() {
+      // Variante unitária no `protocol.rs` — só o `type` viaja.
+      enviar({ type: "renew_ice_servers" });
     },
     fechar() {
       pararHeartbeat();

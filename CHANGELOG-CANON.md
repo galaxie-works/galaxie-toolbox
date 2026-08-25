@@ -1,6 +1,13 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.15 · 2026-08-24 — higiene de branch (Pollux mediu: 128 remotas, ~80% resíduo)
+- **Config (feita, não só escrita):** `delete_branch_on_merge = true` ligado no repo — branch de PR integrada some no merge, sem depender de memória. Registrado no FATOS.
+- **§2 higiene de branch:** cada um limpa a sua; **ninguém apaga branch de outro**. Mergeada em pre-prod = resíduo (some sem rito); não-mergeada = trabalho (só sai por triagem do dono).
+- **§7 rito de reciclagem:** branches não-mergeadas do papel aposentado = item explícito de handoff (retomar / migrar / abandonar pelo PO); órfã de sessão morta sem herdeiro → Bibliotecário cataloga e roteia.
+- **§7 carimbo do ROSTER VERIFICÁVEL:** medido com `date -u` (formato fixo, placeholder falha o regex) e — o ganho real — **carimbo adiantado = fabricado, não fresco**, cutucado igual (inverte o pior default: hoje quem adianta parece mais fresco e apanha menos). Mesma máquina = sem skew, hora corrente é o teto; margem de ~10 min é provisão p/ papel futuro em outro host, não skew observado. Dúvida → `lastActivityAt`. Achado medido (Polaris V) + tornado verificável (Altair contra si): Pollux carimbou +1 dia, Altair +1h30. v1 pedia "honestidade de método" (ingateável); v2 é mecânica. Dobrado neste lote (não em 3ª PR/dia).
+- Ação única (fora do canon): varredura custodial das ~105 mergeadas históricas (seguro: código em pre-prod+tags); triagem das ~23 órfãs por issue com dono nomeado.
+
 ## v1.14 · 2026-08-24 — leva pós-moratória (backlog acumulado)
 Seis correções destiladas de casos vivos, redação do Hiparco, aguarda ratificação escrita do PO na PR.
 - **§1.4 corrigido:** "o PO nunca move card" estava ERRADO — o PO move no passe de runtime (QA Approved → PO Approved/Rejected), comentando na issue; card em estado inesperado → ler a issue antes de reverter (quem moveu explica lá).

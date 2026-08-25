@@ -1,0 +1,14 @@
+# Fundação de identidade/autorização da plataforma web (#1469, épico #1265).
+# Crate STANDALONE (padrão da casa em services/*) — só lógica de domínio na fatia 1:
+# sem I/O, sem rede, sem OpenSSL → `cargo test` local e instantâneo. Persistência e
+# borda HTTP entram em fatias seguintes, dependendo desta.
+[package]
+name = "galaxie-platform-identity"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+# Fatia 1 é pura (std). Nenhuma dependência de propósito: a fundação de autorização
+# não deve arrastar runtime/serde/tls pra dentro da decisão de "quem pode?".
+[dependencies]

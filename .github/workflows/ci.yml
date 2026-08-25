@@ -80,6 +80,49 @@ jobs:
       - name: Testes em navegador (vitest browser-mode)
         run: pnpm test:browser
 
+  # #1484: scaffold do app web da plataforma (platform.thegalaxie.cloud). É o
+  # pacote `web/` (Vite SPA, workspace pnpm próprio, SEPARADO do app Tauri). Gate
+  # próprio — typecheck+build+testes do pacote web — pra não misturar com o
+  # `gate-front.yml`, que é do app Tauri. Ubuntu (é só JS; sem Rust/OpenSSL).
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache do pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Build do app web (tsc -b + vite build)
+        run: pnpm --filter @galaxie/web build
+
+      - name: Testes do app web (vitest)
+        run: pnpm --filter @galaxie/web test
+
   # Rust/Tauri: compila e testa o Remote REAL (não o `remote_stub`) + os 6 crates
   # de services/. Roda no windows-latest (mesma plataforma do release, evita as
   # libs de sistema que o Tauri exige no Linux). O rust-cache deixa rápido quando
@@ -158,6 +201,13 @@ jobs:
             services/remote-system-agent
             services/remote-signaling
             services/remote-broker-client
+            services/platform-identity
+            services/platform-web
+            services/platform-http
+            services/platform-conta
+            services/platform-org-admin
+            services/platform-config
+            services/platform-back-office
 
       # ── src-tauri: caminho STUB (Remote OFF) — build default que sai pra quem não
       # usa o Remote. Barato (sem OpenSSL). Mantido pra guardar que o stub degrada. ──
@@ -208,6 +258,45 @@ jobs:
 
       - name: services/remote-broker-client
         working-directory: services/remote-broker-client
+        run: cargo test
+
+      # #1469 RB: fundação de identidade/autorização da plataforma web (só lógica de
+      # domínio; std, sem OpenSSL). Gate a fundação que os 7 cards da plataforma herdam.
+      - name: services/platform-identity (fundação identidade/autz)
+        working-directory: services/platform-identity
+        run: cargo test
+
+      # #1469 fatia 3: borda web (CSPRNG do SessaoId + parse do cookie). Depende de
+      # platform-identity; rand+base64, sem OpenSSL.
+      - name: services/platform-web (borda sessão)
+        working-directory: services/platform-web
+        run: cargo test
+
+      # #1505: borda HTTP (Router axum). axum/tokio, sem OpenSSL (TLS é do Traefik).
+      # `--all-features` liga a feature `dev` p/ COMPILAR o bin `dev-server` (gated, #1540) — senão
+      # o CI não o veria (só é construído com --features dev). O prod (main.rs) sai em qualquer caso.
+      - name: services/platform-http (borda Router)
+        working-directory: services/platform-http
+        run: cargo test --all-features
+
+      # #1473: conta/perfil (/me) — domínio puro do scoping à sessão, depende da fundação.
+      - name: services/platform-conta (conta/perfil /me)
+        working-directory: services/platform-conta
+        run: cargo test
+
+      # #1475: admin da org — autorização das ações admin sobre a fundação (dominio puro).
+      - name: services/platform-org-admin (admin da org)
+        working-directory: services/platform-org-admin
+        run: cargo test
+
+      # #1471: config do uso do app (prefs owner-scoped + allowlist) — domínio puro.
+      - name: services/platform-config (config do app)
+        working-directory: services/platform-config
+        run: cargo test
+
+      # #1474: back-office staff (provisionar/verificar/suspender orgs) — staff-only, puro.
+      - name: services/platform-back-office (back-office staff)
+        working-directory: services/platform-back-office
         run: cargo test
 
   # #1193: o gate de clippy que NÃO existia. Até aqui o `#![deny(clippy::unwrap_used,
@@ -268,4 +357,38 @@ jobs:
 
       - name: clippy remote-capture (-D warnings — limpo)
         working-directory: services/remote-capture
+        run: cargo clippy --all-targets -- -D warnings
+
+      # #1469: fundação nasceu limpa (medido) — entra no gate de clippy no mesmo PR em
+      # que entra no de teste, fechando o modo de falha do comentário acima (RB7).
+      - name: clippy platform-identity (-D warnings — nasceu limpo)
+        working-directory: services/platform-identity
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy platform-web (-D warnings — nasceu limpo)
+        working-directory: services/platform-web
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy platform-http (-D warnings — nasceu limpo)
+        working-directory: services/platform-http
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # #1473: conta/perfil (/me) entra no gate de clippy no mesmo PR do teste (RB7).
+      - name: clippy platform-conta (-D warnings)
+        working-directory: services/platform-conta
+        run: cargo clippy --all-targets -- -D warnings
+
+      # #1475: admin da org entra no gate de clippy no mesmo PR do teste (RB7).
+      - name: clippy platform-org-admin (-D warnings)
+        working-directory: services/platform-org-admin
+        run: cargo clippy --all-targets -- -D warnings
+
+      # #1471: config do app entra no gate de clippy no mesmo PR do teste (RB7).
+      - name: clippy platform-config (-D warnings)
+        working-directory: services/platform-config
+        run: cargo clippy --all-targets -- -D warnings
+
+      # #1474: back-office staff entra no gate de clippy no mesmo PR do teste (RB7).
+      - name: clippy platform-back-office (-D warnings)
+        working-directory: services/platform-back-office
         run: cargo clippy --all-targets -- -D warnings
