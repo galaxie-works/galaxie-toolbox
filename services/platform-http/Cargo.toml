@@ -17,3 +17,11 @@ galaxie-platform-conta = { path = "../platform-conta" }
 galaxie-platform-org-admin = { path = "../platform-org-admin" }
 galaxie-platform-config = { path = "../platform-config" }
 galaxie-platform-back-office = { path = "../platform-back-office" }
+
+[dev-dependencies]
+# Só os testes precisam de runtime + de LER o corpo inteiro da resposta (o teste do anti-oráculo
+# do @Altair compara status+headers+CORPO). A borda em si não serve sozinha — quem sobe o servidor
+# (axum::serve/tokio) é o binário da app; o crate é a lógica do Router.
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+http-body-util = "0.1"

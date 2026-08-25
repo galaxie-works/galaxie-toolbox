@@ -23,9 +23,12 @@ use galaxie_platform_identity::{autorizar, Decisao, Operacao, Sessao};
 
 /// Ações de back-office (staff operando SOBRE orgs de clientes). Enum FECHADO: a autz faz um
 /// `match` EXAUSTIVO sem catch-all (doutrina #1000/#1456), então **acrescentar uma ação
-/// obriga a decidir sua política** — não compila sem braço. As três são staff-only.
+/// obriga a decidir sua política** — não compila sem braço. Todas são staff-only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AcaoBackOffice {
+    /// Lista as orgs da base (`GET /admin/orgs` do contrato §4.5). Leitura, mas staff-only e
+    /// auditada como as demais — saber que o back-office existe já é a informação (invariante 1).
+    ListarOrgs,
     /// Cria uma org na base (sem seed manual).
     ProvisionarOrg,
     /// Verifica/marca o estado de uma org.
@@ -51,7 +54,8 @@ pub fn autorizar_back_office(sessao: &Sessao, acao: &AcaoBackOffice) -> Result<(
     // `match` EXAUSTIVO: toda ação de back-office é staff-only. Ação nova não compila até
     // ganhar um braço aqui (default-deny por construção).
     let op = match acao {
-        AcaoBackOffice::ProvisionarOrg
+        AcaoBackOffice::ListarOrgs
+        | AcaoBackOffice::ProvisionarOrg
         | AcaoBackOffice::VerificarOrg
         | AcaoBackOffice::SuspenderOrg => Operacao::ProvisionarOrg,
     };
@@ -66,7 +70,8 @@ mod tests {
     use super::*;
     use galaxie_platform_identity::{Escopo, OrgId, Principal, Sessao, UserId};
 
-    const TODAS: [AcaoBackOffice; 3] = [
+    const TODAS: [AcaoBackOffice; 4] = [
+        AcaoBackOffice::ListarOrgs,
         AcaoBackOffice::ProvisionarOrg,
         AcaoBackOffice::VerificarOrg,
         AcaoBackOffice::SuspenderOrg,
