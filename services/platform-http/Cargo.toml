@@ -11,6 +11,10 @@ publish = false
 
 [dependencies]
 axum = { version = "0.8", default-features = false }
+# JSON de DADOS (membros têm nome/email de usuário → escaping correto, não hand-roll). Os erros
+# seguem manuais (slugs fixos, sem dado do cliente). DTO na borda; os tipos de domínio ficam serde-free.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 galaxie-platform-identity = { path = "../platform-identity" }
 galaxie-platform-web = { path = "../platform-web" }
 galaxie-platform-conta = { path = "../platform-conta" }

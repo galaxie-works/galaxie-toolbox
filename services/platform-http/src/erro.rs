@@ -81,6 +81,39 @@ pub fn resposta_de_erro(codigo: CodigoErro) -> Response {
         .expect("resposta de erro é sempre construível")
 }
 
+/// Visibilidade da superfície onde uma falha de INFRA aconteceu — o parâmetro que decide o código
+/// de uma indisponibilidade de armazém, para [`resposta_de_falha`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibilidade {
+    /// Superfície cuja EXISTÊNCIA não é segredo (`/me`, `/orgs/{org}/…`): falha de infra ⇒ **500**.
+    /// Dizer "o servidor falhou" não revela nada que o cliente já não saiba da rota.
+    Visivel,
+    /// Superfície OCULTA (`/admin/*`): falha de infra sai pelo **mesmo 404** de rota inexistente —
+    /// um 500 aqui ensinaria que a rota existe (invariante 1). A FORMA impede o vazamento.
+    Oculta,
+}
+
+/// Constrói a resposta de **falha de infra** (armazém indisponível), parametrizada pela
+/// [`Visibilidade`] da superfície. **Único lugar** — a propriedade anti-oráculo não vem do enum,
+/// vem de existir UM só construtor de resposta de erro; um segundo (`resposta_indisponivel`) seria
+/// a costura por onde ela escapa (não passaria pelo teste que garante duas rejeições idênticas).
+/// Com o parâmetro, um handler OCULTO não consegue emitir 500 por acidente — a regra depende do
+/// valor em mãos, não de alguém lembrar (forma, não disciplina; correção do @Altair, #1536).
+///
+/// O 500 fica FORA do `CodigoErro` de propósito (indisponibilidade de infra não é erro de contrato
+/// que o FE deva tipar), mas é montado AQUI, no mesmo módulo, não num construtor solto.
+pub fn resposta_de_falha(visibilidade: Visibilidade) -> Response {
+    match visibilidade {
+        // Mesma origem que o 404 de rota inexistente — indistinguível no fio.
+        Visibilidade::Oculta => resposta_de_erro(CodigoErro::NaoEncontrado),
+        Visibilidade::Visivel => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"erro":"indisponivel"}"#))
+            .expect("resposta 500 é sempre construível"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +155,20 @@ mod tests {
         let r = resposta_de_erro(CodigoErro::NaoAutenticado);
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(r.headers().get(header::CONTENT_TYPE).unwrap(), "application/json");
+    }
+
+    // Falha de infra pelo ÚNICO construtor (correção @Altair #1536): OCULTA sai pelo MESMO 404 de
+    // rota inexistente (delega a `resposta_de_erro(NaoEncontrado)` — indistinguível no fio);
+    // VISÍVEL é 500. A forma impede um handler oculto de emitir 500 por acidente.
+    #[test]
+    fn falha_oculta_e_404_visivel_e_500() {
+        let oculta = resposta_de_falha(Visibilidade::Oculta);
+        assert_eq!(oculta.status(), StatusCode::NOT_FOUND, "oculta ⇒ mesmo 404 de rota inexistente");
+        // Byte-a-byte igual ao 404 padrão: os dois saem de `resposta_de_erro(NaoEncontrado)`.
+        assert_eq!(oculta.status(), resposta_de_erro(CodigoErro::NaoEncontrado).status());
+
+        let visivel = resposta_de_falha(Visibilidade::Visivel);
+        assert_eq!(visivel.status(), StatusCode::INTERNAL_SERVER_ERROR, "visível ⇒ 500");
+        assert_eq!(visivel.headers().get(header::CONTENT_TYPE).unwrap(), "application/json");
     }
 }
