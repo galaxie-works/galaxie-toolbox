@@ -29,18 +29,127 @@ pub const CHAVES_WEB: &[&str] = &[
 ];
 
 /// Erro de uma operação de pref. `NaoEncontrado` = 404 (pref de outro — não enumera);
-/// `ChaveNaoPermitida` = a chave não está na allowlist da web (não é "toda pref").
+/// `ChaveNaoPermitida` = a chave não está na allowlist da web (não é "toda pref");
+/// `ValorInvalido` = o valor não cabe no tipo da chave (opção fora de `opcoes`, ou `Texto`
+/// além do teto) — o gap que ficou aberto no #1471 (a allowlist gate a CHAVE, isto gate o
+/// VALOR). Não enumera qual regra falhou por dentro (é do domínio, não da borda).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigErro {
     NaoEncontrado,
     ChaveNaoPermitida,
+    ValorInvalido,
 }
+
+/// Teto de tamanho (bytes UTF-8) do valor de uma pref [`Texto`] — sem ele, a config viraria
+/// armazenamento arbitrário pago por nós (#1563 AC3). Conservador; sobe por decisão explícita.
+pub const TETO_TEXTO_BYTES: usize = 4096;
 
 /// `true` se `chave` está na allowlist da web ([`CHAVES_WEB`]) — a única coisa gravável pela
 /// plataforma. Default-deny: qualquer chave fora da lista é recusada (AC2).
 #[must_use]
 pub fn chave_configuravel(chave: &str) -> bool {
     CHAVES_WEB.contains(&chave)
+}
+
+/// Um item de config já VALIDADO. A forma plana do fio (contrato §4.2) admite lixo —
+/// `tipo:"bool"` com `valor:"escuro"`, ou opção fora de `opcoes`. Aqui essas combinações são
+/// **impossíveis por construção**: os campos são privados e só os construtores (que validam)
+/// criam um item. "Parsing como validação" (#1563 AC1): quem tem um `ConfigItem` tem a
+/// garantia, não a promessa; o inverso — do fio pro domínio — passa pelos construtores, que
+/// devolvem [`ConfigErro::ValorInvalido`] em vez de aceitar. Serializa pra forma plana em
+/// [`ConfigItem::para_fio`]; o widget é escolha do FE (o `tipo` aqui é tipo de VALOR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigItem {
+    Booleano(Booleano),
+    Texto(Texto),
+    Opcao(Opcao),
+}
+
+/// Pref booleana (ex.: `app.notificacoes`). Sem invariante além do tipo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Booleano {
+    chave: String,
+    valor: bool,
+}
+
+impl Booleano {
+    #[must_use]
+    pub fn novo(chave: impl Into<String>, valor: bool) -> Self {
+        Self { chave: chave.into(), valor }
+    }
+    #[must_use]
+    pub fn chave(&self) -> &str {
+        &self.chave
+    }
+    #[must_use]
+    pub fn valor(&self) -> bool {
+        self.valor
+    }
+}
+
+/// Pref de texto livre (ex.: um rótulo do usuário). Invariante: o valor não excede
+/// [`TETO_TEXTO_BYTES`] — senão a config vira armazenamento arbitrário (#1563 AC3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Texto {
+    chave: String,
+    valor: String,
+}
+
+impl Texto {
+    /// `ValorInvalido` se `valor` passa do teto. Mede bytes UTF-8, não `char`s — o custo de
+    /// armazenamento é em bytes.
+    pub fn novo(chave: impl Into<String>, valor: impl Into<String>) -> Result<Self, ConfigErro> {
+        let valor = valor.into();
+        if valor.len() > TETO_TEXTO_BYTES {
+            return Err(ConfigErro::ValorInvalido);
+        }
+        Ok(Self { chave: chave.into(), valor })
+    }
+    #[must_use]
+    pub fn chave(&self) -> &str {
+        &self.chave
+    }
+    #[must_use]
+    pub fn valor(&self) -> &str {
+        &self.valor
+    }
+}
+
+/// Pref de escolha fechada (ex.: `app.tema` ∈ {claro, escuro, sistema}). Invariante:
+/// `valor ∈ opcoes` — a combinação "valor fora das opções" não é representável (#1563 AC1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opcao {
+    chave: String,
+    valor: String,
+    opcoes: Vec<String>,
+}
+
+impl Opcao {
+    /// `ValorInvalido` se `valor` não está em `opcoes`. As opções são conteúdo do registro
+    /// (dado do PO); o construtor não as inventa, só verifica a pertença.
+    pub fn nova(
+        chave: impl Into<String>,
+        valor: impl Into<String>,
+        opcoes: Vec<String>,
+    ) -> Result<Self, ConfigErro> {
+        let valor = valor.into();
+        if !opcoes.iter().any(|o| o == &valor) {
+            return Err(ConfigErro::ValorInvalido);
+        }
+        Ok(Self { chave: chave.into(), valor, opcoes })
+    }
+    #[must_use]
+    pub fn chave(&self) -> &str {
+        &self.chave
+    }
+    #[must_use]
+    pub fn valor(&self) -> &str {
+        &self.valor
+    }
+    #[must_use]
+    pub fn opcoes(&self) -> &[String] {
+        &self.opcoes
+    }
 }
 
 /// O `UserId` do humano dono da sessão — é daqui que sai o escopo das prefs (regra 5),
@@ -163,5 +272,59 @@ mod tests {
         }
         assert!(!chave_configuravel("app.")); // prefixo não basta
         assert!(!chave_configuravel("")); // vazio nunca
+    }
+
+    // AC1 — combinação ilegal NÃO CONSTRÓI: opção fora de `opcoes` ⇒ ValorInvalido.
+    #[test]
+    fn opcao_com_valor_fora_das_opcoes_nao_constroi() {
+        let opcoes = vec!["claro".into(), "escuro".into(), "sistema".into()];
+        assert_eq!(
+            Opcao::nova("app.tema", "arco-iris", opcoes.clone()),
+            Err(ConfigErro::ValorInvalido),
+            "valor fora de opcoes tem de ser irrepresentável"
+        );
+        // valor dentro das opções ⇒ constrói e o item carrega a garantia.
+        let ok = Opcao::nova("app.tema", "escuro", opcoes).expect("valor ∈ opcoes constrói");
+        assert_eq!(ok.valor(), "escuro");
+        assert!(ok.opcoes().contains(&"claro".to_string()));
+    }
+
+    // AC1 — o único caminho de construção é o construtor: opcoes vazia nunca aceita valor
+    // (não há "opção default" implícita que vaze).
+    #[test]
+    fn opcao_sem_opcoes_recusa_qualquer_valor() {
+        assert_eq!(Opcao::nova("app.tema", "escuro", vec![]), Err(ConfigErro::ValorInvalido));
+    }
+
+    // AC3 — Texto além do teto NÃO CONSTRÓI; no teto exato, constrói (fronteira medida em bytes).
+    #[test]
+    fn texto_alem_do_teto_nao_constroi() {
+        let no_teto = "a".repeat(TETO_TEXTO_BYTES);
+        assert!(Texto::novo("app.rotulo", no_teto).is_ok(), "no teto exato ainda cabe");
+
+        let passou = "a".repeat(TETO_TEXTO_BYTES + 1);
+        assert_eq!(
+            Texto::novo("app.rotulo", passou),
+            Err(ConfigErro::ValorInvalido),
+            "1 byte além do teto tem de ser recusado"
+        );
+    }
+
+    // O teto é em BYTES UTF-8, não em chars — um char multibyte no limite conta os bytes.
+    #[test]
+    fn teto_do_texto_conta_bytes_nao_chars() {
+        // 'é' = 2 bytes em UTF-8; TETO/2 + 1 desses passa do teto em bytes mas não em chars.
+        let s = "é".repeat(TETO_TEXTO_BYTES / 2 + 1);
+        assert!(s.chars().count() <= TETO_TEXTO_BYTES, "em chars caberia");
+        assert!(s.len() > TETO_TEXTO_BYTES, "em bytes não cabe");
+        assert_eq!(Texto::novo("app.rotulo", s), Err(ConfigErro::ValorInvalido));
+    }
+
+    // Booleano não tem modo de falha — o construtor é infalível (sem invariante além do tipo).
+    #[test]
+    fn booleano_constroi_sempre() {
+        let b = Booleano::novo("app.notificacoes", true);
+        assert_eq!(b.chave(), "app.notificacoes");
+        assert!(b.valor());
     }
 }
