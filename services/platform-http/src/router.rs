@@ -18,7 +18,7 @@ use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
-use galaxie_platform_identity::{OrgId, Papel};
+use galaxie_platform_identity::{EstadoOrg, OrgId, Papel};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
@@ -143,6 +143,7 @@ async fn listar_membros(
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel) — o `autorizar_acao_admin` faz a ordem.
     match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarMembros, &org) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
         Ok(()) => {}
     }
@@ -205,6 +206,7 @@ async fn listar_dominios(
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel).
     match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarDominios, &org) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
         Ok(()) => {}
     }
@@ -224,14 +226,27 @@ async fn listar_dominios(
     }
 }
 
-/// Uma org do principal como sai no fio (contrato v1.3: `{ org, papel }`).
+/// O `estado` da org como o contrato §4.5/v1.4 o projeta no fio. Explícito (não `Debug`/derive):
+/// o valor é PARTE DO CONTRATO — a tela do FE lê "suspensa" pra mostrar "fale com o admin".
+fn estado_org_str(estado: EstadoOrg) -> &'static str {
+    match estado {
+        EstadoOrg::Provisionada => "provisionada",
+        EstadoOrg::Suspensa => "suspensa",
+    }
+}
+
+/// Uma org do principal como sai no fio (contrato v1.4: `{ org, papel, estado }`). O `estado`
+/// entrou no v1.4 (#1544): é daqui que a tela tira o nome + o estado da org suspensa (por isso
+/// `/me/orgs` SOBREVIVE à suspensão — ver `me_orgs_sobrevive_a_suspensao`).
 #[derive(serde::Serialize)]
 struct OrgDoUsuarioDto<'a> {
     org: &'a str,
     papel: &'a str,
+    estado: &'static str,
 }
 
-/// `GET /api/v1/me/orgs` (contrato v1.3) — as orgs do PRÓPRIO principal, com o papel em cada.
+/// `GET /api/v1/me/orgs` (contrato v1.4) — as orgs do PRÓPRIO principal, com o papel E o `estado`
+/// em cada (o `estado` entrou no v1.4/#1544: a tela de org suspensa lê daqui).
 ///
 /// É a rota pela qual a UI **DESCOBRE o `{org}`** — sem ela, mesmo com sessão, o cliente não sabe
 /// qual org pedir e nenhuma das outras rotas é alcançável (lacuna do `{org}` que o @Altair fechou
@@ -243,21 +258,32 @@ async fn listar_minhas_orgs(
     State(estado): State<EstadoBorda>,
     SessaoAtual(sessao): SessaoAtual,
 ) -> Response {
-    match estado.membros.orgs_do_usuario(sessao.principal().usuario()) {
-        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        Ok(orgs) => {
-            let dto: Vec<OrgDoUsuarioDto> = orgs
-                .iter()
-                .map(|(org, papel)| OrgDoUsuarioDto { org: &org.0, papel: papel_str(papel) })
-                .collect();
-            let corpo = serde_json::to_string(&dto).expect("Vec<OrgDoUsuarioDto> serializa sempre");
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(corpo))
-                .expect("resposta 200 é sempre construível")
-        }
+    // NÃO passa por `autorizar_acao_admin`: /me/orgs SOBREVIVE à suspensão de propósito (senão o
+    // usuário de org suspensa fica sem a tela que explica, e conclui que a CONTA quebrou). O
+    // `me_orgs_sobrevive_a_suspensao` GUARDA essa propriedade — se alguém "harmonizar" e meter a
+    // autz aqui, aquele teste fica vermelho.
+    let orgs = match estado.membros.orgs_do_usuario(sessao.principal().usuario()) {
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+        Ok(orgs) => orgs,
+    };
+    // O `estado` (contrato v1.4) vem do armazém de orgs — join por pertencimento. Uma org que o
+    // usuário É membro mas o store de orgs não tem é INCONSISTÊNCIA de infra ⇒ falha (não invento
+    // estado nem escondo a org da lista). No caminho normal (stores coerentes) roda limpo.
+    let mut dto: Vec<OrgDoUsuarioDto> = Vec::with_capacity(orgs.len());
+    for (org_id, papel) in &orgs {
+        let estado_str = match estado.orgs.buscar(org_id) {
+            Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+            Ok(Some(org)) => estado_org_str(org.estado()),
+            Ok(None) => return resposta_de_falha(Visibilidade::Visivel),
+        };
+        dto.push(OrgDoUsuarioDto { org: &org_id.0, papel: papel_str(papel), estado: estado_str });
     }
+    let corpo = serde_json::to_string(&dto).expect("Vec<OrgDoUsuarioDto> serializa sempre");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(corpo))
+        .expect("resposta 200 é sempre construível")
 }
 
 /// Monta o `Router` da borda com o estado (armazéns + relógio + auditor) já resolvido.
@@ -394,6 +420,69 @@ mod tests {
             alheio, inexistente,
             "resposta INTEIRA (status+headers+corpo) tem de ser idêntica — senão é oráculo de localização"
         );
+    }
+
+    /// Borda com o admin `u1` de `orgA` + a org no store (suspensa ou não) + `u1` como membro
+    /// admin. `orgA` ativa ⇒ o admin lista; suspensa ⇒ o acesso é cortado.
+    fn borda_admin_org(suspensa: bool) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::de_orgs([OrgId("orgA".into())]),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+
+        let mut orgs = ArmazemOrgMemoria::novo();
+        let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
+        if suspensa {
+            org.suspender();
+        }
+        orgs.inserir(org);
+
+        let mut membros = ArmazemMembroMemoria::novo();
+        membros.inserir(
+            OrgId("orgA".into()),
+            Membro { uid: UserId("u1".into()), nome: "U1".into(), email: "u1@a.com".into(), papel: Papel::OrgAdmin },
+        );
+
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios());
+        (borda, cookie)
+    }
+
+    /// **#1544 ponta a ponta: org suspensa CORTA o acesso, pela borda.** O MESMO admin, na MESMA
+    /// rota org-scoped: org ativa ⇒ `200`; org suspensa ⇒ `403 org_suspensa`. Sem a fiação em
+    /// `autorizar_acao_admin`, o suspenso também daria `200` (a suspensão decorativa que o @Altair
+    /// pegou no #1551 v1) — e um mutante que remova o `if esta_suspensa` faz este teste devolver 200.
+    #[tokio::test]
+    async fn org_suspensa_corta_acesso_pela_borda() {
+        // Ativa: o admin lista os membros ⇒ 200.
+        let (ativa, cookie) = borda_admin_org(false);
+        let r_ativa = resposta_crua(ativa, &cookie, "/api/v1/orgs/orgA/membros").await;
+        assert_eq!(r_ativa.0, StatusCode::OK, "org ativa: o admin lista os membros");
+
+        // Suspensa: MESMO admin, MESMA rota ⇒ 403 com o slug PRÓPRIO no corpo (não `negado`).
+        let (suspensa, cookie2) = borda_admin_org(true);
+        let r_susp = resposta_crua(suspensa, &cookie2, "/api/v1/orgs/orgA/membros").await;
+        assert_eq!(r_susp.0, StatusCode::FORBIDDEN, "org suspensa: acesso CORTADO");
+        let corpo = String::from_utf8_lossy(&r_susp.2);
+        assert!(corpo.contains("org_suspensa"), "slug org_suspensa no corpo, não negado: {corpo}");
+    }
+
+    /// **#1544 — o GÊMEO invertido (pedido do @Altair): a survive-list é GUARDADA, não acidental.**
+    /// `/me/orgs` SOBREVIVE à suspensão (⇒ 200, org na lista, `estado: "suspensa"`) — senão o usuário
+    /// de org suspensa fica sem a tela que explica e conclui que a CONTA quebrou. Hoje sobrevive por
+    /// ESTRUTURA (`listar_minhas_orgs` não chama `autorizar_acao_admin`); este teste DECLARA que deve.
+    /// O mutante que "harmoniza" e mete a suspensão no caminho do `/me/orgs` faz SÓ este teste cair.
+    #[tokio::test]
+    async fn me_orgs_sobrevive_a_suspensao() {
+        // MESMA montagem do corta-acesso (orgA suspensa), asserção INVERTIDA: /me/orgs não é cortado.
+        let (suspensa, cookie) = borda_admin_org(true);
+        let r = resposta_crua(suspensa, &cookie, "/api/v1/me/orgs").await;
+        assert_eq!(r.0, StatusCode::OK, "/me/orgs SOBREVIVE à suspensão (a tela precisa alcançá-lo)");
+        let corpo = String::from_utf8_lossy(&r.2);
+        assert!(corpo.contains("orgA"), "a org suspensa continua na lista: {corpo}");
+        assert!(corpo.contains("\"estado\":\"suspensa\""), "com estado marcado pra tela: {corpo}");
     }
 
     /// Superfície VISÍVEL (`SessaoAtual`): sem cookie de sessão rejeita com **401** — aqui o que
