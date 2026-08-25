@@ -15,6 +15,8 @@
 pub mod erro;
 pub mod router;
 pub mod sessao;
+/// Binário de produção (fatia 1 do #1505): `serve(config)` sobe o axum sobre o [`router`]. Sem auth.
+pub mod servidor;
 
 pub use router::rotas;
 pub use sessao::{Borda, EstadoBorda, SessaoAtual, SessaoOculta};

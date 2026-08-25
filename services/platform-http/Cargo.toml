@@ -10,11 +10,18 @@ license = "UNLICENSED"
 publish = false
 
 [dependencies]
-axum = { version = "0.8", default-features = false }
+# `tokio` + `http1` habilitam `axum::serve` (o binário sobe o servidor). O TLS de ENTRADA é do
+# Traefik (mesma origem) — nada de OpenSSL aqui. Sem `json`: os corpos são montados à mão / via serde_json.
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
 # JSON de DADOS (membros têm nome/email de usuário → escaping correto, não hand-roll). Os erros
 # seguem manuais (slugs fixos, sem dado do cliente). DTO na borda; os tipos de domínio ficam serde-free.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Binário de produção (fatia 1 do #1505): runtime + observabilidade, padrão da casa (remote-signaling).
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 galaxie-platform-identity = { path = "../platform-identity" }
 galaxie-platform-web = { path = "../platform-web" }
 galaxie-platform-conta = { path = "../platform-conta" }
@@ -23,9 +30,7 @@ galaxie-platform-config = { path = "../platform-config" }
 galaxie-platform-back-office = { path = "../platform-back-office" }
 
 [dev-dependencies]
-# Só os testes precisam de runtime + de LER o corpo inteiro da resposta (o teste do anti-oráculo
-# do @Altair compara status+headers+CORPO). A borda em si não serve sozinha — quem sobe o servidor
-# (axum::serve/tokio) é o binário da app; o crate é a lógica do Router.
-tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+# Os testes leem o CORPO inteiro da resposta (o teste do anti-oráculo compara status+headers+CORPO)
+# e exercem o Router por `oneshot` (sem subir socket). `tokio` já é dep de runtime do binário.
 tower = { version = "0.5", default-features = false, features = ["util"] }
 http-body-util = "0.1"
