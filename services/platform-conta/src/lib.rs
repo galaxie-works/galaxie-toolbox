@@ -12,7 +12,9 @@
 
 #![forbid(unsafe_code)]
 
+use galaxie_platform_identity::armazem::ErroArmazem;
 use galaxie_platform_identity::{Principal, Sessao, UserId};
+use std::collections::HashMap;
 
 /// Erro de resolução de um recurso de conta. `NaoEncontrado` é o **404** da regra 6 da
 /// fundação: pedir a conta de outro não distingue "existe mas não pode" de "não existe" —
@@ -70,6 +72,50 @@ pub fn pode_revogar_recurso_proprio(
         Ok(())
     } else {
         Err(ContaErro::NaoEncontrado)
+    }
+}
+
+/// O perfil do humano dono da conta — o corpo de `GET /me` (contrato §4.1: `{ nome, email,
+/// idioma? }`). Domínio; a borda projeta no fio. `idioma` é opcional (o cliente cai no default se
+/// ausente). NÃO carrega id de outro nem escopo: a conta é do humano da SESSÃO (delta do @Altair).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Perfil {
+    pub nome: String,
+    pub email: String,
+    pub idioma: Option<String>,
+}
+
+/// Armazém do perfil, indexado pelo `UserId` do dono. `Result` DESDE O DIA 1 (regra do @Altair, já
+/// aplicada aos stores de org): quando o backing real entrar, muda UMA linha na trait, não a
+/// assinatura + todo consumidor. `Ok(None)` = perfil não encontrado (a borda decide o HTTP); `Err`
+/// = infra fora do ar (distinta de "não achei", como no resto da plataforma).
+pub trait ArmazemPerfil {
+    /// O perfil do `uid`, se houver. `Ok(None)` = não encontrado; `Err` = armazém indisponível.
+    fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem>;
+}
+
+/// Primeira impl: em memória. O perfil REAL nasce no callback OAuth (do `userinfo` do provedor —
+/// fatia C); aqui a semeadura é do dev-server, pro FE fiar o e2e antes do login federado.
+#[derive(Debug, Default)]
+pub struct ArmazemPerfilMemoria {
+    perfis: HashMap<String, Perfil>,
+}
+
+impl ArmazemPerfilMemoria {
+    #[must_use]
+    pub fn novo() -> Self {
+        Self::default()
+    }
+
+    /// Semeia o perfil de um usuário (dev-server / testes). Em produção, o callback OAuth grava.
+    pub fn inserir(&mut self, uid: UserId, perfil: Perfil) {
+        self.perfis.insert(uid.0, perfil);
+    }
+}
+
+impl ArmazemPerfil for ArmazemPerfilMemoria {
+    fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem> {
+        Ok(self.perfis.get(&uid.0).cloned())
     }
 }
 

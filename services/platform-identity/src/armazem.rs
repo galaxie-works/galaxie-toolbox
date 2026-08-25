@@ -10,6 +10,8 @@
 //! **toda assinatura e todo consumidor** (o apodrecimento que custou três fatias na expiração de
 //! sessão). O backing real (Postgres) é fatia própria; o banco não entra de carona aqui.
 
+use std::sync::Mutex;
+
 use crate::{Org, OrgId, Papel, UserId};
 
 /// Falha de INFRAESTRUTURA do armazém (conexão/IO caiu) — **não** "não encontrado", que é um
@@ -106,14 +108,31 @@ pub trait ArmazemMembro {
     /// alcançar as outras rotas. `uid` vem SEMPRE da sessão (invariante 6): não há como pedir as
     /// orgs de outro usuário. Lista vazia = pertence a nenhuma org (não erro).
     fn orgs_do_usuario(&self, uid: &UserId) -> Result<Vec<(OrgId, Papel)>, ErroArmazem>;
+
+    /// REMOVE `uid` da org `org` (`DELETE /orgs/{org}/membros/{uid}`, contrato §4.3). `&self` (não
+    /// `&mut`): a impl tem mutabilidade INTERIOR — o backing real (Postgres) muta por `&self` (pool),
+    /// não pela assinatura. Devolve `true` se removeu, `false` se `uid` não era membro (o handler
+    /// mapeia false⇒404; só chega a admin autorizado, que PODE ver os membros — não é oráculo).
+    ///
+    /// ⚠️ **NÃO invalida a sessão do removido** — isso é o #1545 (fatia à parte): até ele landar, a
+    /// sessão do removido sobrevive até o TTL. Ausência DECLARADA, não silenciosa.
+    fn remover(&self, org: &OrgId, uid: &UserId) -> Result<bool, ErroArmazem>;
+
+    /// Muda o papel de `uid` na org `org` (`PATCH /orgs/{org}/membros/{uid}`, contrato §4.3). Devolve
+    /// o [`Membro`] atualizado se ele era membro; `None` se não era (o handler ⇒ 404). ⚠️ Idem: NÃO
+    /// invalida a sessão (o papel novo só vale na autz a partir da PRÓXIMA sessão até o #1545 fiar a
+    /// invalidação — o escopo/papel da sessão atual está congelado no login).
+    fn mudar_papel(&self, org: &OrgId, uid: &UserId, papel: Papel) -> Result<Option<Membro>, ErroArmazem>;
 }
 
 /// Primeira impl: em memória (por org). Nunca falha; carrega `Result` pra a troca por Postgres não
-/// rippar os consumidores.
-#[derive(Debug, Default, Clone)]
+/// rippar os consumidores. `Mutex` = mutabilidade INTERIOR: as escritas (`remover`/`mudar_papel`) são
+/// `&self` no trait (a borda compartilha por `Arc<dyn>`), então a concorrência mora AQUI — igual ao
+/// que o backing real fará com o pool. Não é `Clone` (Mutex não é; e ninguém clona o armazém).
+#[derive(Debug, Default)]
 pub struct ArmazemMembroMemoria {
     /// (org, membro) — flat pra o teste semear fácil; a impl real indexa por org.
-    membros: Vec<(OrgId, Membro)>,
+    membros: Mutex<Vec<(OrgId, Membro)>>,
 }
 
 impl ArmazemMembroMemoria {
@@ -121,29 +140,40 @@ impl ArmazemMembroMemoria {
         Self::default()
     }
 
-    /// Semeia um membro numa org.
+    /// Semeia um membro numa org (dev-server / testes). `&mut self` (seed-time); as escritas de
+    /// RUNTIME são `&self` no trait.
     pub fn inserir(&mut self, org: OrgId, membro: Membro) {
-        self.membros.push((org, membro));
+        self.membros.get_mut().expect("mutex de membros envenenado").push((org, membro));
     }
 }
 
 impl ArmazemMembro for ArmazemMembroMemoria {
     fn listar(&self, org: &OrgId) -> Result<Vec<Membro>, ErroArmazem> {
-        Ok(self
-            .membros
-            .iter()
-            .filter(|(o, _)| o == org)
-            .map(|(_, m)| m.clone())
-            .collect())
+        let membros = self.membros.lock().expect("mutex de membros envenenado");
+        Ok(membros.iter().filter(|(o, _)| o == org).map(|(_, m)| m.clone()).collect())
     }
 
     fn orgs_do_usuario(&self, uid: &UserId) -> Result<Vec<(OrgId, Papel)>, ErroArmazem> {
-        Ok(self
-            .membros
-            .iter()
-            .filter(|(_, m)| &m.uid == uid)
-            .map(|(org, m)| (org.clone(), m.papel))
-            .collect())
+        let membros = self.membros.lock().expect("mutex de membros envenenado");
+        Ok(membros.iter().filter(|(_, m)| &m.uid == uid).map(|(org, m)| (org.clone(), m.papel)).collect())
+    }
+
+    fn remover(&self, org: &OrgId, uid: &UserId) -> Result<bool, ErroArmazem> {
+        let mut membros = self.membros.lock().expect("mutex de membros envenenado");
+        let antes = membros.len();
+        membros.retain(|(o, m)| !(o == org && &m.uid == uid));
+        Ok(membros.len() != antes) // true se removeu algo
+    }
+
+    fn mudar_papel(&self, org: &OrgId, uid: &UserId, papel: Papel) -> Result<Option<Membro>, ErroArmazem> {
+        let mut membros = self.membros.lock().expect("mutex de membros envenenado");
+        match membros.iter_mut().find(|(o, m)| o == org && &m.uid == uid) {
+            Some((_, m)) => {
+                m.papel = papel;
+                Ok(Some(m.clone()))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -206,11 +236,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn org(id: &str) -> Org {
-        Org {
-            id: OrgId(id.into()),
-            dominios: BTreeSet::from([format!("{id}.com")]),
-            tenant_m365: None,
-        }
+        Org::nova(OrgId(id.into()), BTreeSet::from([format!("{id}.com")]), None)
     }
 
     #[test]
@@ -313,6 +339,36 @@ mod tests {
         );
         // Usuário sem pertencimento ⇒ vazio, não erro.
         assert_eq!(a.orgs_do_usuario(&UserId("ninguem".into())).unwrap(), vec![]);
+    }
+
+    // #1505 escrita — `remover`: tira o membro certo (por org+uid), devolve se removeu, e é escopado.
+    #[test]
+    fn remover_tira_o_membro_certo_e_reporta() {
+        let mut a = ArmazemMembroMemoria::novo();
+        a.inserir(OrgId("acme".into()), membro("u1", Papel::Member));
+        a.inserir(OrgId("acme".into()), membro("u2", Papel::Member));
+        a.inserir(OrgId("globex".into()), membro("u1", Papel::Member)); // mesmo uid, outra org
+
+        assert!(a.remover(&OrgId("acme".into()), &UserId("u1".into())).unwrap(), "removeu u1 de acme");
+        // u1 saiu de acme MAS continua em globex (escopo por org).
+        let acme: Vec<_> = a.listar(&OrgId("acme".into())).unwrap().into_iter().map(|m| m.uid.0).collect();
+        assert_eq!(acme, vec!["u2".to_string()], "só u2 fica em acme");
+        assert_eq!(a.listar(&OrgId("globex".into())).unwrap().len(), 1, "u1 continua em globex");
+        // remover de novo ⇒ false (já não estava).
+        assert!(!a.remover(&OrgId("acme".into()), &UserId("u1".into())).unwrap(), "não removeu (já saíra)");
+    }
+
+    // #1505 escrita — `mudar_papel`: muda e devolve o membro; não-membro ⇒ None.
+    #[test]
+    fn mudar_papel_muda_e_reporta_none_se_ausente() {
+        let mut a = ArmazemMembroMemoria::novo();
+        a.inserir(OrgId("acme".into()), membro("u1", Papel::Member));
+
+        let atualizado = a.mudar_papel(&OrgId("acme".into()), &UserId("u1".into()), Papel::OrgAdmin).unwrap();
+        assert_eq!(atualizado.map(|m| m.papel), Some(Papel::OrgAdmin), "devolve o membro com papel novo");
+        assert_eq!(a.listar(&OrgId("acme".into())).unwrap()[0].papel, Papel::OrgAdmin, "persistiu");
+        // não-membro ⇒ None (o handler ⇒ 404).
+        assert!(a.mudar_papel(&OrgId("acme".into()), &UserId("fantasma".into()), Papel::Member).unwrap().is_none());
     }
 
     fn dom(nome: &str, estado: EstadoDominio) -> Dominio {

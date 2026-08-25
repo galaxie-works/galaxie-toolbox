@@ -84,6 +84,12 @@ pub enum CodigoErro {
     NaoEncontrado,
     /// 403 — recurso da própria org, papel insuficiente.
     Negado,
+    /// 403 — org do principal está SUSPENSA (#1544). Distinto de `Negado` (mesmo HTTP, slug
+    /// diferente): a UI precisa mostrar "fale com o admin", não "papel insuficiente". A suspensão
+    /// é a razão GOVERNANTE — vem ANTES do papel na ordem visibilidade→suspensão→papel, senão um
+    /// `Member` de org suspensa veria "papel insuficiente" (mentira útil pra ninguém). Só chega a
+    /// quem ENXERGA a org (membro); pra não-membro a org suspensa é 404 (a suspensão não vira oráculo).
+    OrgSuspensa,
     /// 400
     PayloadInvalido,
     /// 409
@@ -96,6 +102,7 @@ impl CodigoErro {
             CodigoErro::NaoAutenticado => 401,
             CodigoErro::NaoEncontrado => 404,
             CodigoErro::Negado => 403,
+            CodigoErro::OrgSuspensa => 403,
             CodigoErro::PayloadInvalido => 400,
             CodigoErro::Conflito => 409,
         }
@@ -106,6 +113,7 @@ impl CodigoErro {
             CodigoErro::NaoAutenticado => "nao_autenticado",
             CodigoErro::NaoEncontrado => "nao_encontrado",
             CodigoErro::Negado => "negado",
+            CodigoErro::OrgSuspensa => "org_suspensa",
             CodigoErro::PayloadInvalido => "payload_invalido",
             CodigoErro::Conflito => "conflito",
         }
@@ -139,6 +147,18 @@ mod tests {
             }
         }
         assert_eq!(gets_mutantes, 1, "só o callback OAuth pode ser um GET mutante");
+    }
+
+    // #1544: `OrgSuspensa` é 403 com slug PRÓPRIO. Distinto de `Negado` (mesmo HTTP) DE PROPÓSITO
+    // — a UI mostra "fale com o admin" só quando distingue os dois. Se alguém colapsar num único
+    // slug, a tela específica que o PO pediu não tem como existir. Este teste mata esse colapso.
+    #[test]
+    fn org_suspensa_e_403_com_slug_proprio() {
+        assert_eq!(CodigoErro::OrgSuspensa.http(), 403);
+        assert_eq!(CodigoErro::OrgSuspensa.slug(), "org_suspensa");
+        // Mesmo HTTP que Negado, slug DIFERENTE (o cliente distingue pela razão, não pelo status).
+        assert_eq!(CodigoErro::Negado.http(), CodigoErro::OrgSuspensa.http());
+        assert_ne!(CodigoErro::Negado.slug(), CodigoErro::OrgSuspensa.slug());
     }
 
     // Invariante 4: toda rota de staff (back-office) é auditada.

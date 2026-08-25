@@ -4,6 +4,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 
 | Versão | Resumo |
 |---|---|
+| **v0.58.0** | 🌐 Plataforma: remover/rebaixar membro revoga sessão na hora; org suspensa corta acesso (com aviso na tela); prefs owner-scoped + allowlist travada; auditoria back-office com transbordo auditado; modelo de concessão default-deny; OAuth 3-A com Result; splitter unificado. |
 | **v0.57.0** | 🌐 Fundação BE da plataforma web: identidade/authz default-deny, sessão com expiração dupla e cookie `__Host-`, `/me`, back-office staff, admin da org, contrato HTTP gateado; login federado (sem senha própria) em construção; CI com job `web`. |
 | **v0.56.0** | 📁 Pausa de cópia/mover com teto (auto-retoma/cancela); Remote: portão de chunk órfão default-deny; LICENSE Apache-2.0 + docs de comunidade (OSS 1/2); board.ps1 -Inconsistentes; runbook do toolchain Remote. |
 | **v0.55.0** | 📬 Splitter do Bridge consistente (punho + hover nas três divisórias); pipe SYSTEM com porteiro de comando default-deny; turn_secret fora do argv; guarda de notas do release por allowlist. |

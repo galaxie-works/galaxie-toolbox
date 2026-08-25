@@ -187,7 +187,6 @@ export function BridgeSplit({
           não dá sinal nenhum no hover não avisa que é arrastável. */}
       <ResizableHandle
         withHandle
-        className="mx-1.5 bg-transparent hover:bg-border"
         onDragging={(arrastando) => {
           if (!arrastando) aoTerminarArrasto();
         }}

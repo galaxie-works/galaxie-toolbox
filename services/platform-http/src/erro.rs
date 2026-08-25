@@ -39,6 +39,9 @@ impl CodigoDeErro for AdminErro {
         match self {
             // Org alheia/inexistente: 404 (não enumera). Recurso da própria org sem papel: 403.
             AdminErro::NaoEncontrada => CodigoErro::NaoEncontrado,
+            // Org visível, mas suspensa (#1544): 403 com slug PRÓPRIO (a UI mostra "fale com o
+            // admin", não "papel insuficiente"). Vem antes de `Negado` na autz — ver `autorizar_acao_admin`.
+            AdminErro::Suspensa => CodigoErro::OrgSuspensa,
             AdminErro::Negado => CodigoErro::Negado,
         }
     }
@@ -50,6 +53,11 @@ impl CodigoDeErro for ConfigErro {
             ConfigErro::NaoEncontrado => CodigoErro::NaoEncontrado,
             // Chave fora da allowlist: payload inválido (o cliente pediu o que não existe).
             ConfigErro::ChaveNaoPermitida => CodigoErro::PayloadInvalido,
+            // Valor que não cabe no tipo da chave (bool não-literal, opção fora de `opcoes`,
+            // texto além do teto) — o análogo-de-VALOR do `ChaveNaoPermitida`: cliente enviou
+            // o que não vale ⇒ mesmo `PayloadInvalido`. #1563. @Alcor (dono da borda): status
+            // escolhido por consistência com o irmão; ajuste se a tua política de borda diferir.
+            ConfigErro::ValorInvalido => CodigoErro::PayloadInvalido,
         }
     }
 }

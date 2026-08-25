@@ -17,7 +17,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AdminOrgPage } from "./admin-org";
-import { CAMINHOS } from "@/lib/org";
+import { CAMINHOS, estaSuspensa, type OrgDoPrincipal } from "@/lib/org";
 import { DICIONARIOS } from "@/i18n";
 
 afterEach(() => {
@@ -270,7 +270,178 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     expect(screen.queryByText(t.semPermissao)).toBeNull();
   });
 
-  it("i18n: as duas línguas do DoD renderizam", () => {
+  // -- 403 `org_suspensa` != 403 `negado` (contrato v1.4, #1544) ------------
+  // O servidor gasta uma ordem inteira de checagem (visibilidade -> suspensao ->
+  // papel) pra que um membro de org suspensa NAO veja "papel insuficiente". Se
+  // o cliente colapsar os dois no mesmo aviso, ele desfaz no ultimo metro a
+  // distincao que o servidor fez -- e o resultado pratico e a pessoa pedir a um
+  // admin um acesso que nenhum admin pode conceder.
+
+  it("403 `org_suspensa` diz que a ORG esta suspensa, nao que falta papel", async () => {
+    fetchFalso(() => json({ erro: "org_suspensa" }, 403));
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() => expect(screen.getByText(t.orgSuspensa)).toBeTruthy());
+    expect(screen.getByText(t.orgSuspensaDetalhe)).toBeTruthy();
+    // O mutante que este `queryByText` mata e o colapso: mapear os dois codigos
+    // de 403 pro mesmo estado faria a mensagem de papel aparecer aqui.
+    expect(screen.queryByText(t.semPermissao)).toBeNull();
+    expect(screen.queryByText(t.semPermissaoDetalhe)).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("403 `negado` continua na mensagem de PAPEL -- a distincao corta dos dois lados", async () => {
+    // Sem esta, um mapeamento invertido (tudo vira `orgSuspensa`) passaria: o
+    // teste de cima so cobra uma direcao.
+    fetchFalso(() => json({ erro: "negado" }, 403));
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() => expect(screen.getByText(t.semPermissao)).toBeTruthy());
+    expect(screen.queryByText(t.orgSuspensa)).toBeNull();
+  });
+
+  it("403 com codigo DESCONHECIDO cai no restritivo, nunca no permissivo", async () => {
+    // Condicao (2) do @Altair na v1.4: "desconhecido no FE = neutro, nunca
+    // permissivo". Um build velho contra um servidor novo tem que continuar
+    // barrando. O que NAO pode acontecer e a tela mostrar dado, ou oferecer
+    // "tente de novo" a quem foi negado.
+    const corpos = [
+      () => json({ erro: "codigo_que_ainda_nao_existe" }, 403),
+      () => json({}, 403),
+      () => json({ erro: 7 }, 403),
+      () => new Response("<!doctype html>", { status: 403 }), // nem JSON e
+    ];
+    for (const corpo of corpos) {
+      cleanup();
+      fetchFalso(corpo);
+      render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+      const t = DICIONARIOS["pt-BR"];
+      await waitFor(() => expect(screen.getByText(t.semPermissao)).toBeTruthy());
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.queryByText(t.erroCarregar)).toBeNull();
+    }
+  });
+
+  it("a suspensao vale nos DOIS paineis -- o aviso mora num ponto so", async () => {
+    // Irmao do teste de 403!=404 em dominios. Se alguem voltar a escrever a
+    // escada de estados dentro de cada painel, um deles esquece o estado novo --
+    // e e este teste que cobra.
+    fetchFalso(() => json({ erro: "org_suspensa" }, 403));
+    const { container } = render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+    [...container.querySelectorAll("nav button")]
+      .find((b) => b.textContent === t.dominios)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await waitFor(() => expect(screen.getByText(t.orgSuspensa)).toBeTruthy());
+    expect(screen.queryByText(t.semPermissao)).toBeNull();
+  });
+
+  // -- `estado` da org na tela (#1544, contrato v1.4) -----------------------
+  // `/me/orgs` SOBREVIVE a suspensao por decisao de contrato: "senao o usuario
+  // nao alcanca a tela que explica". E dai que a faixa tira o estado.
+  //
+  // A faixa ANTECIPA a explicacao; ela nao a substitui. O corte de verdade e o
+  // `403 org_suspensa` do servidor -- e o teste do portao abaixo e o que prova
+  // que a tela nao trocou um pelo outro.
+
+  it("org suspensa ⇒ a tela ANUNCIA, antes do primeiro 403", async () => {
+    fetchFalso(() => json([{ org: "acme", papel: "org_admin", estado: "suspensa" }]));
+    render(<AdminOrgPage idioma="pt-BR" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    const faixa = await waitFor(() =>
+      screen.getByRole("status", { name: t.orgSuspensa }),
+    );
+    expect(faixa.textContent).toContain(t.orgSuspensa);
+    expect(faixa.textContent).toContain(t.orgSuspensaDetalhe);
+  });
+
+  it("org provisionada ⇒ NENHUMA faixa (a distincao corta dos dois lados)", async () => {
+    const pedidos = fetchFalso(() =>
+      json([{ org: "acme", papel: "org_admin", estado: "provisionada" }]),
+    );
+    render(<AdminOrgPage idioma="pt-BR" />);
+    const t = DICIONARIOS["pt-BR"];
+    await waitFor(() =>
+      expect(pedidos).toContain(`/api/v1${CAMINHOS.membros("acme")}`),
+    );
+    expect(
+      screen.queryByRole("status", { name: t.orgSuspensa }),
+    ).toBeNull();
+  });
+
+  it("estado DESCONHECIDO ⇒ neutro: nem faixa inventada, nem tela quebrada", async () => {
+    // Condicao (2) do @Altair na v1.4: "desconhecido no FE = neutro, nunca
+    // permissivo". Um build velho contra um servidor novo nao pode inventar um
+    // aviso de suspensao que talvez seja falso -- e tambem nao pode travar.
+    // Neutro aqui NAO e permissivo porque esta tela nao libera nada: quem corta
+    // e a autz, e o `403 org_suspensa` chega na primeira leitura de qualquer
+    // jeito. A faixa e cortesia, nao portao.
+    for (const estado of ["arquivada_em_2027", "", undefined]) {
+      cleanup();
+      const pedidos = fetchFalso(() =>
+        json([{ org: "acme", papel: "org_admin", estado }]),
+      );
+      render(<AdminOrgPage idioma="pt-BR" />);
+      const t = DICIONARIOS["pt-BR"];
+      await waitFor(() =>
+        expect(pedidos).toContain(`/api/v1${CAMINHOS.membros("acme")}`),
+      );
+      expect(
+        screen.queryByRole("status", { name: t.orgSuspensa }),
+      ).toBeNull();
+    }
+  });
+
+  it("a faixa NAO e portao: suspensa, a tela continua PEDINDO o recurso", async () => {
+    // O teste que importa de verdade, e o que eu teria esquecido: provar pelo
+    // CAMINHO DE PRODUCAO que a UI nao se auto-bloqueou.
+    //
+    // Se a tela decidisse "esta suspensa, entao nem pergunto", ela teria virado
+    // decisao de acesso -- exatamente o que o contrato proibe pro `papel` e pela
+    // mesma razao vale pro `estado`. Um servidor que respondesse
+    // `estado: "provisionada"` por engano nao pode virar autorizacao, e um que
+    // responda "suspensa" nao pode virar bloqueio decidido pelo cliente.
+    const pedidos = fetchFalso(() =>
+      json([{ org: "acme", papel: "org_admin", estado: "suspensa" }]),
+    );
+    render(<AdminOrgPage idioma="pt-BR" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: t.orgSuspensa })).toBeTruthy(),
+    );
+    // A faixa apareceu E a leitura saiu. As duas coisas, nao uma OU outra.
+    await waitFor(() =>
+      expect(pedidos).toContain(`/api/v1${CAMINHOS.membros("acme")}`),
+    );
+  });
+
+  it("o tipo do `estado` FICA ABERTO — o forward-compat e do `tsc`, nao so meu", () => {
+    // Este teste vale pelo que ele COMPILA, nao pelo que ele afirma.
+    //
+    // A condicao (2) do @Altair ("desconhecido no FE = neutro, nunca
+    // permissivo") e uma promessa que prosa nao segura: alguem fecha o
+    // `estado` na uniao do contrato, os testes de runtime seguem verdes (os
+    // duplos nao sao tipados) e a promessa morre em silencio.
+    //
+    // Passar um literal FORA da uniao amarra isso no compilador: se o campo
+    // virar `"provisionada" | "suspensa"`, esta linha reprova no `tsc` e o
+    // gate barra. Medido: e exatamente o que acontece (TS2322).
+    const desconhecida: OrgDoPrincipal = {
+      org: "acme",
+      papel: "org_admin",
+      estado: "arquivada_em_2027",
+    };
+    expect(estaSuspensa(desconhecida)).toBe(false);
+    expect(estaSuspensa({ ...desconhecida, estado: "suspensa" })).toBe(true);
+    expect(estaSuspensa({ ...desconhecida, estado: "provisionada" })).toBe(false);
+  });
+
+  it("i18n: as duas linguas do DoD renderizam", () => {
     fetchFalso(() => json([]));
     render(<AdminOrgPage idioma="en" org="acme" />);
     expect(screen.getByText(DICIONARIOS.en.adminOrg)).toBeTruthy();

@@ -55,6 +55,12 @@ export interface Dicionario {
   // 404 não pertence, e a mensagem não pode confirmar que a org existe.
   semPermissao: string;
   semPermissaoDetalhe: string;
+  // #1544 / contrato v1.4 — `org_suspensa` tem o MESMO HTTP que `negado` (403)
+  // e razão diferente. O contrato manda a UI dizer "fale com o admin", não
+  // "papel insuficiente": nenhum administrador da org resolve uma suspensão,
+  // então mandar pedir acesso a ele é mandar a pessoa ao lugar errado.
+  orgSuspensa: string;
+  orgSuspensaDetalhe: string;
   naoEhSuaOrg: string;
   naoEhSuaOrgDetalhe: string;
   // Estado TEMPORÁRIO: o contrato exige `/orgs/{org}` mas não há rota de onde
@@ -123,6 +129,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     semPermissao: "Você não administra esta organização",
     semPermissaoDetalhe:
       "Peça a um administrador da sua organização para conceder o acesso.",
+    orgSuspensa: "Organização suspensa",
+    orgSuspensaDetalhe:
+      "O acesso está suspenso. Fale com o suporte para reativar a organização.",
     // Deliberadamente vago: não confirma nem nega que a organização exista.
     naoEhSuaOrg: "Organização não encontrada",
     naoEhSuaOrgDetalhe: "Confira se você está na conta certa.",
@@ -182,6 +191,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     semPermissao: "You don't administer this organization",
     semPermissaoDetalhe:
       "Ask an administrator of your organization to grant access.",
+    orgSuspensa: "Organization suspended",
+    orgSuspensaDetalhe:
+      "Access is suspended. Contact support to reactivate the organization.",
     // Deliberadamente vago: não confirma nem nega que a organização exista.
     naoEhSuaOrg: "Organization not found",
     naoEhSuaOrgDetalhe: "Check whether you're in the right account.",

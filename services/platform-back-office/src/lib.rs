@@ -19,6 +19,9 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::VecDeque;
+use std::sync::Mutex;
+
 use galaxie_platform_identity::{autorizar, Decisao, Operacao, OrgId, Sessao, UserId};
 
 /// Resultado de uma decisão de autz, para a AUDITORIA (cond. 4 do @Altair). **Permitido E Negado**
@@ -136,6 +139,79 @@ pub fn autorizar_back_office(
     match decisao {
         Decisao::Permitido => Ok(()), // só `staff` (eh_staff) passa
         Decisao::Negado => Err(BackOfficeErro::Negado),
+    }
+}
+
+/// Evento de auditoria OWNED — o que o buffer guarda. `EventoAutz` EMPRESTA; para enfileirar entre o
+/// `registrar` síncrono e o dreno (fatia B), o buffer precisa de DONO. `Perda` é o transbordo TORNADO
+/// VISÍVEL: quando o buffer enche, o que se perde vira ELE PRÓPRIO um evento (`auditoria_perdida:N`) —
+/// ausência DECLARADA, nunca silêncio (regra do @Altair, a mesma do #1562: buraco no log de auditoria
+/// que não se anuncia é a pior forma do padrão, porque o log existe pra ser a fonte quando tudo falhou).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventoAuditado {
+    /// Uma decisão de autz (o caso normal), com o mesmo conteúdo do [`EventoAutz`], agora possuído.
+    Autz { ator: UserId, acao: AcaoBackOffice, resultado: ResultadoAutz },
+    /// `n` eventos foram PERDIDOS por transbordo do buffer antes deste dreno. Nunca silencioso.
+    Perda { n: u64 },
+}
+
+/// `Auditor` de PRODUÇÃO com buffer local LIMITADO (#1546 (A), desenho do @Altair). `registrar` é
+/// síncrono e **NUNCA** fala com a rede (a entrega é a fatia B, que DRENA), **nem bloqueia, nem cresce
+/// sem teto** — as 4 políticas ingênuas de transbordo falham cada uma: descartar o antigo (atacante se
+/// expulsa do log), descartar o novo (perde o evento do ataque), bloquear (trava a autz — proibido),
+/// crescer (exaustão de memória vira o vetor). A saída exigida: buffer **LIMITADO** + o transbordo é
+/// **ELE PRÓPRIO auditado** ([`EventoAuditado::Perda`]) no dreno.
+///
+/// ⚠️ Lembrete pra fatia B: o dreno NÃO pode fazer I/O de rede DENTRO do `registrar` — o buffer existe
+/// justamente pra desacoplar; rede no caminho síncrono desfaz esta fatia inteira.
+pub struct AuditorBuffer {
+    estado: Mutex<EstadoBuffer>,
+    capacidade: usize,
+}
+
+#[derive(Default)]
+struct EstadoBuffer {
+    eventos: VecDeque<EventoAuditado>,
+    perdidos: u64,
+}
+
+impl AuditorBuffer {
+    /// Novo buffer com teto `capacidade` (nº máximo de eventos retidos entre drenos). O chamador
+    /// escolhe um teto real (0 é degenerado: tudo vira perda).
+    #[must_use]
+    pub fn novo(capacidade: usize) -> Self {
+        AuditorBuffer { estado: Mutex::new(EstadoBuffer::default()), capacidade }
+    }
+
+    /// DRENA o buffer (chamado pela fatia B, que entrega à rede): devolve os eventos retidos e, se
+    /// houve transbordo desde o último dreno, um [`EventoAuditado::Perda`] no fim — a lacuna sai
+    /// NOMEADA. Zera o buffer e o contador de perdas. **NÃO faz I/O** (a rede é do chamador).
+    #[must_use]
+    pub fn drenar(&self) -> Vec<EventoAuditado> {
+        let mut estado = self.estado.lock().expect("buffer de auditoria envenenado");
+        let mut saida: Vec<EventoAuditado> = estado.eventos.drain(..).collect();
+        if estado.perdidos > 0 {
+            saida.push(EventoAuditado::Perda { n: estado.perdidos });
+            estado.perdidos = 0;
+        }
+        saida
+    }
+}
+
+impl Auditor for AuditorBuffer {
+    fn registrar(&self, evento: &EventoAutz) {
+        let mut estado = self.estado.lock().expect("buffer de auditoria envenenado");
+        if estado.eventos.len() >= self.capacidade {
+            // Transbordo: NÃO bloqueia, NÃO descarta o registro já retido, NÃO cresce. Conta a perda
+            // — que sai NOMEADA no próximo dreno. O caminho de autz segue: a auditoria nunca o trava.
+            estado.perdidos += 1;
+            return;
+        }
+        estado.eventos.push_back(EventoAuditado::Autz {
+            ator: evento.ator.clone(),
+            acao: evento.acao.clone(),
+            resultado: evento.resultado,
+        });
     }
 }
 
@@ -286,5 +362,80 @@ mod tests {
             (UserId("u1".into()), AcaoBackOffice::SuspenderOrg(OrgId("orgA".into())), ResultadoAutz::Negado),
             "o negado registra o ATOR que tentou (não-staff), não some"
         );
+    }
+
+    // ---- #1546 (A): AuditorBuffer (buffer local limitado + transbordo auditado) ----
+
+    #[test]
+    fn buffer_retem_e_drena_na_ordem() {
+        let buf = AuditorBuffer::novo(10);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Permitido });
+        buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Negado });
+        let drenado = buf.drenar();
+        assert_eq!(drenado.len(), 2);
+        assert!(matches!(&drenado[0], EventoAuditado::Autz { resultado: ResultadoAutz::Permitido, .. }));
+        assert!(matches!(&drenado[1], EventoAuditado::Autz { resultado: ResultadoAutz::Negado, .. }));
+        assert!(buf.drenar().is_empty(), "2º dreno vazio — o 1º esvaziou");
+    }
+
+    // Exigência do @Altair: transbordo é ELE PRÓPRIO evento auditado (nunca silêncio). Teto 2, 5
+    // registros ⇒ 2 retidos + `Perda { n: 3 }`. Um mutante que descartasse silenciosamente (sem
+    // contar) faria a Perda sumir — este teste o mata.
+    #[test]
+    fn transbordo_vira_evento_de_perda_nomeada() {
+        let buf = AuditorBuffer::novo(2);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        for _ in 0..5 {
+            buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Negado });
+        }
+        let drenado = buf.drenar();
+        assert_eq!(drenado.len(), 3, "2 retidos (teto) + 1 Perda");
+        assert_eq!(drenado[2], EventoAuditado::Perda { n: 3 }, "os 3 perdidos saem NOMEADOS");
+        let autz = drenado.iter().filter(|e| matches!(e, EventoAuditado::Autz { .. })).count();
+        assert_eq!(autz, 2, "buffer LIMITADO ao teto — não cresceu (sem exaustão)");
+    }
+
+    #[test]
+    fn sem_transbordo_sem_perda_espuria() {
+        let buf = AuditorBuffer::novo(10);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Permitido });
+        let drenado = buf.drenar();
+        assert_eq!(drenado.len(), 1);
+        assert!(drenado.iter().all(|e| matches!(e, EventoAuditado::Autz { .. })), "nenhuma Perda que não houve");
+    }
+
+    // O dreno ZERA o contador: uma perda não reaparece no dreno seguinte (senão inflaria pra sempre).
+    #[test]
+    fn dreno_zera_o_contador_de_perdas() {
+        let buf = AuditorBuffer::novo(1);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        for _ in 0..3 {
+            buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Negado });
+        }
+        let d1 = buf.drenar();
+        assert!(d1.iter().any(|e| matches!(e, EventoAuditado::Perda { n: 2 })), "1 retido, 2 perdidos");
+        assert!(buf.drenar().is_empty(), "a Perda não reaparece no dreno seguinte");
+    }
+
+    // Muitos registros num teto pequeno COMPLETAM (registrar nunca bloqueia) e o buffer fica no teto
+    // (nunca cresce): as duas garantias de segurança do síncrono, juntas.
+    #[test]
+    fn registrar_sob_carga_nao_bloqueia_nem_cresce() {
+        let buf = AuditorBuffer::novo(4);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        for _ in 0..10_000 {
+            buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Permitido });
+        }
+        let drenado = buf.drenar();
+        let autz = drenado.iter().filter(|e| matches!(e, EventoAuditado::Autz { .. })).count();
+        assert_eq!(autz, 4, "buffer preso no teto sob 10k registros");
+        assert_eq!(drenado.last(), Some(&EventoAuditado::Perda { n: 9_996 }), "as 9996 perdas, nomeadas");
     }
 }

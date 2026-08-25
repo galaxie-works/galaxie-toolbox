@@ -17,8 +17,10 @@ use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
+use galaxie_platform_conta::usuario_da_sessao;
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
-use galaxie_platform_identity::{OrgId, Papel};
+use galaxie_platform_identity::sessao::ArmazemSessao;
+use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, UserId};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
@@ -102,6 +104,24 @@ fn papel_str(papel: &Papel) -> &'static str {
     }
 }
 
+/// Inverso de [`papel_str`] — a ALLOWLIST de papéis que o cliente pode ESCREVER (`PATCH` papel). Fora
+/// dela ⇒ `None` (o handler ⇒ 400): o servidor não aceita um papel que não conhece (nem "staff" nem
+/// um valor forjado). `match` exaustivo — papel novo no domínio obriga a decidir se é escrevível.
+fn papel_de_str(s: &str) -> Option<Papel> {
+    match s {
+        "member" => Some(Papel::Member),
+        "org_admin" => Some(Papel::OrgAdmin),
+        _ => None,
+    }
+}
+
+/// Corpo do `PATCH /orgs/{org}/membros/{uid}`: só o papel novo. Campo faltando/tipo errado ⇒ falha
+/// de desserialização ⇒ 400 (o handler não adivinha).
+#[derive(serde::Deserialize)]
+struct MudarPapelReq {
+    papel: String,
+}
+
 /// O membro como sai no fio (contrato §4.3: `{ uid, nome, email, papel }`). DTO na borda (com
 /// `serde`) — o tipo de domínio [`Membro`] fica serde-free. `serde_json` cuida do escaping de
 /// `nome`/`email` (dado de usuário) — por isso não é hand-roll como o corpo de erro.
@@ -143,6 +163,7 @@ async fn listar_membros(
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel) — o `autorizar_acao_admin` faz a ordem.
     match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarMembros, &org) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
         Ok(()) => {}
     }
@@ -153,6 +174,110 @@ async fn listar_membros(
         Ok(membros) => {
             let dto: Vec<MembroDto> = membros.iter().map(MembroDto::from).collect();
             let corpo = serde_json::to_string(&dto).expect("Vec<MembroDto> serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
+/// Carrega o `Org` e AUTORIZA a `acao` sobre ele — o pré-âmbulo comum das rotas org-scoped (mesma
+/// ordem visibilidade→suspensão→papel do `listar_membros`). `Ok` = autorizado; `Err(resp)` = a
+/// resposta pronta (404/403/`org_suspensa`/500) pra o handler devolver.
+async fn org_autorizada(
+    estado: &EstadoBorda,
+    sessao: &galaxie_platform_identity::Sessao,
+    acao: &AcaoAdminOrg,
+    org_id: &OrgId,
+) -> Result<(), Response> {
+    let org = match estado.orgs.buscar(org_id) {
+        Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
+        Ok(None) => return Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
+        Ok(Some(o)) => o,
+    };
+    match autorizar_acao_admin(sessao, acao, &org) {
+        Err(AdminErro::NaoEncontrada) => Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
+        Err(AdminErro::Suspensa) => Err(resposta_de_erro(CodigoErro::OrgSuspensa)),
+        Err(AdminErro::Negado) => Err(resposta_de_erro(CodigoErro::Negado)),
+        Ok(()) => Ok(()),
+    }
+}
+
+/// `DELETE /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — remove um membro. Autz: só `org_admin`
+/// da org (visibilidade→suspensão→papel). `204` se removeu; `404` se o `uid` não era membro (a admin
+/// PODE ver os membros, então não é oráculo).
+///
+/// 🔑 **A remoção REVOGA o acesso NA HORA (#1545):** ao remover, invalida TODAS as sessões vivas do
+/// alvo no servidor — o botão CORTA, não só registra. `Principal`/`Escopo` estão congelados na sessão,
+/// então cortar exige REVOGAR (não dá pra checar por request como a suspensão). ⚠️ Colateral NOMEADO
+/// e aceito (@Altair): invalidar todas as sessões desloga o alvo das OUTRAS orgs também — sobre-revogar
+/// é o lado seguro (o custo é relogar; revogação cirúrgica exigiria mutar sessão viva, mecanismo novo
+/// pra ganho pequeno). Só revoga se REMOVEU de fato (não em não-membro).
+async fn remover_membro(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+    Path((org, uid)): Path<(String, String)>,
+) -> Response {
+    let org_id = OrgId(org);
+    let alvo = UserId(uid);
+    if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id).await {
+        return resp;
+    }
+    match estado.membros.remover(&org_id, &alvo) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(true) => {
+            // #1545: revoga NA HORA — mata todas as sessões do alvo (colateral aceito acima).
+            estado
+                .armazem
+                .lock()
+                .expect("armazém de sessão não deve estar envenenado")
+                .invalidar_do_usuario(&alvo);
+            Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(Body::empty())
+                .expect("resposta 204 é sempre construível")
+        }
+        Ok(false) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
+    }
+}
+
+/// `PATCH /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — muda o papel. Autz igual; papel fora da
+/// allowlist ⇒ `400`; `uid` não-membro ⇒ `404`; senão `200` com o membro atualizado.
+///
+/// 🔑 **Mudar o papel REVOGA a sessão do alvo NA HORA (#1545):** como `Principal`/`Escopo` estão
+/// congelados na sessão, o papel novo não valeria até o próximo login — então a escrita invalida as
+/// sessões vivas do alvo, forçando o relogin que carrega o papel novo. Mesmo colateral aceito do
+/// `remover` (desloga das outras orgs). Só revoga se a mudança ACONTECEU (não em não-membro).
+async fn mudar_papel_membro(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+    Path((org, uid)): Path<(String, String)>,
+    corpo: axum::body::Bytes,
+) -> Response {
+    let org_id = OrgId(org);
+    // Autz ANTES de processar o corpo: quem não pode não tem o payload lido/aplicado.
+    if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id).await {
+        return resp;
+    }
+    // Papel do corpo — allowlist (fora dela = 400, nunca "papel novo silencioso").
+    let papel = match serde_json::from_slice::<MudarPapelReq>(&corpo).ok().and_then(|r| papel_de_str(&r.papel)) {
+        Some(p) => p,
+        None => return resposta_de_erro(CodigoErro::PayloadInvalido),
+    };
+    let alvo = UserId(uid);
+    match estado.membros.mudar_papel(&org_id, &alvo, papel) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(None) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
+        Ok(Some(m)) => {
+            // #1545: revoga NA HORA — o papel novo vale no relogin forçado.
+            estado
+                .armazem
+                .lock()
+                .expect("armazém de sessão não deve estar envenenado")
+                .invalidar_do_usuario(&alvo);
+            let corpo = serde_json::to_string(&MembroDto::from(&m)).expect("MembroDto serializa sempre");
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -205,6 +330,7 @@ async fn listar_dominios(
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel).
     match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarDominios, &org) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
         Ok(()) => {}
     }
@@ -224,14 +350,73 @@ async fn listar_dominios(
     }
 }
 
-/// Uma org do principal como sai no fio (contrato v1.3: `{ org, papel }`).
+/// O perfil como sai no fio (contrato §4.1: `{ nome, email, idioma? }`). DTO na borda; `idioma`
+/// some do JSON quando ausente (`idioma?` — o cliente cai no default). Domínio fica serde-free.
+#[derive(serde::Serialize)]
+struct PerfilDto<'a> {
+    nome: &'a str,
+    email: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idioma: Option<&'a str>,
+}
+
+/// `GET /api/v1/me` (contrato §4.1) — o perfil do PRÓPRIO principal. **User-scoped:** o `uid` vem
+/// da SESSÃO (`usuario_da_sessao`, delta do @Altair "a conta é sua e só sua"), NUNCA da rota —
+/// não há como pedir o perfil de outro. `401` sem sessão (extractor visível: `/me` não é segredo).
+/// Perfil ausente para um autenticado = **inconsistência de infra** (`resposta_de_falha`, 500), não
+/// 404: a sessão é válida, então o perfil DEVERIA existir (nasce no callback OAuth).
+async fn get_me(State(estado): State<EstadoBorda>, SessaoAtual(sessao): SessaoAtual) -> Response {
+    let uid = usuario_da_sessao(&sessao);
+    match estado.perfis.buscar(uid) {
+        // Infra fora do ar: falha nossa, transitória.
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        // INVARIANTE: sessão ⟹ perfil (ambos nascem no callback OAuth; o dev-server semeia os dois).
+        // `Ok(None)` — sessão VÁLIDA sem perfil — é INCONSISTÊNCIA de dado, NÃO infra caída. É a mesma
+        // conflação que o `Result` do armazém OAuth desfaz uma camada abaixo (@Altair, review do #1543),
+        // e ela não pode voltar aqui: um incidente de infra e um dado inconsistente têm de ser
+        // DISTINGUÍVEIS no log/alerta. O HTTP é o mesmo 500 (o cliente não conserta nenhum — não há
+        // 2º construtor de erro, a regra anti-oráculo segue), mas o LOG diz qual é.
+        Ok(None) => {
+            tracing::error!(uid = %uid.0, "GET /me: sessão válida sem perfil — invariante (sessão ⟹ perfil) violada");
+            resposta_de_falha(Visibilidade::Visivel)
+        }
+        Ok(Some(perfil)) => {
+            let dto = PerfilDto {
+                nome: &perfil.nome,
+                email: &perfil.email,
+                idioma: perfil.idioma.as_deref(),
+            };
+            let corpo = serde_json::to_string(&dto).expect("PerfilDto serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
+/// O `estado` da org como o contrato §4.5/v1.4 o projeta no fio. Explícito (não `Debug`/derive):
+/// o valor é PARTE DO CONTRATO — a tela do FE lê "suspensa" pra mostrar "fale com o admin".
+fn estado_org_str(estado: EstadoOrg) -> &'static str {
+    match estado {
+        EstadoOrg::Provisionada => "provisionada",
+        EstadoOrg::Suspensa => "suspensa",
+    }
+}
+
+/// Uma org do principal como sai no fio (contrato v1.4: `{ org, papel, estado }`). O `estado`
+/// entrou no v1.4 (#1544): é daqui que a tela tira o nome + o estado da org suspensa (por isso
+/// `/me/orgs` SOBREVIVE à suspensão — ver `me_orgs_sobrevive_a_suspensao`).
 #[derive(serde::Serialize)]
 struct OrgDoUsuarioDto<'a> {
     org: &'a str,
     papel: &'a str,
+    estado: &'static str,
 }
 
-/// `GET /api/v1/me/orgs` (contrato v1.3) — as orgs do PRÓPRIO principal, com o papel em cada.
+/// `GET /api/v1/me/orgs` (contrato v1.4) — as orgs do PRÓPRIO principal, com o papel E o `estado`
+/// em cada (o `estado` entrou no v1.4/#1544: a tela de org suspensa lê daqui).
 ///
 /// É a rota pela qual a UI **DESCOBRE o `{org}`** — sem ela, mesmo com sessão, o cliente não sabe
 /// qual org pedir e nenhuma das outras rotas é alcançável (lacuna do `{org}` que o @Altair fechou
@@ -243,29 +428,45 @@ async fn listar_minhas_orgs(
     State(estado): State<EstadoBorda>,
     SessaoAtual(sessao): SessaoAtual,
 ) -> Response {
-    match estado.membros.orgs_do_usuario(sessao.principal().usuario()) {
-        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        Ok(orgs) => {
-            let dto: Vec<OrgDoUsuarioDto> = orgs
-                .iter()
-                .map(|(org, papel)| OrgDoUsuarioDto { org: &org.0, papel: papel_str(papel) })
-                .collect();
-            let corpo = serde_json::to_string(&dto).expect("Vec<OrgDoUsuarioDto> serializa sempre");
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(corpo))
-                .expect("resposta 200 é sempre construível")
-        }
+    // NÃO passa por `autorizar_acao_admin`: /me/orgs SOBREVIVE à suspensão de propósito (senão o
+    // usuário de org suspensa fica sem a tela que explica, e conclui que a CONTA quebrou). O
+    // `me_orgs_sobrevive_a_suspensao` GUARDA essa propriedade — se alguém "harmonizar" e meter a
+    // autz aqui, aquele teste fica vermelho.
+    let orgs = match estado.membros.orgs_do_usuario(sessao.principal().usuario()) {
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+        Ok(orgs) => orgs,
+    };
+    // O `estado` (contrato v1.4) vem do armazém de orgs — join por pertencimento. Uma org que o
+    // usuário É membro mas o store de orgs não tem é INCONSISTÊNCIA de infra ⇒ falha (não invento
+    // estado nem escondo a org da lista). No caminho normal (stores coerentes) roda limpo.
+    let mut dto: Vec<OrgDoUsuarioDto> = Vec::with_capacity(orgs.len());
+    for (org_id, papel) in &orgs {
+        let estado_str = match estado.orgs.buscar(org_id) {
+            Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+            Ok(Some(org)) => estado_org_str(org.estado()),
+            Ok(None) => return resposta_de_falha(Visibilidade::Visivel),
+        };
+        dto.push(OrgDoUsuarioDto { org: &org_id.0, papel: papel_str(papel), estado: estado_str });
     }
+    let corpo = serde_json::to_string(&dto).expect("Vec<OrgDoUsuarioDto> serializa sempre");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(corpo))
+        .expect("resposta 200 é sempre construível")
 }
 
 /// Monta o `Router` da borda com o estado (armazéns + relógio + auditor) já resolvido.
 pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
+        .route("/api/v1/me", get(get_me))
         .route("/api/v1/me/orgs", get(listar_minhas_orgs))
         .route("/api/v1/orgs/{org}/membros", get(listar_membros))
+        .route(
+            "/api/v1/orgs/{org}/membros/{uid}",
+            delete(remover_membro).patch(mudar_papel_membro),
+        )
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
         .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
@@ -301,6 +502,85 @@ mod tests {
     }
     fn sem_dominios() -> Arc<dyn ArmazemDominio + Send + Sync> {
         Arc::new(ArmazemDominioMemoria::novo())
+    }
+    fn sem_perfis() -> Arc<dyn galaxie_platform_conta::ArmazemPerfil + Send + Sync> {
+        Arc::new(galaxie_platform_conta::ArmazemPerfilMemoria::novo())
+    }
+    use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
+
+    /// Borda com o perfil de `u1` semeado + sessão viva de `u1`. `idioma` controlável pra provar o
+    /// `idioma?` (some do JSON quando `None`).
+    fn borda_com_perfil(idioma: Option<&str>) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut perfis = ArmazemPerfilMemoria::novo();
+        perfis.inserir(
+            UserId("u1".into()),
+            Perfil { nome: "Ana".into(), email: "ana@x.com".into(), idioma: idioma.map(str::to_owned) },
+        );
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), Arc::new(perfis));
+        (borda, cookie)
+    }
+
+    /// GET /me devolve o perfil do PRÓPRIO principal (uid da sessão, nunca da rota).
+    #[tokio::test]
+    async fn get_me_devolve_o_perfil_do_principal() {
+        let (estado, cookie) = borda_com_perfil(Some("pt-BR"));
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        assert_eq!(json["nome"], "Ana");
+        assert_eq!(json["email"], "ana@x.com");
+        assert_eq!(json["idioma"], "pt-BR");
+    }
+
+    /// `idioma?` — ausente no perfil ⇒ o campo SOME do JSON (não vira `null`), pro cliente cair no default.
+    #[tokio::test]
+    async fn get_me_omite_idioma_quando_ausente() {
+        let (estado, cookie) = borda_com_perfil(None);
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        assert!(json.get("idioma").is_none(), "idioma ausente some do JSON: {corpo:?}");
+    }
+
+    /// **#1544 — GET /me na SURVIVE-LIST (gêmeo do `me_orgs_sobrevive`, pedido do @Altair).** REGRA
+    /// que a lista significa: toda rota da survive-list (`/me`, `/me/orgs`, logout) NASCE com o seu
+    /// teste de sobrevivência. `u1` é membro da orgA SUSPENSA e tem perfil ⇒ `/me` = 200 com o perfil
+    /// (não passa pela autz de org). Se alguém "harmonizar" e meter a suspensão no caminho do `/me`,
+    /// acharia orgA suspensa ⇒ 403, e SÓ este teste fica vermelho.
+    #[tokio::test]
+    async fn me_sobrevive_a_suspensao() {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut perfis = ArmazemPerfilMemoria::novo();
+        perfis.inserir(UserId("u1".into()), Perfil { nome: "Ana".into(), email: "ana@x.com".into(), idioma: None });
+        let mut orgs = ArmazemOrgMemoria::novo();
+        let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
+        org.suspender();
+        orgs.inserir(org);
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), sem_membros(), sem_dominios(), Arc::new(perfis));
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
+        assert_eq!(status, StatusCode::OK, "/me SOBREVIVE à suspensão (survive-list #1544)");
+        assert!(String::from_utf8_lossy(&corpo).contains("Ana"), "com o perfil, pra tela poder explicar");
+    }
+
+    /// GET /me sem sessão ⇒ 401 (superfície visível; `/me` não é segredo).
+    #[tokio::test]
+    async fn get_me_sem_sessao_e_401() {
+        let estado = Borda::nova(ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let (status, ..) = resposta_crua(estado, "", "/api/v1/me").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
@@ -353,7 +633,7 @@ mod tests {
         );
         let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios()), cookie_req)
+        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis()), cookie_req)
     }
 
     async fn resposta_crua(estado: EstadoBorda, cookie: &str, caminho: &str) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
@@ -394,6 +674,69 @@ mod tests {
             alheio, inexistente,
             "resposta INTEIRA (status+headers+corpo) tem de ser idêntica — senão é oráculo de localização"
         );
+    }
+
+    /// Borda com o admin `u1` de `orgA` + a org no store (suspensa ou não) + `u1` como membro
+    /// admin. `orgA` ativa ⇒ o admin lista; suspensa ⇒ o acesso é cortado.
+    fn borda_admin_org(suspensa: bool) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::de_orgs([OrgId("orgA".into())]),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+
+        let mut orgs = ArmazemOrgMemoria::novo();
+        let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
+        if suspensa {
+            org.suspender();
+        }
+        orgs.inserir(org);
+
+        let mut membros = ArmazemMembroMemoria::novo();
+        membros.inserir(
+            OrgId("orgA".into()),
+            Membro { uid: UserId("u1".into()), nome: "U1".into(), email: "u1@a.com".into(), papel: Papel::OrgAdmin },
+        );
+
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis());
+        (borda, cookie)
+    }
+
+    /// **#1544 ponta a ponta: org suspensa CORTA o acesso, pela borda.** O MESMO admin, na MESMA
+    /// rota org-scoped: org ativa ⇒ `200`; org suspensa ⇒ `403 org_suspensa`. Sem a fiação em
+    /// `autorizar_acao_admin`, o suspenso também daria `200` (a suspensão decorativa que o @Altair
+    /// pegou no #1551 v1) — e um mutante que remova o `if esta_suspensa` faz este teste devolver 200.
+    #[tokio::test]
+    async fn org_suspensa_corta_acesso_pela_borda() {
+        // Ativa: o admin lista os membros ⇒ 200.
+        let (ativa, cookie) = borda_admin_org(false);
+        let r_ativa = resposta_crua(ativa, &cookie, "/api/v1/orgs/orgA/membros").await;
+        assert_eq!(r_ativa.0, StatusCode::OK, "org ativa: o admin lista os membros");
+
+        // Suspensa: MESMO admin, MESMA rota ⇒ 403 com o slug PRÓPRIO no corpo (não `negado`).
+        let (suspensa, cookie2) = borda_admin_org(true);
+        let r_susp = resposta_crua(suspensa, &cookie2, "/api/v1/orgs/orgA/membros").await;
+        assert_eq!(r_susp.0, StatusCode::FORBIDDEN, "org suspensa: acesso CORTADO");
+        let corpo = String::from_utf8_lossy(&r_susp.2);
+        assert!(corpo.contains("org_suspensa"), "slug org_suspensa no corpo, não negado: {corpo}");
+    }
+
+    /// **#1544 — o GÊMEO invertido (pedido do @Altair): a survive-list é GUARDADA, não acidental.**
+    /// `/me/orgs` SOBREVIVE à suspensão (⇒ 200, org na lista, `estado: "suspensa"`) — senão o usuário
+    /// de org suspensa fica sem a tela que explica e conclui que a CONTA quebrou. Hoje sobrevive por
+    /// ESTRUTURA (`listar_minhas_orgs` não chama `autorizar_acao_admin`); este teste DECLARA que deve.
+    /// O mutante que "harmoniza" e mete a suspensão no caminho do `/me/orgs` faz SÓ este teste cair.
+    #[tokio::test]
+    async fn me_orgs_sobrevive_a_suspensao() {
+        // MESMA montagem do corta-acesso (orgA suspensa), asserção INVERTIDA: /me/orgs não é cortado.
+        let (suspensa, cookie) = borda_admin_org(true);
+        let r = resposta_crua(suspensa, &cookie, "/api/v1/me/orgs").await;
+        assert_eq!(r.0, StatusCode::OK, "/me/orgs SOBREVIVE à suspensão (a tela precisa alcançá-lo)");
+        let corpo = String::from_utf8_lossy(&r.2);
+        assert!(corpo.contains("orgA"), "a org suspensa continua na lista: {corpo}");
+        assert!(corpo.contains("\"estado\":\"suspensa\""), "com estado marcado pra tela: {corpo}");
     }
 
     /// Superfície VISÍVEL (`SessaoAtual`): sem cookie de sessão rejeita com **401** — aqui o que
@@ -449,7 +792,7 @@ mod tests {
         );
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
@@ -482,7 +825,7 @@ mod tests {
         RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
             async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
@@ -537,7 +880,7 @@ mod tests {
         }
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         let router = Router::new()
             .route("/api/v1/visivel", get(visivel))
@@ -626,7 +969,7 @@ mod tests {
         let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
         // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
         let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
         assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
@@ -668,7 +1011,7 @@ mod tests {
             ),
             AGORA,
         );
-        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
         let cookie_staff = format!("{NOME_COOKIE_SESSAO}={}", id_staff.0);
         let cookie_admin = format!("{NOME_COOKIE_SESSAO}={}", id_admin.0);
 
@@ -694,7 +1037,7 @@ mod tests {
     // ---- GET /orgs/{org}/membros (1º handler de DADOS, contrato §4.3) ----
 
     fn org_teste(id: &str) -> Org {
-        Org { id: OrgId(id.into()), dominios: Default::default(), tenant_m365: None }
+        Org::nova(OrgId(id.into()), Default::default(), None)
     }
     fn membro_teste(uid: &str, papel: Papel) -> Membro {
         Membro {
@@ -741,8 +1084,167 @@ mod tests {
             Arc::new(org_store),
             Arc::new(membro_store),
             sem_dominios(),
+            sem_perfis(),
         );
         (estado, cookie)
+    }
+
+    /// Request com MÉTODO + corpo (as escritas: DELETE/PATCH). Devolve status + corpo.
+    async fn requisicao(estado: EstadoBorda, metodo: &str, caminho: &str, cookie: &str, corpo: &str) -> (StatusCode, Vec<u8>) {
+        let req = Request::builder()
+            .method(metodo)
+            .uri(caminho)
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(corpo.to_owned()))
+            .unwrap();
+        let resp = rotas(estado).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let corpo = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+        (status, corpo)
+    }
+
+    fn borda_acme_com_u2(papel_u2: Papel) -> (EstadoBorda, String) {
+        borda_membros(
+            admin_de("acme"),
+            vec![org_teste("acme")],
+            vec![
+                (OrgId("acme".into()), membro_teste("adm", Papel::OrgAdmin)),
+                (OrgId("acme".into()), membro_teste("u2", papel_u2)),
+            ],
+        )
+    }
+
+    // #1505 escrita — DELETE remove o membro (204) e ele SOME da lista.
+    #[tokio::test]
+    async fn remover_membro_204_e_some_da_lista() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "removeu ⇒ 204");
+        let (s2, corpo) = requisicao(estado, "GET", "/api/v1/orgs/acme/membros", &cookie, "").await;
+        assert_eq!(s2, StatusCode::OK);
+        assert!(!String::from_utf8_lossy(&corpo).contains("\"u2\""), "u2 saiu da lista: {}", String::from_utf8_lossy(&corpo));
+    }
+
+    // DELETE de um uid que NÃO é membro ⇒ 404 (à admin, que pode ver — não é oráculo).
+    #[tokio::test]
+    async fn remover_nao_membro_e_404() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/fantasma", &cookie, "").await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+
+    // PATCH muda o papel (200 + membro atualizado) e a mudança PERSISTE.
+    #[tokio::test]
+    async fn mudar_papel_200_e_persiste() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, corpo) = requisicao(estado.clone(), "PATCH", "/api/v1/orgs/acme/membros/u2", &cookie, r#"{"papel":"org_admin"}"#).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(String::from_utf8_lossy(&corpo).contains("org_admin"), "devolve o membro com papel novo");
+        let (_, lista) = requisicao(estado, "GET", "/api/v1/orgs/acme/membros", &cookie, "").await;
+        let json: serde_json::Value = serde_json::from_slice(&lista).unwrap();
+        let u2 = json.as_array().unwrap().iter().find(|m| m["uid"] == "u2").unwrap();
+        assert_eq!(u2["papel"], "org_admin", "a mudança persistiu no store");
+    }
+
+    // PATCH de um uid que NÃO é membro ⇒ 404 (Ok(None) do store).
+    #[tokio::test]
+    async fn mudar_papel_de_nao_membro_e_404() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado, "PATCH", "/api/v1/orgs/acme/membros/fantasma", &cookie, r#"{"papel":"org_admin"}"#).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+
+    // Papel FORA da allowlist ⇒ 400 (não aceita "staff" nem valor forjado).
+    #[tokio::test]
+    async fn mudar_papel_fora_da_allowlist_e_400() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member);
+        let (s, _) = requisicao(estado, "PATCH", "/api/v1/orgs/acme/membros/u2", &cookie, r#"{"papel":"staff"}"#).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+
+    // Escrita de quem NÃO é admin da org ⇒ 403 (default-deny; o member não administra).
+    #[tokio::test]
+    async fn escrita_de_nao_admin_e_403() {
+        let (estado, cookie) = borda_membros(
+            membro_de("acme"), // sessão de MEMBER, não admin
+            vec![org_teste("acme")],
+            vec![(OrgId("acme".into()), membro_teste("u2", Papel::Member))],
+        );
+        let (s, _) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+    }
+
+    // Escrita em org SUSPENSA ⇒ 403 org_suspensa (o enforcement #1544 vale nas escritas também,
+    // porque passa pelo MESMO `autorizar_acao_admin`).
+    #[tokio::test]
+    async fn escrita_em_org_suspensa_e_403_org_suspensa() {
+        let mut org = org_teste("acme");
+        org.suspender();
+        let (estado, cookie) = borda_membros(
+            admin_de("acme"),
+            vec![org],
+            vec![(OrgId("acme".into()), membro_teste("u2", Papel::Member))],
+        );
+        let (s, corpo) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+        assert!(String::from_utf8_lossy(&corpo).contains("org_suspensa"));
+    }
+
+    /// Borda com sessão do ADMIN + sessão VIVA do alvo `u2` (member de acme). Devolve as duas cookies.
+    fn borda_admin_e_alvo() -> (EstadoBorda, String, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let (id_adm, _) = emitir_sessao(&mut armazem, admin_de("acme"), AGORA);
+        let cookie_adm = format!("{NOME_COOKIE_SESSAO}={}", id_adm.0);
+        let sessao_u2 = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u2".into()), org: OrgId("acme".into()) },
+            Escopo::de_orgs([OrgId("acme".into())]),
+        );
+        let (id_u2, _) = emitir_sessao(&mut armazem, sessao_u2, AGORA);
+        let cookie_u2 = format!("{NOME_COOKIE_SESSAO}={}", id_u2.0);
+        let mut orgs = ArmazemOrgMemoria::novo();
+        orgs.inserir(org_teste("acme"));
+        let mut membros = ArmazemMembroMemoria::novo();
+        membros.inserir(OrgId("acme".into()), membro_teste("adm", Papel::OrgAdmin));
+        membros.inserir(OrgId("acme".into()), membro_teste("u2", Papel::Member));
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis());
+        (estado, cookie_adm, cookie_u2)
+    }
+
+    // #1545 — REMOVER revoga a sessão do alvo NA HORA (não em 12h). u2 logado ⇒ /me/orgs 200; admin
+    // remove u2 ⇒ /me/orgs de u2 vira 401. Mutante que pule `invalidar_do_usuario` deixa u2 em 200 ⇒ morre.
+    #[tokio::test]
+    async fn remover_revoga_a_sessao_do_alvo_na_hora() {
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let (antes, ..) = resposta_crua(estado.clone(), &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(antes, StatusCode::OK, "u2 está logado ANTES da remoção");
+        let (del, _) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie_adm, "").await;
+        assert_eq!(del, StatusCode::NO_CONTENT);
+        let (depois, ..) = resposta_crua(estado, &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(depois, StatusCode::UNAUTHORIZED, "a remoção REVOGOU a sessão do u2 imediatamente");
+    }
+
+    // #1545 — MUDAR PAPEL também revoga (força o relogin que carrega o papel novo).
+    #[tokio::test]
+    async fn mudar_papel_revoga_a_sessao_do_alvo() {
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let (antes, ..) = resposta_crua(estado.clone(), &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(antes, StatusCode::OK);
+        let (patch, _) = requisicao(estado.clone(), "PATCH", "/api/v1/orgs/acme/membros/u2", &cookie_adm, r#"{"papel":"org_admin"}"#).await;
+        assert_eq!(patch, StatusCode::OK);
+        let (depois, ..) = resposta_crua(estado, &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(depois, StatusCode::UNAUTHORIZED, "a mudança de papel revogou a sessão do u2");
+    }
+
+    // #1545 — remover NÃO-MEMBRO (404) NÃO revoga ninguém (não invalida quem não removeu).
+    #[tokio::test]
+    async fn remover_nao_membro_nao_revoga() {
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let (del, _) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/fantasma", &cookie_adm, "").await;
+        assert_eq!(del, StatusCode::NOT_FOUND);
+        // u2 (que NÃO foi tocado) segue logado.
+        let (u2, ..) = resposta_crua(estado, &cookie_u2, "/api/v1/me/orgs").await;
+        assert_eq!(u2, StatusCode::OK, "remover fantasma não derruba u2");
     }
 
     /// Happy path: org_admin da própria org → 200 com a projeção §4.3 `[{uid,nome,email,papel}]`,
@@ -836,6 +1338,7 @@ mod tests {
             Arc::new(OrgsFalho),
             sem_membros(),
             sem_dominios(),
+            sem_perfis(),
         );
         let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
         assert_eq!(
@@ -871,6 +1374,7 @@ mod tests {
             Arc::new(org_store),
             sem_membros(),
             Arc::new(dom_store),
+            sem_perfis(),
         );
         (estado, cookie)
     }

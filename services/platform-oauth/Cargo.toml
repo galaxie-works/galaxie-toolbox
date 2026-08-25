@@ -1,0 +1,15 @@
+# platform-oauth — fluxo OAuth federado (fatia 3 do #1505), lado DOMÍNIO. A borda busca bytes; aqui
+# se DECIDE o que eles significam. Fatia A: allowlist de provedores, PKCE (S256), estado do fluxo
+# (prazo + uso único + amarra ao browser), redirect_uri allowlist EXATA. Puro — sem HTTP, sem segredos.
+[package]
+name = "galaxie-platform-oauth"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# CSPRNG (state, PKCE verifier), base64url (encode), SHA-256 (PKCE S256 challenge). Já no workspace.
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"

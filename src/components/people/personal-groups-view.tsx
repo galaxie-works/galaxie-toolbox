@@ -470,7 +470,6 @@ export function PersonalGroupsView({
             <ResizableHandle
               withHandle
               aria-label={t.controlRoom.orgsRedimensionar}
-              className="mx-1.5 bg-transparent hover:bg-border"
             />
             <ResizablePanel
               defaultSize={62}

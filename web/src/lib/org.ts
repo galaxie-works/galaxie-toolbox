@@ -120,8 +120,21 @@ export type Resultado<T> =
    * pegaram porque nenhum duplo devolvia 401; só o servidor de verdade devolve.
    */
   | { estado: "naoAutenticado" }
-  /** 403 — é da org, mas não é admin dela. Pode saber que a org existe. */
+  /** 403 `negado` — é da org, mas não é admin dela. Pode saber que a org existe. */
   | { estado: "naoEhAdmin" }
+  /**
+   * 403 `org_suspensa` — **mesmo HTTP que `negado`, razão diferente** (contrato
+   * v1.4, §3). O principal É membro; quem não é membro leva `404` e nunca chega
+   * aqui, então a suspensão não vira oráculo.
+   *
+   * Por que não colapsar no `naoEhAdmin`: a ordem de checagem no servidor é
+   * **visibilidade → suspensão → papel**, e ela existe justamente pra que um
+   * membro de org suspensa não veja "papel insuficiente". Se o cliente colapsar
+   * os dois aqui, ele desfaz no último metro a distinção que o servidor tomou o
+   * cuidado de fazer — e o usuário vai pedir a um admin um acesso que nenhum
+   * admin pode conceder, porque o problema não é papel, é a org estar suspensa.
+   */
+  | { estado: "orgSuspensa" }
   /** 404 — não pertence à org (ou ela não existe). Não pode saber qual dos dois. */
   | { estado: "naoEhSuaOrg" }
   | { estado: "erro"; motivo: string };
@@ -141,6 +154,45 @@ export type Resultado<T> =
 export interface OrgDoPrincipal {
   org: string;
   papel: string;
+  /**
+   * `"provisionada" | "suspensa"` no contrato, **`string` aqui de propósito**.
+   *
+   * É o oposto do que fiz no `Dominio.estado`, e a diferença não é descuido: lá
+   * o doc declara dois valores e cala sobre o terceiro, então fechar a união faz
+   * o `tsc` cobrar quem inventar. Aqui o contrato **manda** o cliente aguentar
+   * valor que não conhece — condição (2) do @Altair na v1.4: *"desconhecido no
+   * FE = neutro, nunca permissivo (forward-compat da string do lado do cliente;
+   * no BE o enum é fechado)"*.
+   *
+   * Fechar a união aqui seria desobedecer: um servidor novo com um estado novo
+   * faria este build tratar o campo como impossível, e o jeito de "resolver"
+   * isso na correria é um `as` — que mente pro compilador em vez de tratar o
+   * caso. `string` + `estaSuspensa` deixa o desconhecido cair sozinho no neutro.
+   */
+  estado: string;
+}
+
+/**
+ * A org está suspensa?
+ *
+ * ⚠️ **Isto decide o que MOSTRAR, jamais o que PERMITIR** — a mesma amarra que
+ * o contrato já põe sobre `papel`, e pela mesma razão. Quem corta o acesso é a
+ * autz no servidor (#1544, `403 org_suspensa`); esta função só faz a explicação
+ * chegar ANTES de o usuário esbarrar no 403, em vez de depois.
+ *
+ * Por isso ela é usada para renderizar um aviso e **nada mais**. Se um dia
+ * aparecer um `if (!estaSuspensa(...))` guardando uma ação, o defeito não é a
+ * tela ficar otimista — é ter promovido uma dica de renderização a decisão de
+ * acesso, e aí um servidor que respondesse `estado: "provisionada"` por engano
+ * viraria autorização.
+ *
+ * Desconhecido devolve `false` — **neutro, não permissivo**: o build não inventa
+ * um aviso de suspensão que talvez não seja verdade, e não libera nada, porque
+ * não é ele quem libera. Se o servidor de fato estiver cortando, o `403
+ * org_suspensa` chega na primeira leitura e a tela diz a mesma coisa.
+ */
+export function estaSuspensa(org: OrgDoPrincipal): boolean {
+  return org.estado === "suspensa";
 }
 
 /**
@@ -151,6 +203,45 @@ export function minhasOrgs(): Promise<Resultado<OrgDoPrincipal[]>> {
   return buscar<OrgDoPrincipal[]>("/me/orgs");
 }
 
+/**
+ * Qual das duas razões de `403` o servidor deu.
+ *
+ * O contrato (§3) dá ao `403` um corpo `{ "erro": "<codigo>" }` com vocabulário
+ * fechado. São dois os códigos que chegam num `403`: `negado` (papel
+ * insuficiente) e `org_suspensa` (a org caiu).
+ *
+ * ── Desconhecido é NEUTRO, nunca permissivo ────────────────────────────────
+ * Condição (2) do @Altair, ratificada na v1.4: *"desconhecido no FE = neutro,
+ * nunca permissivo (forward-compat da string do lado do cliente; no BE o enum é
+ * fechado)"*. Traduzido pra este arquivo: **todo caminho que não reconhece o
+ * código cai em `naoEhAdmin`** — corpo ausente, corpo que não é JSON, `erro`
+ * que não é string, código novo que este build não conhece. Nenhum deles
+ * devolve `pronto`, e nenhum deles inventa um estado permissivo.
+ *
+ * O risco de errar pro outro lado é concreto: se um código novo caísse em
+ * `pronto` ou em `erro` genérico, um `403` viraria "tente de novo" — oferecendo
+ * repetição a quem foi barrado. Cair no mais restritivo é a única direção em
+ * que um build velho contra um servidor novo continua correto.
+ *
+ * Ler o corpo aqui é seguro quanto ao invariante 1 porque **só o `403` passa
+ * por esta função**. O `404`, que é o que não pode vazar razão, nunca é lido.
+ */
+async function razaoDo403(resposta: Response): Promise<{ estado: "naoEhAdmin" | "orgSuspensa" }> {
+  let corpo: unknown;
+  try {
+    corpo = await resposta.json();
+  } catch {
+    return { estado: "naoEhAdmin" };
+  }
+  const codigo =
+    typeof corpo === "object" && corpo !== null
+      ? (corpo as { erro?: unknown }).erro
+      : undefined;
+  return codigo === "org_suspensa"
+    ? { estado: "orgSuspensa" }
+    : { estado: "naoEhAdmin" };
+}
+
 export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
   let resposta: Response;
   try {
@@ -159,7 +250,11 @@ export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
     return { estado: "erro", motivo: e instanceof Error ? e.message : "rede" };
   }
   if (resposta.status === 401) return { estado: "naoAutenticado" };
-  if (resposta.status === 403) return { estado: "naoEhAdmin" };
+  if (resposta.status === 403) return await razaoDo403(resposta);
+  // O `404` segue OPACO de propósito: o contrato exige que ele seja byte-a-byte
+  // igual quer o recurso não exista, quer exista e não seja do solicitante
+  // (invariante 1). Ler o corpo dele não teria o que aprender — e a tentação de
+  // tratá-lo como os outros é justamente o que o invariante impede.
   if (resposta.status === 404) return { estado: "naoEhSuaOrg" };
   if (!resposta.ok) {
     return { estado: "erro", motivo: `HTTP ${resposta.status}` };
