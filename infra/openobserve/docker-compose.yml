@@ -32,6 +32,12 @@ services:
     environment:
       - ZO_ROOT_USER_EMAIL=${ZO_ROOT_USER_EMAIL}
       - ZO_ROOT_USER_PASSWORD=${ZO_ROOT_USER_PASSWORD}
+    # ⚠️ NÃO republique a porta 5080. A ausência de `ports:` é DELIBERADA (host,
+    #    2026-08-02, commit `before-private-port`): publicar 5080 expõe o OpenObserve
+    #    direto na internet, POR FORA do Traefik — sem TLS e sem a borda. Só o
+    #    Traefik deve alcançá-lo, pela rede do docker.
+    #    Registrado aqui (#1480) porque a única evidência de que isto foi escolha
+    #    era o NOME de um arquivo `.before-*` no host, que este card manda apagar.
     volumes:
       - openobserve_data:/data
     healthcheck:
