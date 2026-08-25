@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
 import {
   DICIONARIOS,
@@ -161,9 +161,50 @@ type EstadoRecurso =
   | "carregando"
   | "naoAutenticado"
   | "naoEhAdmin"
+  | "orgSuspensa"
   | "naoEhSuaOrg"
   | "erro"
   | "pronto";
+
+/**
+ * O que renderizar quando o recurso **não** chegou — num lugar só.
+ *
+ * Nasceu quando o `orgSuspensa` entrou (contrato v1.4): os dois painéis
+ * repetiam a mesma escada de `if`, e eu teria de acertar o estado novo duas
+ * vezes. Acertar em um e esquecer no outro é o defeito que o ponto único
+ * impede — é o mesmo conserto que o @castor fez no #1279 pro `ResizableHandle`.
+ * O `useRecurso` já unificava de ONDE vem o estado; faltava unificar o que ele
+ * VIRA na tela.
+ *
+ * Devolve `null` só para `pronto`. O `switch` é exaustivo de propósito: se um
+ * estado novo aparecer e ninguém o tratar, o `tsc` reclama do retorno — em vez
+ * de o estado escorrer silenciosamente pro caminho de conteúdo, que é
+ * justamente o jeito permissivo de errar.
+ */
+function avisoDoEstado(estado: EstadoRecurso, t: Dicionario): ReactElement | null {
+  switch (estado) {
+    case "carregando":
+      return <p>{t.carregando}</p>;
+    // 401 = sem sessão ⇒ login. Vem ANTES de 403/404 porque "não estás logado"
+    // não é um caso de permissão dentro da org — é a ausência de sessão.
+    case "naoAutenticado":
+      return <Navigate to="/login" replace />;
+    // Três negativas, três mensagens. Ver `lib/org.ts`: quem leva 403 `negado`
+    // já é da org e a instrução "peça a um admin" é acionável; quem leva 403
+    // `org_suspensa` também é da org, mas nenhum admin resolve o caso dele; quem
+    // leva 404 não pertence, e a mensagem não pode confirmar que a org existe.
+    case "naoEhAdmin":
+      return <Aviso titulo={t.semPermissao} detalhe={t.semPermissaoDetalhe} />;
+    case "orgSuspensa":
+      return <Aviso titulo={t.orgSuspensa} detalhe={t.orgSuspensaDetalhe} />;
+    case "naoEhSuaOrg":
+      return <Aviso titulo={t.naoEhSuaOrg} detalhe={t.naoEhSuaOrgDetalhe} />;
+    case "erro":
+      return <p>{t.erroCarregar}</p>;
+    case "pronto":
+      return null;
+  }
+}
 
 /**
  * A máquina de estados que TODO painel de leitura do admin compartilha.
@@ -199,18 +240,8 @@ function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
   const { estado, dados } = useRecurso<Membro[]>(CAMINHOS.membros(org));
   const membros = dados ?? [];
 
-  if (estado === "carregando") return <p>{t.carregando}</p>;
-  // 401 = sem sessão ⇒ login. Vem ANTES de 403/404 porque "não estás logado"
-  // não é um caso de permissão dentro da org — é a ausência de sessão.
-  if (estado === "naoAutenticado") return <Navigate to="/login" replace />;
-  // Duas negativas, duas mensagens. Ver `lib/org.ts`: quem leva 403 já é da org
-  // e a instrução "peça a um admin" é acionável; quem leva 404 não pertence, e a
-  // mensagem não pode confirmar que a org existe.
-  if (estado === "naoEhAdmin")
-    return <Aviso titulo={t.semPermissao} detalhe={t.semPermissaoDetalhe} />;
-  if (estado === "naoEhSuaOrg")
-    return <Aviso titulo={t.naoEhSuaOrg} detalhe={t.naoEhSuaOrgDetalhe} />;
-  if (estado === "erro") return <p>{t.erroCarregar}</p>;
+  const aviso = avisoDoEstado(estado, t);
+  if (aviso) return aviso;
 
   return (
     <table className="w-full text-left text-sm">
@@ -248,13 +279,8 @@ function PainelDominios({ idioma, org }: { idioma: Idioma; org: string }) {
   const t = DICIONARIOS[idioma];
   const { estado, dados } = useRecurso<Dominio[]>(CAMINHOS.dominios(org));
 
-  if (estado === "carregando") return <p>{t.carregando}</p>;
-  if (estado === "naoAutenticado") return <Navigate to="/login" replace />;
-  if (estado === "naoEhAdmin")
-    return <Aviso titulo={t.semPermissao} detalhe={t.semPermissaoDetalhe} />;
-  if (estado === "naoEhSuaOrg")
-    return <Aviso titulo={t.naoEhSuaOrg} detalhe={t.naoEhSuaOrgDetalhe} />;
-  if (estado === "erro") return <p>{t.erroCarregar}</p>;
+  const aviso = avisoDoEstado(estado, t);
+  if (aviso) return aviso;
 
   const dominios = dados ?? [];
   if (dominios.length === 0) return <p>{t.semDominios}</p>;
