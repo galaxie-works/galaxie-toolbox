@@ -16,6 +16,21 @@
 // Aqui há chromium a sério: espero a animação ASSENTAR e leio a `opacity`
 // computada. Se a transição partir e o utilizador ficar sem marca, este teste
 // cai — que é precisamente o que o outro não consegue fazer.
+//
+// ⚠️ REGRA PARA QUEM MEXER AQUI (achado da @Lúmen ao gatear a PR #1624, medido
+// por mim no `ci.yml` + ruleset `21055172`):
+//
+//   ESTE CANAL NÃO BLOQUEIA O MERGE.
+//   required = `frontend / gate` (build · lint · `pnpm test` · `test:component`)
+//              + `rust` + `clippy` + `web`.   O job `browser` está DE FORA,
+//   de propósito: ele já ficou 45+ min pendurado (18/08) e não pode segurar o
+//   release — a razão está escrita no `ci.yml`.
+//
+// ⇒ **Nenhuma asserção que SEGURA um AC pode viver só aqui.** Este ficheiro
+// acrescenta a prova de pixel; o que gateia o #1599 (alcançabilidade, nome
+// acessível, texto, fiação do `{app}`) vive no `.component.test.tsx`, que corre
+// no canal que bloqueia. Mover uma dessas para cá tira-lhe os dentes **sem
+// ninguém reparar** — que é o modo de falha deste card desde o início.
 import "@/index.css";
 import { describe, it, expect } from "vitest";
 import { render } from "vitest-browser-react";
