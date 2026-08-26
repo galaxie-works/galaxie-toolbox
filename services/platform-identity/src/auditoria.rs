@@ -27,6 +27,46 @@ pub enum ResultadoAutz {
     Negado,
 }
 
+/// CONTRA QUEM a decisão foi — enum FECHADO (#1591). A auditoria tem de dizer o alvo, não só o
+/// ator: a forma da sondagem é a DISTRIBUIÇÃO sobre alvos (`A` tentando 1 config = ruído; `A`
+/// tentando a de 500 = enumeração), e com um alvo achatado a `None` as duas ficam idênticas na
+/// trilha. Nasceu `Option<&OrgId>` (org-scoped, #1571), mas a config é user-scoped ⇒ o tipo tinha
+/// de exprimir "usuário" também. **Enum, NÃO dois campos opcionais**: "org E usuário ao mesmo
+/// tempo" e "nenhum onde devia haver" ficam não-representáveis, e um scope novo não compila sem
+/// tratar o `match`. `OrgId`/`UserId` — o **id** opaco, nunca `Org`/claim (o furo do #1475).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alvo<'a> {
+    /// Ação sobre uma org (back-office, admin-org): o id da org alvejada.
+    Org(&'a OrgId),
+    /// Ação sobre a conta de um usuário (config): o id do usuário alvejado — o que o #1589 precisa
+    /// pra distinguir sondagem de ruído.
+    Usuario(&'a UserId),
+    /// Ação sem alvo (ex.: `ListarOrgs`) — não é `None` de um alvo que existia, é a ausência dele.
+    SemAlvo,
+}
+
+impl Alvo<'_> {
+    /// A forma OWNED do alvo, pros sinks que enfileiram o evento (o buffer do #1546). Preserva a
+    /// distinção org/usuário — colapsá-la de volta a um id só desfaria o #1591.
+    #[must_use]
+    pub fn para_dono(&self) -> AlvoDono {
+        match self {
+            Alvo::Org(o) => AlvoDono::Org((*o).clone()),
+            Alvo::Usuario(u) => AlvoDono::Usuario((*u).clone()),
+            Alvo::SemAlvo => AlvoDono::SemAlvo,
+        }
+    }
+}
+
+/// A forma POSSUÍDA do [`Alvo`] — o que um sink que retém o evento (buffer) guarda. Espelha o
+/// enum emprestado; existe pra não achatar org/usuário ao persistir.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlvoDono {
+    Org(OrgId),
+    Usuario(UserId),
+    SemAlvo,
+}
+
 /// Evento SEMÂNTICO de uma decisão de autz, emprestado (o `ts`/id de correlação são carimbados
 /// pela impl, request-scoped, onde o evento sai da caixa). Carrega só o que a decisão conhece.
 pub struct EventoAutz<'a> {
@@ -35,9 +75,9 @@ pub struct EventoAutz<'a> {
     pub ator: &'a UserId,
     /// O nome ESTÁVEL e namespaced da ação, vindo do `acao_nome()` do enum dono (nunca literal).
     pub acao: &'a str,
-    /// O **id** da org alvo, quando a ação tem alvo (`None` p/ ações sem alvo, ex.: `ListarOrgs`).
-    /// `OrgId` sim, `Org` NUNCA — id opaco não é claim (o furo do #1475 era o `Org` na autz).
-    pub alvo: Option<&'a OrgId>,
+    /// CONTRA QUEM — org, usuário, ou sem-alvo (enum fechado, #1591). O evento diz o alvo, não só
+    /// o ator; a distribuição sobre alvos é a forma da enumeração.
+    pub alvo: Alvo<'a>,
     pub resultado: ResultadoAutz,
 }
 
