@@ -97,6 +97,15 @@ test("#1599 AC5 — a CLASSE B continua intacta (o rename não pode alcançá-la
   // rótulo — e o efeito não aparece em teste de UI nenhum, aparece no usuário
   // que perde tema, sessão e configuração ao atualizar.
   const chaves = fontes(join(RAIZ, "src"), [".ts", ".tsx"])
+    // MESMA razão do `ESTE_ARQUIVO` na varredura de rótulos — e faltava aqui.
+    // Apanhado pela @Lúmen: esta guarda MENCIONA a chave que conta (no
+    // comentário acima e na mensagem de falha abaixo), e essas duas menções
+    // **não desaparecem** quando alguém renomeia uma chave real. Eram folga
+    // permanente do tamanho delas: 12 ocorrências contra piso 10, logo as duas
+    // primeiras chaves de persistência podiam morrer EM SILÊNCIO. Escrevi a
+    // razão da exclusão no cabeçalho deste ficheiro e apliquei-a a um dos dois
+    // sítios; a guarda de rótulos ficou com dentes e esta ficou com a frase.
+    .filter((p) => !p.endsWith(ESTE_ARQUIVO))
     .flatMap((p) =>
       readFileSync(p, "utf8")
         .split("\n")
