@@ -8,8 +8,8 @@ import {
 } from "@/components/ui/empty";
 import { preencher, useIdioma } from "@/lib/idioma";
 
-/** Nome do produto no {app} do empty-state. */
-const APP = "GALAXIE Toolbox";
+/** Nome da suite no {app} do empty-state (renomeado no #1599). */
+const APP = "The GALAXIE";
 
 /**
  * #699 (PS6): empty-state padrão de uma feature de ORGANIZAÇÃO vista num tier
