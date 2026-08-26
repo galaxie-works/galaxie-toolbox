@@ -17,8 +17,10 @@
 // responde "o rótulo velho saiu da fonte" é o `pollux-1599-nome-da-suite.test.ts`
 // (varredura de fonte). Este responde "o utilizador vê o novo". Duas perguntas
 // diferentes, dois instrumentos diferentes — juntá-las foi o erro de origem.
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { IdiomaProvider, preencher } from "@/lib/idioma";
 import { DICIONARIOS, type Idioma } from "@/lib/strings";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -74,6 +76,16 @@ function visivel(container: HTMLElement): string {
   return (container.textContent ?? "").replace(/\s+/g, " ");
 }
 
+/** Todos os `.ts`/`.tsx` de `src/`, exceto testes (que citam nomes de propósito). */
+function fontesDoApp(dir = join(process.cwd(), "src")): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) return fontesDoApp(p);
+    if (!/\.tsx?$/.test(e.name) || /\.test\.tsx?$/.test(e.name)) return [];
+    return [p];
+  });
+}
+
 afterEach(cleanup);
 
 describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () => {
@@ -105,6 +117,36 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
       "pt-BR",
     );
     expect(visivel(onboarding.container).length).toBeGreaterThan(20);
+  });
+
+  // ── FIAÇÃO: as superfícies são ALCANÇÁVEIS a partir do app ───────────────
+  // Achado do Codex nesta PR, e é o furo exato que este card existe para fechar:
+  // montar o componente à mão prova que ELE mostra o nome, **não** que alguém o
+  // monta. Se o `App.tsx` deixasse de encaminhar o `uncontracted`, ou se os três
+  // sítios largassem o `RecursoOrgEmpty`, os dois virariam código morto e este
+  // ficheiro continuaria VERDE — a repetir o defeito do `Wordmark` uma camada
+  // acima. Esta é a metade "está fiado?"; o render acima é a metade "mostra o
+  // nome?". Foi separá-las que faltou da primeira vez.
+  it("as superfícies têm consumidor de produção (senão o verde é sobre código morto)", () => {
+    const fontes = fontesDoApp();
+    expect(fontes.length).toBeGreaterThan(50); // anti-cegueira: a varredura enxerga
+
+    const montagens = (marcador: string, excluir: RegExp) =>
+      fontes
+        .filter((p) => !excluir.test(p))
+        .filter((p) => readFileSync(p, "utf8").includes(marcador)).length;
+
+    expect(
+      montagens("<RecursoOrgEmpty", /recurso-org-empty\.tsx$/),
+      "`RecursoOrgEmpty` deixou de ser montado — o teste de render abaixo passa " +
+        "sobre um componente que ninguém mostra (foi isto que aconteceu ao `Wordmark`)",
+    ).toBeGreaterThanOrEqual(1);
+
+    expect(
+      montagens("<OnboardingEmpresaScreen", /onboarding-empresa\.tsx$/),
+      "o `App.tsx` deixou de encaminhar para o onboarding de empresa — o ecrã " +
+        "existe e nunca é alcançado",
+    ).toBeGreaterThanOrEqual(1);
   });
 
   // ── a fiação: o nome chega por SUBSTITUIÇÃO, não por acaso ───────────────
@@ -144,13 +186,27 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
       idioma,
     );
     const texto = visivel(container);
-
     expect(texto).toContain(SUITE);
-    expect(texto).toContain(
-      preencher(DICIONARIOS[idioma].onboarding.empresaSemApp, { app: SUITE }),
-    );
-    expect(texto).toContain(
-      preencher(DICIONARIOS[idioma].onboarding.empresaSemAppDesc, { app: SUITE }),
-    );
+
+    // 🔑 Aqui a asserção é sobre o NOME ACESSÍVEL, não sobre o `textContent`, e
+    // o Codex tem razão no porquê: o `SoftBlurIn` renderiza cada caractere a
+    // `opacity: 0` e só depois anima para 1 — o texto está no DOM antes de
+    // estar no ecrã. O que o wrapper garante em qualquer instante é o
+    // `aria-label` (os spans por caractere são todos `aria-hidden`), e é ele
+    // que o leitor de ecrã anuncia. Também é o único que não sofre do NBSP.
+    for (const molde of [
+      DICIONARIOS[idioma].onboarding.empresaSemApp,
+      DICIONARIOS[idioma].onboarding.empresaSemAppDesc,
+    ]) {
+      expect(screen.getByLabelText(preencher(molde, { app: SUITE }))).toBeTruthy();
+    }
   });
+
+  // ── LIMITE HONESTO DESTE FICHEIRO ───────────────────────────────────────
+  // O `happy-dom` não faz layout: `display:none`, `opacity` computada,
+  // `visibility` e recorte por overflow **não são observáveis aqui**. Este
+  // ficheiro prova que a marca está no DOM, tem nome acessível e vem por
+  // substituição — não prova pixel. O pixel é da @Íris (QA-V), e foi
+  // exatamente a medição dela em ecrã que apanhou o `Wordmark`. Escrevo o
+  // limite em vez de deixar o nome do ficheiro sugerir mais do que ele mede.
 });
