@@ -24,7 +24,11 @@ export function obterConfig(): Promise<ItemConfig[]> {
   return pedir<ItemConfig[]>("/me/config");
 }
 
-/** Resultado POR CHAVE de `salvarConfig` — nunca um "guardei tudo" único. */
+/**
+ * Resultado POR CHAVE de `salvarConfig` — nunca um "guardei tudo" único.
+ * @nao-contrato — agregação client-side dos resultados por chave; não vai nem
+ * vem no fio (o corpo do PATCH é `{chave, valor}`, a resposta é `ItemConfig`).
+ */
 export interface ResultadoSalvar {
   /** Chaves gravadas com sucesso. */
   ok: string[];
