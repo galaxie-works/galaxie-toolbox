@@ -32,6 +32,7 @@ export interface Dicionario {
   // #1491 — config do app
   configuracoes: string;
   semConfig: string;
+  naoGuardado: string;
   // #1490 — admin da org. O TIPO é a lista: campo sem tradução nos dois idiomas
   // não compila — o pt/en do DoD fica provado pelo `tsc`, não pela boa vontade
   // de quem editar o dicionário depois.
@@ -124,6 +125,7 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sair",
     configuracoes: "Configurações",
     semConfig: "Nada para configurar",
+    naoGuardado: "Não guardado",
     adminOrg: "Administração da organização",
     membros: "Membros",
     dominios: "Domínios",
@@ -188,6 +190,7 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sign out",
     configuracoes: "Settings",
     semConfig: "Nothing to configure",
+    naoGuardado: "Not saved",
     adminOrg: "Organization admin",
     membros: "Members",
     dominios: "Domains",
