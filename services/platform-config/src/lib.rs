@@ -242,10 +242,12 @@ pub fn item_da_forma(
 ///
 ///  - **#1589 (FEITO):** o ramo NEGADO já emite auditoria pelo funil desta crate — a sondagem
 ///    deixa rasto sem a rota nova fazer nada.
-///  - **#1591:** o alvo do evento tem de exprimir o **UTILIZADOR** alvejado. Enquanto não
-///    exprimir, a trilha regista QUEM sondou e não CONTRA QUEM: `A` a tentar 1 e `A` a tentar
-///    500 ficam idênticos, e a forma da sondagem é justamente a distribuição sobre alvos.
-///    **Trilha que não diz contra quem é pior que trilha vazia, porque parece cobertura.**
+///  - **#1591 (FEITO):** o evento já exprime o **UTILIZADOR** alvejado — este funil emite
+///    `Alvo::Usuario(alvo_uid)`, coberto por `autz_user_scoped_nomeia_o_uid_alvejado`. **Não é
+///    trabalho pendente: é invariante a preservar.** Se uma rota cross-user passar a perder o
+///    alvo, a trilha volta a registar QUEM sondou e não CONTRA QUEM — `A` a tentar 1 e `A` a
+///    tentar 500 ficam idênticos, e a forma da sondagem é justamente a distribuição sobre
+///    alvos. **Trilha que não diz contra quem é pior que trilha vazia, porque parece cobertura.**
 ///
 /// 🔑 O aviso vive **aqui** e não no call site do `/me/config` (achado do Codex na #1592): uma
 /// rota cross-user seria um **handler novo**, logo o handler antigo ficaria intacto e ninguém
