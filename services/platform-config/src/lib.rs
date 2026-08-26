@@ -17,6 +17,7 @@
 use galaxie_platform_identity::armazem::ErroArmazem;
 use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{Principal, Sessao, UserId};
+use std::sync::Mutex;
 
 /// Chaves de pref de USO DO APP que a plataforma web pode configurar — **allowlist
 /// explícita** (regra 2 do delta). NÃO é "toda pref": é o conjunto seguro de expor à web.
@@ -66,6 +67,42 @@ pub enum ConfigItem {
     Booleano(Booleano),
     Texto(Texto),
     Opcao(Opcao),
+}
+
+impl ConfigItem {
+    /// A chave desta pref — delega pra variante (todas a carregam).
+    #[must_use]
+    pub fn chave(&self) -> &str {
+        match self {
+            ConfigItem::Booleano(b) => b.chave(),
+            ConfigItem::Texto(t) => t.chave(),
+            ConfigItem::Opcao(o) => o.chave(),
+        }
+    }
+
+    /// O valor serializado pra forma plana do store — a MESMA string que [`item_da_forma`]
+    /// re-parseia. `Booleano` vira exatamente `"true"`/`"false"` (o único par que o parser
+    /// aceita de volta): guardar→ler→domínio é round-trip, não aproximação.
+    #[must_use]
+    pub fn valor_bruto(&self) -> String {
+        match self {
+            ConfigItem::Booleano(b) => b.valor().to_string(),
+            ConfigItem::Texto(t) => t.valor().to_string(),
+            ConfigItem::Opcao(o) => o.valor().to_string(),
+        }
+    }
+
+    /// A forma desta pref — pra o store guardar a tupla `(chave, valor, forma)` que a leitura
+    /// devolve. As opções saem do próprio item (que nasceu validado contra elas), não de um
+    /// palpite.
+    #[must_use]
+    pub fn forma(&self) -> FormaDaChave {
+        match self {
+            ConfigItem::Booleano(_) => FormaDaChave::Booleano,
+            ConfigItem::Texto(_) => FormaDaChave::Texto,
+            ConfigItem::Opcao(o) => FormaDaChave::Opcao { opcoes: o.opcoes().to_vec() },
+        }
+    }
 }
 
 /// Pref booleana (ex.: `app.notificacoes`). Sem invariante além do tipo.
@@ -224,6 +261,10 @@ pub fn configs_do_usuario(
     Ok(itens)
 }
 
+/// Uma linha do store: `(chave, valor_bruto, forma)`. Alias pra não repetir a tupla (e não
+/// tropeçar no `type-complexity` do clippy quando ela aninha em `Mutex<HashMap<…>>`).
+type PrefBruta = (String, String, FormaDaChave);
+
 /// Store das prefs do usuário — a I/O da leitura do `/me/config`. O domínio define a forma
 /// (o que a borda tem de devolver pro [`configs_do_usuario`] consumir); a impl real (Postgres)
 /// mora fora, no mesmo padrão do `ArmazemPerfil` (#1473) e do `ArmazemSessao`. `Err`
@@ -235,15 +276,25 @@ pub trait ArmazemPref {
     fn prefs_do_usuario(
         &self,
         uid: &UserId,
-    ) -> Result<Vec<(String, String, FormaDaChave)>, ErroArmazem>;
+    ) -> Result<Vec<PrefBruta>, ErroArmazem>;
+
+    /// Persiste uma pref do `uid` (upsert por chave). Recebe um [`ConfigItem`] JÁ VALIDADO —
+    /// não `(chave, valor)` crus: "gravar pref inválida" não é representável (a validação mora
+    /// nos construtores, e só se chega a um `ConfigItem` por eles). A AUTORIZAÇÃO (owner-scope e allowlist,
+    /// #1585) é da borda ANTES daqui; este método é só a I/O da escrita — não
+    /// re-decide, do mesmo jeito que `remover` do `ArmazemMembro` não re-autoriza. `Err`
+    /// ([`ErroArmazem`]) = armazém-fora-do-ar, não "pref rejeitada".
+    fn definir_pref(&self, uid: &UserId, item: &ConfigItem) -> Result<(), ErroArmazem>;
 }
 
 /// Primeira impl: em memória. As prefs REAIS nascerão da persistência (fatia adiante); aqui a
 /// semeadura é do dev-server, pro FE fiar o e2e do `/me/config` antes da persistência real —
-/// mesmo papel do `ArmazemPerfilMemoria`.
+/// mesmo papel do `ArmazemPerfilMemoria`. `Mutex` = mutabilidade INTERIOR: `definir_pref`
+/// escreve por `&self` (a borda segura o armazém num `Arc` compartilhado), como o
+/// `ArmazemMembroMemoria` (#1475). Não é `Clone` (`Mutex` não é; ninguém clona o armazém).
 #[derive(Debug, Default)]
 pub struct ArmazemPrefMemoria {
-    por_usuario: std::collections::HashMap<UserId, Vec<(String, String, FormaDaChave)>>,
+    por_usuario: Mutex<std::collections::HashMap<UserId, Vec<PrefBruta>>>,
 }
 
 impl ArmazemPrefMemoria {
@@ -253,8 +304,9 @@ impl ArmazemPrefMemoria {
     }
 
     /// Semeia as prefs de um usuário (dev-server/testes). Sobrescreve o que houver.
-    pub fn semear(&mut self, uid: UserId, prefs: Vec<(String, String, FormaDaChave)>) {
-        self.por_usuario.insert(uid, prefs);
+    pub fn semear(&mut self, uid: UserId, prefs: Vec<PrefBruta>) {
+        // `&mut self` ⇒ `get_mut` sem lock (não há contenção na semeadura).
+        self.por_usuario.get_mut().expect("mutex de prefs envenenado").insert(uid, prefs);
     }
 }
 
@@ -262,10 +314,59 @@ impl ArmazemPref for ArmazemPrefMemoria {
     fn prefs_do_usuario(
         &self,
         uid: &UserId,
-    ) -> Result<Vec<(String, String, FormaDaChave)>, ErroArmazem> {
+    ) -> Result<Vec<PrefBruta>, ErroArmazem> {
         // Em memória não há modo de falha de I/O — `Ok(vazio)` pra quem não foi semeado, nunca
         // `Err` (o `Err` existe pro dia da persistência real, não pra fingir infra aqui).
-        Ok(self.por_usuario.get(uid).cloned().unwrap_or_default())
+        let mapa = self.por_usuario.lock().expect("mutex de prefs envenenado");
+        Ok(mapa.get(uid).cloned().unwrap_or_default())
+    }
+
+    fn definir_pref(&self, uid: &UserId, item: &ConfigItem) -> Result<(), ErroArmazem> {
+        let mut mapa = self.por_usuario.lock().expect("mutex de prefs envenenado");
+        let prefs = mapa.entry(uid.clone()).or_default();
+        let tupla = (item.chave().to_string(), item.valor_bruto(), item.forma());
+        // Upsert: uma pref por chave (a segunda escrita da mesma chave SUBSTITUI, não duplica —
+        // senão a leitura veria duas linhas da mesma chave).
+        match prefs.iter_mut().find(|(chave, _, _)| chave == item.chave()) {
+            Some(slot) => *slot = tupla,
+            None => prefs.push(tupla),
+        }
+        Ok(())
+    }
+}
+
+/// O que o SERVIDOR sabe da forma de cada chave — a fonte da forma no caminho de ESCRITA
+/// (o PATCH). Vive no servidor, não no cliente: se o cliente mandasse o tipo, forjaria
+/// `Opcao→Texto` e furaria a checagem de opções (#1563). `None` = chave que o servidor não
+/// conhece ⇒ não escrevível. O CONTEÚDO (quais opções) é dado do PO que semeia isto; o
+/// domínio recebe, não inventa — mesmo princípio do `FormaDaChave`.
+pub trait RegistroFormas {
+    /// A forma da `chave`, ou `None` se o servidor não a registra.
+    fn forma_da_chave(&self, chave: &str) -> Option<FormaDaChave>;
+}
+
+/// Primeira impl: em memória, semeada (dev-server/borda). A forma real virá da config do
+/// servidor; aqui o conteúdo é injetado pelo mesmo caminho das prefs semeadas.
+#[derive(Debug, Default)]
+pub struct RegistroFormasMemoria {
+    por_chave: std::collections::HashMap<String, FormaDaChave>,
+}
+
+impl RegistroFormasMemoria {
+    #[must_use]
+    pub fn novo() -> Self {
+        Self::default()
+    }
+
+    /// Semeia a forma de uma chave (dev-server/PO/testes). Sobrescreve o que houver.
+    pub fn semear(&mut self, chave: impl Into<String>, forma: FormaDaChave) {
+        self.por_chave.insert(chave.into(), forma);
+    }
+}
+
+impl RegistroFormas for RegistroFormasMemoria {
+    fn forma_da_chave(&self, chave: &str) -> Option<FormaDaChave> {
+        self.por_chave.get(chave).cloned()
     }
 }
 
@@ -653,6 +754,68 @@ mod tests {
         let brutas = arm.prefs_do_usuario(&UserId("A".into())).unwrap();
         let itens = configs_do_usuario(&s, None, brutas, &AuditorNulo).expect("própria conta monta a lista");
         assert_eq!(itens.len(), 2);
+    }
+
+    // ---- #1593: escrita (definir_pref) + registro de formas ----
+
+    // Round-trip guardar→ler→domínio: um ConfigItem validado, gravado e relido pelo trait, volta a
+    // ser o MESMO item via item_da_forma. Prova de uma vez os acessores (chave/valor_bruto/forma) E
+    // o store. Mutante em qualquer acessor (Booleano→"1", forma trocada, chave errada) quebra a
+    // igualdade — inclusive o par exato "true"/"false" que o parser de bool exige de volta.
+    #[test]
+    fn definir_pref_faz_round_trip_por_tipo() {
+        let arm = ArmazemPrefMemoria::novo();
+        let a = UserId("A".into());
+        let itens = vec![
+            ConfigItem::Booleano(Booleano::novo("app.notificacoes", false)),
+            ConfigItem::Texto(Texto::novo("app.rotulo", "oi").unwrap()),
+            ConfigItem::Opcao(
+                Opcao::nova("app.tema", "escuro", vec!["claro".into(), "escuro".into()]).unwrap(),
+            ),
+        ];
+        for it in &itens {
+            arm.definir_pref(&a, it).unwrap();
+        }
+        let brutas = arm.prefs_do_usuario(&a).unwrap();
+        assert_eq!(brutas.len(), 3);
+        for it in &itens {
+            let (chave, valor, forma) =
+                brutas.iter().find(|(c, _, _)| c == it.chave()).expect("chave gravada");
+            assert_eq!(&item_da_forma(chave.clone(), valor, forma).unwrap(), it, "round-trip preserva o item");
+        }
+    }
+
+    // Upsert: gravar a MESMA chave de novo SUBSTITUI o valor, não anexa uma segunda linha — senão a
+    // leitura veria a chave duas vezes. Mutante que só faz `push` cai no len==1 e no valor novo.
+    #[test]
+    fn definir_pref_upsert_substitui_nao_duplica() {
+        let arm = ArmazemPrefMemoria::novo();
+        let a = UserId("A".into());
+        arm.definir_pref(&a, &ConfigItem::Booleano(Booleano::novo("app.notificacoes", true))).unwrap();
+        arm.definir_pref(&a, &ConfigItem::Booleano(Booleano::novo("app.notificacoes", false))).unwrap();
+        let brutas = arm.prefs_do_usuario(&a).unwrap();
+        assert_eq!(brutas.len(), 1, "mesma chave = uma linha");
+        assert_eq!(brutas[0].1, "false", "vence a última escrita");
+    }
+
+    // definir_pref é por-usuário: a pref de A não vaza pra B (a chave da HashMap é o UserId).
+    #[test]
+    fn definir_pref_isola_por_usuario() {
+        let arm = ArmazemPrefMemoria::novo();
+        arm.definir_pref(&UserId("A".into()), &ConfigItem::Texto(Texto::novo("app.rotulo", "de-A").unwrap()))
+            .unwrap();
+        assert_eq!(arm.prefs_do_usuario(&UserId("B".into())).unwrap(), vec![], "B não vê a pref de A");
+    }
+
+    // RegistroFormas: chave semeada devolve a forma (server-side, o cliente não a manda); chave
+    // desconhecida devolve None ⇒ a borda recusa. Mutante que devolvesse sempre Some/None cai num ramo.
+    #[test]
+    fn registro_formas_devolve_seeded_e_none_pra_desconhecida() {
+        let mut reg = RegistroFormasMemoria::novo();
+        let tema = FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] };
+        reg.semear("app.tema", tema.clone());
+        assert_eq!(reg.forma_da_chave("app.tema"), Some(tema));
+        assert_eq!(reg.forma_da_chave("seguranca.exigir_2fa"), None, "não registrada = não escrevível");
     }
 
     // ---- #1583 §1+§2: auditoria de autz por construção ----
