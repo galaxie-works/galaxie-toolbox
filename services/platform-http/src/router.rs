@@ -464,6 +464,13 @@ fn colecao_de_config_do_usuario(estado: &EstadoBorda, sessao: &Sessao) -> Respon
             return resposta_de_falha(Visibilidade::Visivel);
         }
     };
+    resposta_colecao_200(&itens)
+}
+
+/// Serializa a COLEÇÃO de config no fio ⇒ `200 [{...}]`. Compartilhado pelo GET (via
+/// `colecao_de_config_do_usuario`) e pelo sucesso do PATCH — que pode degradar pra o item gravado se
+/// a releitura falhar (o corpo degrada, o status NÃO).
+fn resposta_colecao_200(itens: &[ConfigItem]) -> Response {
     let fio: Vec<serde_json::Value> = itens.iter().map(config_item_para_fio).collect();
     let corpo = serde_json::to_string(&fio).expect("Vec<Value> serializa sempre");
     Response::builder()
@@ -542,10 +549,27 @@ async fn patch_me_config(
     // (o fio confirma o que o SERVIDOR guardou, incluindo a forma que ele resolveu).
     match estado.prefs.definir_pref(&dono, &item) {
         Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        // P2 (#1610/Codex): o §4.4 diz que o PATCH devolve o MESMO SHAPE do GET — a COLEÇÃO, não o
-        // item escrito. Re-lê e projeta a lista (o FE é data-driven, re-renderiza do corpo). `dono` é o
-        // próprio principal (owner-scope), então a coleção é a dele — inclui a pref recém-gravada.
-        Ok(()) => colecao_de_config_do_usuario(&estado, &sessao),
+        // A ESCRITA foi COMMITADA ⇒ o status reflete a ESCRITA (200), NUNCA um 500 pela releitura
+        // (P2 do Codex/#1617: um 500 aqui MENTIRIA que o save falhou; o cliente re-tentaria uma escrita
+        // que na verdade pegou — e `definir_pref` é upsert idempotente, mas o cliente não deve ver
+        // "falhou"). O §4.4 pede a COLEÇÃO no corpo (mesmo shape do GET): re-lê e devolve-a; se a
+        // releitura falhar (infra, ou OUTRA pref inconsistente), degrada o CORPO pra o item gravado
+        // (coleção de 1) — o FE re-sincroniza no próximo GET. Degrada o corpo, não o status.
+        Ok(()) => {
+            let uid = usuario_da_sessao(&sessao);
+            let colecao = estado
+                .prefs
+                .prefs_do_usuario(uid)
+                .ok()
+                .and_then(|brutas| configs_do_usuario(&sessao, None, brutas, &*estado.auditor).ok());
+            match colecao {
+                Some(itens) => resposta_colecao_200(&itens),
+                None => {
+                    tracing::warn!(uid = %uid.0, "PATCH /me/config: escrita OK mas a releitura da coleção falhou; devolvo o item gravado (o cliente re-sincroniza no GET)");
+                    resposta_colecao_200(std::slice::from_ref(&item))
+                }
+            }
+        }
     }
 }
 
@@ -978,6 +1002,44 @@ mod tests {
         let (status, _) =
             requisicao(estado, "PATCH", "/api/v1/me/config", &cookie, r#"{"chave":"app.tema","valor":"claro"}"#).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "allowlisted sem forma no registro = inconsistência ⇒ 500");
+    }
+
+    /// **P2 do Codex (#1617):** a ESCRITA commitou, mas a RELEITURA da coleção falha (infra) ⇒ o PATCH
+    /// devolve **200 com o item gravado** (coleção de 1), NÃO 500 — um 500 mentiria que o save falhou.
+    /// Store que escreve OK e falha a leitura prova que o status reflete a ESCRITA, não a releitura.
+    #[tokio::test]
+    async fn patch_me_config_escrita_ok_releitura_falha_e_200_com_o_item() {
+        use galaxie_platform_config::{ArmazemPref, FormaDaChave, RegistroFormasMemoria};
+        struct PrefEscreveMasNaoLe;
+        impl ArmazemPref for PrefEscreveMasNaoLe {
+            fn prefs_do_usuario(&self, _uid: &UserId) -> Result<Vec<(String, String, FormaDaChave)>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel) // a releitura da coleção falha
+            }
+            fn definir_pref(&self, _uid: &UserId, _item: &ConfigItem) -> Result<(), ErroArmazem> {
+                Ok(()) // mas a escrita PEGOU
+            }
+        }
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut registro = RegistroFormasMemoria::novo();
+        registro.semear("app.notificacoes", FormaDaChave::Booleano);
+        let estado = Borda::nova(
+            armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(),
+            Arc::new(PrefEscreveMasNaoLe), Arc::new(registro),
+        );
+        let (status, corpo) =
+            requisicao(estado, "PATCH", "/api/v1/me/config", &cookie, r#"{"chave":"app.notificacoes","valor":"true"}"#).await;
+        assert_eq!(status, StatusCode::OK, "escrita commitada ⇒ 200 mesmo com releitura falha (não 500): {}", String::from_utf8_lossy(&corpo));
+        let itens: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let arr = itens.as_array().expect("corpo é a coleção");
+        assert_eq!(arr.len(), 1, "corpo degradado = só o item gravado: {corpo:?}");
+        assert_eq!(arr[0]["chave"], "app.notificacoes");
+        assert_eq!(arr[0]["valor"], true);
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
