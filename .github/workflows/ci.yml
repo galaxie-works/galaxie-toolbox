@@ -413,3 +413,112 @@ jobs:
       - name: clippy platform-oauth (-D warnings)
         working-directory: services/platform-oauth
         run: cargo clippy --all-targets -- -D warnings
+
+  # ── #1312 §5 + build-no-push (desenho + review do @Altair): imagem do remote-signaling ──
+  # Mata a "cópia de fonte paralela" no host (#1303/#1307): produção deixa de COMPILAR e PUXA
+  # uma tag versionada construída aqui. DOIS jobs, separados pela PERMISSÃO, não por `if:`:
+  #
+  # 🔑 Um `if:` protege o PASSO, não o TOKEN. Com `packages: write` no ambiente do job, QUALQUER
+  # passo o alcança — inclusive uma ação de terceiro (o `paths-filter`). E as nossas PRs NÃO são
+  # de fork (mesma conta), logo o GitHub não rebaixa o `GITHUB_TOKEN`: o caso exposto é o nosso.
+  # A defesa real é o job da PR NÃO TER a permissão. "Tornar impossível, não proibir" (review do
+  # @Altair, #1632) — o mesmo movimento do `packages:write`→job e dos métodos nus→fora do trait.
+  #   • image-build-check (PR)            → CONSTRÓI sem push · contents:read · ZERO packages.
+  #   • publish-signaling (push pre-prod) → CONSTRÓI e PUBLICA · o ÚNICO job com packages:write.
+  # Ambos gated no `rust`+`clippy`; o `--locked` (detector COPY-vs-grafo) vive no Dockerfile.
+
+  # Validação de PR: constrói a imagem SEM publicar quando a PR toca algo relevante ao build — a
+  # validação que o Codex teve de fazer a LER no #1631; agora o CI CONSTRÓI (`cargo build --locked`
+  # é o detector). Este job NÃO pode publicar por CONSTRUÇÃO (sem `packages`), não por um `if:`.
+  image-build-check:
+    needs: [rust, clippy]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # ler o código.
+      pull-requests: read # o `dorny/paths-filter` lista os ficheiros da PR pela API (Codex #1632 P1).
+      # SEM `packages` — a PR não alcança o registry, ponto final (é a invariante do split).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Cond. A (@Altair): filtro GENEROSO — um filtro estreito seria a MESMA lista-à-mão do COPY
+      # que furou (safámo-nos por acaso do nome `remote-capabilities` em `remote-*`; não dependo disso).
+      - name: Mudanças relevantes à imagem?
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            image:
+              - 'services/**'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - '**/Dockerfile'
+              - '.github/workflows/ci.yml'
+
+      # Constrói SEM push (valida o grafo via `--locked` do Dockerfile). Sem login, sem token.
+      - name: Build (valida a imagem, SEM push)
+        if: steps.changes.outputs.image == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/remote-signaling/Dockerfile
+          build-args: |
+            GALAXIE_BUILD_SHA=${{ github.sha }}
+          push: false
+
+      # Cond. C (@Altair): o skip é LEGÍVEL — o job corre SEMPRE em PR (não é ausente) e diz o que fez.
+      - name: Resumo (o skip é visível, não ausente)
+        env:
+          CHANGED: ${{ steps.changes.outputs.image }}
+        run: |
+          if [ "$CHANGED" = "true" ]; then
+            echo "### ✅ Imagem CONSTRUÍDA (validação de PR, SEM push) — grafo de build (\`cargo build --locked\`) OK." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⏭️ Imagem NÃO construída — a PR não tocou nada relevante (services/**, Cargo.toml/lock, **/Dockerfile, ci.yml). O job correu e é visível; NÃO é ausência." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Publicação: SÓ em push na `pre-prod`. O ÚNICO job com `packages: write`.
+  # Condições do @Altair (§5): (1) `packages:write` no job e SÓ neste job — nunca no topo; (2) push
+  # com o `GITHUB_TOKEN`, sem segredo novo (o pull do host é PAT read-only, §4a); (3) tag = SHA,
+  # nunca `latest`, digest no resumo pro compose (§4) usar `@sha256:`; (4) `--build-arg
+  # GALAXIE_BUILD_SHA` (#1311) → `/healthz` vira JSON com `commit` = prova de deploy medível de fora.
+  publish-signaling:
+    needs: [rust, clippy]
+    if: github.event_name == 'push' && github.ref_name == 'pre-prod'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # §1: no job, e SÓ neste job (o da PR NÃO o tem).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR (push com o GITHUB_TOKEN — sem segredo novo)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `context: .` = raiz do repo (o Dockerfile COPIA services/remote-*). `GALAXIE_BUILD_SHA`
+      # carimba o commit no binário (§4/§2); `--locked` (cond.B) vive no Dockerfile.
+      - name: Build + push (tag = SHA do commit)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/remote-signaling/Dockerfile
+          build-args: |
+            GALAXIE_BUILD_SHA=${{ github.sha }}
+          tags: ghcr.io/galaxie-works/galaxie-remote-signaling:${{ github.sha }}
+          push: true
+
+      - name: Proveniência (tag SHA + digest, prontos pro compose §4)
+        run: |
+          {
+            echo "### ✅ Imagem CONSTRUÍDA e PUBLICADA — remote-signaling"
+            echo "- **tag:** \`ghcr.io/galaxie-works/galaxie-remote-signaling:${{ github.sha }}\`"
+            echo "- **digest:** \`${{ steps.build.outputs.digest }}\`"
+            echo "- **compose (host, §4):** \`ghcr.io/galaxie-works/galaxie-remote-signaling@${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

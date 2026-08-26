@@ -1,5 +1,7 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
+import { Modal } from "@/components/modal";
+import { Alerta } from "@/components/alerta";
 import {
   DICIONARIOS,
   idiomaAtual,
@@ -10,6 +12,7 @@ import {
   buscar,
   minhasOrgs,
   estaSuspensa,
+  removerMembro,
   CAMINHOS,
   type Membro,
   type Dominio,
@@ -153,14 +156,12 @@ export function AdminOrgPage({
           pra quem usa leitor de tela: duas coisas diferentes anunciando-se com
           a mesma identidade. */}
       {suspensa ? (
-        <div
-          role="status"
-          aria-label={t.orgSuspensa}
-          className="mx-auto mt-4 max-w-4xl rounded-2xl border border-amber-300 bg-amber-50 p-4"
-        >
-          <p className="text-sm font-medium text-amber-900">{t.orgSuspensa}</p>
-          <p className="mt-1 text-sm text-amber-800">{t.orgSuspensaDetalhe}</p>
-        </div>
+        <Alerta
+          tom="aviso"
+          titulo={t.orgSuspensa}
+          detalhe={t.orgSuspensaDetalhe}
+          className="mx-auto mt-4 max-w-4xl"
+        />
       ) : null}
 
       <section className="mx-auto mt-4 max-w-4xl rounded-2xl border border-neutral-200 bg-white p-6">
@@ -262,9 +263,25 @@ function avisoDoEstado(
  * dois acertos independentes, e o terceiro painel dependeria de três. É a mesma
  * razão da porta de rede única: um invariante deve morar num lugar só.
  */
-function useRecurso<T>(caminho: string): { estado: EstadoRecurso; dados: T | null } {
+function useRecurso<T>(caminho: string): {
+  estado: EstadoRecurso;
+  dados: T | null;
+  /**
+   * Relê do SERVIDOR. Existe para as escritas (#1490 fatia 3): depois de um
+   * `DELETE` a lista tem de vir da borda, não de uma remoção otimista no
+   * array local.
+   *
+   * A diferença não é estética. Otimista, a tela mostraria o resultado que o
+   * cliente **supôs** — e se a borda tivesse recusado por uma razão que o
+   * cliente não modela, ou removido mais do que o pedido, a tela mentiria até
+   * ao próximo F5. Reler é a única forma de o que está no ecrã ser o que está
+   * no servidor.
+   */
+  recarregar: () => void;
+} {
   const [estado, setEstado] = useState<EstadoRecurso>("carregando");
   const [dados, setDados] = useState<T | null>(null);
+  const [gatilho, setGatilho] = useState(0);
 
   useEffect(() => {
     let vivo = true;
@@ -277,12 +294,74 @@ function useRecurso<T>(caminho: string): { estado: EstadoRecurso; dados: T | nul
     return () => {
       vivo = false;
     };
-  }, [caminho]);
+  }, [caminho, gatilho]);
 
-  return { estado, dados };
+  const recarregar = useCallback(() => setGatilho((n) => n + 1), []);
+
+  return { estado, dados, recarregar };
 }
 
-/** Membros — `GET /orgs/{org}/membros`. */
+/**
+ * Confirmação de remoção — **nomeia quem sai e diz o efeito**.
+ *
+ * Mesmo desenho do `ConfirmarSuspensao` do back-office, e pela mesma razão que
+ * lá está escrita: um "tem certeza?" genérico clica-se no automático. Aqui o
+ * dano é uma pessoa fora da organização com a sessão cortada na hora, então
+ * quem confirma tem de LER o nome e o e-mail de quem vai remover.
+ *
+ * O e-mail vai junto de propósito: dois membros podem chamar-se igual, e o
+ * nome sozinho não distingue quem está prestes a perder o acesso.
+ */
+function ConfirmarRemocao({
+  idioma,
+  membro,
+  aRemover,
+  aoConfirmar,
+  aoCancelar,
+}: {
+  idioma: Idioma;
+  membro: Membro;
+  /** O `DELETE` está em voo — 2º P2 do Codex na PR #1626. */
+  aRemover: boolean;
+  aoConfirmar: () => void;
+  aoCancelar: () => void;
+}) {
+  const t = DICIONARIOS[idioma];
+  return (
+    <Modal rotulo={t.removerTitulo} aoFechar={aoCancelar}>
+      <h2 className="font-medium text-neutral-900">{t.removerTitulo}</h2>
+      <p className="mt-2 text-neutral-900">
+        <strong>{membro.nome}</strong>
+      </p>
+      <p className="text-neutral-600">{membro.email}</p>
+      <p className="mt-2 text-neutral-500">{t.removerAviso}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        {/* CANCELAR primeiro no DOM de propósito: é ele que recebe o foco
+            inicial (o `Modal` foca o primeiro focável). Num caminho
+            destrutivo, o foco de entrada não pode cair no botão que destrói —
+            um Enter reflexo apagaria alguém. */}
+        <button
+          type="button"
+          onClick={aoCancelar}
+          disabled={aRemover}
+          className="rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+        >
+          {t.cancelar}
+        </button>
+        <button
+          type="button"
+          onClick={aoConfirmar}
+          disabled={aRemover}
+          className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-700 disabled:opacity-50"
+        >
+          {aRemover ? t.removendo : t.remover}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Membros — `GET /orgs/{org}/membros` + `DELETE /orgs/{org}/membros/{uid}`. */
 function PainelMembros({
   idioma,
   org,
@@ -293,34 +372,137 @@ function PainelMembros({
   suspensa: boolean;
 }) {
   const t = DICIONARIOS[idioma];
-  const { estado, dados } = useRecurso<Membro[]>(CAMINHOS.membros(org));
+  const { estado, dados, recarregar } = useRecurso<Membro[]>(
+    CAMINHOS.membros(org),
+  );
   const membros = dados ?? [];
+  const [aConfirmar, setAConfirmar] = useState<Membro | null>(null);
+  /**
+   * O `uid` cujo `DELETE` está em voo, ou `null`.
+   *
+   * 2º P2 do Codex: sem isto, um `DELETE` lento fecha o diálogo, deixa a tabela
+   * inteira acionável e **sem sinal nenhum** — dá para abrir outra remoção e
+   * disparar pedidos destrutivos concorrentes, sem se saber qual está em curso.
+   * Guardo o `uid` e não um booleano porque a tabela precisa de saber QUAL
+   * linha está a sair.
+   */
+  const [aRemover, setARemover] = useState<string | null>(null);
+  /**
+   * A recusa da borda, quando houve uma.
+   *
+   * Guardo o ESTADO devolvido, não uma frase — a frase escolhe-se na
+   * renderização, a partir do dicionário do idioma corrente. Guardar texto aqui
+   * congelaria o idioma no instante do clique.
+   */
+  const [recusa, setRecusa] = useState<
+    "ultimoAdmin" | "conflito" | "erro" | null
+  >(null);
 
   const aviso = avisoDoEstado(estado, t, suspensa);
   if (aviso) return aviso;
 
+  async function confirmar(membro: Membro) {
+    setRecusa(null);
+    setARemover(membro.uid);
+    const r = await removerMembro(org, membro.uid);
+    setARemover(null);
+    setAConfirmar(null);
+    if (r.estado === "feito") {
+      // RELÊ do servidor. Nada de tirar a linha do array local: ver o
+      // `recarregar` do `useRecurso`.
+      recarregar();
+      return;
+    }
+    if (r.estado === "ultimoAdmin") {
+      setRecusa("ultimoAdmin");
+      return;
+    }
+    if (r.estado === "conflito") {
+      setRecusa("conflito");
+      return;
+    }
+    // As restantes (401/403/404) são estados da PÁGINA, não desta linha: relê e
+    // deixa o `avisoDoEstado` dizer o que é — é ele que já distingue 403 de 404
+    // e a org suspensa. Repetir essa escada aqui seria o segundo acerto que o
+    // ponto único existe para evitar.
+    if (
+      r.estado === "naoAutenticado" ||
+      r.estado === "naoEhAdmin" ||
+      r.estado === "orgSuspensa" ||
+      r.estado === "naoEhSuaOrg"
+    ) {
+      recarregar();
+      return;
+    }
+    setRecusa("erro");
+  }
+
   return (
-    <table className="w-full text-left text-sm">
-      <thead>
-        <tr className="text-neutral-500">
-          <th className="pb-2 font-medium">{t.nome}</th>
-          <th className="pb-2 font-medium">{t.email}</th>
-          <th className="pb-2 font-medium">{t.papel}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {membros.map((m) => (
-          <tr key={m.uid} className="border-t border-neutral-100">
-            <td className="py-2 text-neutral-900">{m.nome}</td>
-            <td className="py-2 text-neutral-600">{m.email}</td>
-            <td className="py-2 text-neutral-600">
-              {/* Rótulo do papel — leitura, não permissão. Ver `lib/org.ts`. */}
-              {m.papel === "org_admin" ? t.papelAdmin : t.papelMembro}
-            </td>
+    <>
+      {recusa === "ultimoAdmin" ? (
+        // Região viva NOMEADA — a página já tem outra (`role="status"` da faixa
+        // de suspensão), e duas sem nome ficam indistinguíveis para quem usa
+        // leitor de ecrã. Foi o achado da @Íris no #1544.
+        <Alerta
+          tom="aviso"
+          titulo={t.ultimoAdmin}
+          detalhe={t.ultimoAdminDetalhe}
+          className="mb-4"
+        />
+      ) : recusa !== null ? (
+        <Alerta tom="erro" titulo={t.removerFalhou} className="mb-4" />
+      ) : null}
+
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="text-neutral-500">
+            <th className="pb-2 font-medium">{t.nome}</th>
+            <th className="pb-2 font-medium">{t.email}</th>
+            <th className="pb-2 font-medium">{t.papel}</th>
+            <th className="pb-2 font-medium">
+              <span className="sr-only">{t.remover}</span>
+            </th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {membros.map((m) => (
+            <tr key={m.uid} className="border-t border-neutral-100">
+              <td className="py-2 text-neutral-900">{m.nome}</td>
+              <td className="py-2 text-neutral-600">{m.email}</td>
+              <td className="py-2 text-neutral-600">
+                {/* Rótulo do papel — leitura, não permissão. Ver `lib/org.ts`. */}
+                {m.papel === "org_admin" ? t.papelAdmin : t.papelMembro}
+              </td>
+              <td className="py-2 text-right">
+                {/* O botão aparece para TODOS, inclusive o último admin. Esconder
+                    seria a UI a decidir autorização — a mesma doutrina do
+                    cabeçalho deste ficheiro. Quem recusa é a borda (`409
+                    ultimo_admin`), e a recusa vira uma mensagem que diz o que
+                    fazer a seguir. Esconder ensinaria menos e mentiria mais. */}
+                <button
+                  type="button"
+                  onClick={() => setAConfirmar(m)}
+                  disabled={aRemover !== null}
+                  className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+                >
+                  {aRemover === m.uid ? t.removendo : t.remover}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {aConfirmar ? (
+        <ConfirmarRemocao
+          idioma={idioma}
+          membro={aConfirmar}
+          aRemover={aRemover !== null}
+          aoConfirmar={() => void confirmar(aConfirmar)}
+          aoCancelar={() => setAConfirmar(null)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -406,10 +588,8 @@ function PainelPendente({
 
 /** Aviso de negativa. O texto vem de fora porque 403 e 404 dizem coisas diferentes. */
 function Aviso({ titulo, detalhe }: { titulo: string; detalhe: string }) {
-  return (
-    <div role="status" className="text-sm">
-      <p className="font-medium text-neutral-900">{titulo}</p>
-      <p className="mt-1 text-neutral-500">{detalhe}</p>
-    </div>
-  );
+  // Passa a ter NOME acessível (o `Alerta` exige-o por assinatura). Antes era
+  // a única região viva sem nome da página — a outra face do achado da @Íris
+  // no #1544: duas `role="status"` indistinguíveis para o leitor de ecrã.
+  return <Alerta tom="simples" titulo={titulo} detalhe={detalhe} />;
 }

@@ -94,6 +94,12 @@ pub enum CodigoErro {
     PayloadInvalido,
     /// 409
     Conflito,
+    /// **409** — a ação deixaria a org com ZERO `OrgAdmin` (remover/rebaixar o ÚLTIMO admin, #1620).
+    /// Distinto de `Negado` (403) E de `Conflito` (slug genérico): o solicitante É admin (tem papel),
+    /// mas a org não pode ficar órfã — e o utilizador conserta sozinho. A UI mapeia este slug para
+    /// **"promove outro admin antes"**, não "sem permissão" — um 403 genérico aqui transformaria um
+    /// problema auto-resolúvel num pedido de suporte (contrato com o @Pollux).
+    UltimoAdmin,
 }
 
 impl CodigoErro {
@@ -105,6 +111,7 @@ impl CodigoErro {
             CodigoErro::OrgSuspensa => 403,
             CodigoErro::PayloadInvalido => 400,
             CodigoErro::Conflito => 409,
+            CodigoErro::UltimoAdmin => 409,
         }
     }
     /// O slug que vai no corpo `{ "erro": "<slug>" }`.
@@ -116,6 +123,7 @@ impl CodigoErro {
             CodigoErro::OrgSuspensa => "org_suspensa",
             CodigoErro::PayloadInvalido => "payload_invalido",
             CodigoErro::Conflito => "conflito",
+            CodigoErro::UltimoAdmin => "ultimo_admin",
         }
     }
 }
@@ -159,6 +167,17 @@ mod tests {
         // Mesmo HTTP que Negado, slug DIFERENTE (o cliente distingue pela razão, não pelo status).
         assert_eq!(CodigoErro::Negado.http(), CodigoErro::OrgSuspensa.http());
         assert_ne!(CodigoErro::Negado.slug(), CodigoErro::OrgSuspensa.slug());
+    }
+
+    // #1620: `UltimoAdmin` é 409 com slug PRÓPRIO — distinto de `Negado` (403) E de `Conflito` (409,
+    // slug genérico). A UI mostra "promove outro admin antes" só quando distingue este slug; um 403
+    // `negado` genérico tornaria um problema auto-resolúvel num pedido de suporte. Mata o colapso.
+    #[test]
+    fn ultimo_admin_e_409_com_slug_proprio() {
+        assert_eq!(CodigoErro::UltimoAdmin.http(), 409);
+        assert_eq!(CodigoErro::UltimoAdmin.slug(), "ultimo_admin");
+        assert_ne!(CodigoErro::UltimoAdmin.slug(), CodigoErro::Negado.slug());
+        assert_ne!(CodigoErro::UltimoAdmin.slug(), CodigoErro::Conflito.slug());
     }
 
     // Invariante 4: toda rota de staff (back-office) é auditada.
