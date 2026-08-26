@@ -2555,7 +2555,7 @@ export async function openUrl(url: string): Promise<void> {
   return invoke<void>("open_url", { url });
 }
 
-/** Abre um app do M365 numa janela interna do Toolbox. */
+/** Abre um app do M365 numa janela interna do The GALAXIE. */
 export async function abrirAppInterno(
   id: string,
   url: string,

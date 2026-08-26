@@ -25,8 +25,14 @@ const VENDOR = [
 ];
 
 // Literais que NÃO são i18n: marcas, provedores, tokens técnicos, unidades.
+//
+// `The GALAXIE` entrou no #1599 (@Pollux) — é o nome da SUITE, decidido pelo PO,
+// e **não se traduz**: é igual em PT e EN, como `Galaxie Works` logo ao lado.
+// Vai no ALLOW e não no BASELINE de propósito: o BASELINE é dívida a pagar
+// (vira `t.*` um dia), e uma marca nunca vira `t.*`. O rótulo anterior escapava
+// desta guarda por ser palavra única — o detector de prosa só vê 2+ palavras.
 const ALLOW =
-  /^(GALAXIE|Galaxie Works|Galaxie|VOAZ|Bridge|Navigator|Files|Remote|OneDrive|SharePoint|Microsoft|Google|Outlook|Gmail|M365|Stripe|https?:\/\/|E = mc|[0-9.,]+ ?(GB|MB|KB|TB|px|ms)?)$/;
+  /^(The GALAXIE|GALAXIE|Galaxie Works|Galaxie|VOAZ|Bridge|Navigator|Files|Remote|OneDrive|SharePoint|Microsoft|Google|Outlook|Gmail|M365|Stripe|https?:\/\/|E = mc|[0-9.,]+ ?(GB|MB|KB|TB|px|ms)?)$/;
 
 // Dívida i18n PRÉ-EXISTENTE (medida no feat). Remover a entrada ao corrigir o
 // componente (vira `t.*`). NÃO adicionar novas aqui — string nova = corrigir na fonte.

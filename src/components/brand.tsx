@@ -107,14 +107,22 @@ export function GalaxieMark({ className }: { className?: string }) {
   );
 }
 
-/** Marca do produto para a barra superior: logo Galaxie + nome do app. */
+/**
+ * Marca para a barra superior: logo da EMPRESA + nome da SUITE.
+ *
+ * Os dois não são a mesma coisa e por isso convivem: o `GalaxieMark` é a imagem
+ * de **Galaxie Works** (`alt="Galaxie Works"`, a empresa) e o texto ao lado é
+ * **The GALAXIE** (a suite, decisão do PO no #1599). O rótulo anterior nomeava
+ * um utilitário — e a suite passou a ter membros (Navigator, Bridge,
+ * Files, OneDrive, Remote, Astro) que vivem dentro dela.
+ */
 export function Wordmark({ className }: { className?: string }) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <GalaxieMark className="h-7" />
       <div className="h-6 w-px bg-border" />
       <div className="leading-tight">
-        <div className="text-[15px] font-semibold tracking-tight">Toolbox</div>
+        <div className="text-[15px] font-semibold tracking-tight">The GALAXIE</div>
         <div className="text-[11px] text-muted-foreground">Acesso aos arquivos</div>
       </div>
     </div>

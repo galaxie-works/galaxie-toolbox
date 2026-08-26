@@ -1966,7 +1966,7 @@ const pt = {
       "Pra deixar o app cada vez melhor, acompanhamos alguns diagnósticos anônimos: quais recursos são mais usados e onde algo trava ou dá erro. São sinais e números, nunca “quem” — a gente não sabe, e nem quer saber, quem está do outro lado.",
     termsSec3Titulo: "Por que a gente faz isso",
     termsSec3Corpo:
-      "Simples: pra entender o que você gosta de usar e consertar o que atrapalha. É assim que o Toolbox aprende a ser o melhor companheiro possível pro seu dia a dia.",
+      "Simples: pra entender o que você gosta de usar e consertar o que atrapalha. É assim que The GALAXIE aprende a ser o melhor companheiro possível pro seu dia a dia.",
     termsSec4Titulo: "Onde os dados ficam",
     termsSec4Corpo:
       "Os diagnósticos são anônimos e guardados na nossa própria infraestrutura. Nunca são vendidos nem compartilhados com terceiros.",
@@ -4201,7 +4201,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "To keep making the app better, we track a few anonymous diagnostics: which features get used most and where something stalls or breaks. Signals and counts — never “who.” We don't know, and don't want to know, who's on the other side.",
     termsSec3Titulo: "Why we do it",
     termsSec3Corpo:
-      "Simple: to understand what you enjoy using and fix what gets in your way. That's how Toolbox learns to be the best companion it can be for your day.",
+      "Simple: to understand what you enjoy using and fix what gets in your way. That's how The GALAXIE learns to be the best companion it can be for your day.",
     termsSec4Titulo: "Where the data lives",
     termsSec4Corpo:
       "Diagnostics are anonymous and kept on our own infrastructure. They're never sold or shared with third parties.",
