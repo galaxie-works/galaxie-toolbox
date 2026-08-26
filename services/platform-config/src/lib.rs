@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 use galaxie_platform_identity::armazem::ErroArmazem;
+use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{Principal, Sessao, UserId};
 
 /// Chaves de pref de USO DO APP que a plataforma web pode configurar — **allowlist
@@ -202,8 +203,17 @@ pub fn configs_do_usuario(
     sessao: &Sessao,
     alvo_na_rota: Option<&UserId>,
     prefs_brutas: impl IntoIterator<Item = (String, String, FormaDaChave)>,
+    auditor: &dyn Auditor,
 ) -> Result<Vec<ConfigItem>, ConfigErro> {
-    resolver_pref_propria(sessao, alvo_na_rota)?; // 404 se de outro (AC2, antes de tudo)
+    // Owner-scope (AC2 do #1563) + AUDITA o NEGADO (#1589): pedir a config de OUTRO ⇒ 404, e isso
+    // é SONDAGEM — emite pelo funil (só o negado; a leitura BEM-SUCEDIDA não emite, AC2 do #1589:
+    // rotina é ruído, trilha cheia é a que ninguém lê). Emite via [`Negado`] (o mesmo mecanismo por
+    // construção do #1583). É LATENTE hoje — a borda passa `None` ⇒ resolve pro próprio e o negado
+    // é inalcançável —, mas a rota cross-user futura (`/users/{id}/config`) herda a auditoria por
+    // construção (AC3): ela injeta o alvo e o funil já emite, sem a rota lembrar.
+    if let Err(e) = decidir_dono(sessao, alvo_na_rota) {
+        return Err(Negado::emitir(auditor, ACAO_LER_PREF, usuario_da_sessao(sessao), e).erro());
+    }
     let mut itens = Vec::new();
     for (chave, valor_bruto, forma) in prefs_brutas {
         if !chave_configuravel(&chave) {
@@ -269,15 +279,60 @@ fn usuario_da_sessao(sessao: &Sessao) -> &UserId {
     }
 }
 
-/// Resolve o dono das prefs a LER/escrever. `alvo_na_rota` é um id que eventualmente veio na
-/// rota; `None` = prefs da própria sessão.
-///
-/// - `None` ⇒ o próprio usuário (AC1).
-/// - `Some(id)` == usuário da sessão ⇒ ok.
-/// - `Some(id)` != usuário da sessão ⇒ **`NaoEncontrado` (404, AC1/AC3)** — pref de outro não
-///   vira 403 (não confirma existência); um id/owner de payload não amplia o escopo.
-#[must_use = "a decisão de escopo tem de ser respeitada — ignorá-la expõe pref alheia"]
-pub fn resolver_pref_propria<'a>(
+/// Nomes ESTÁVEIS das ações de config pra auditoria (#1583, cond.1 do @Altair: o nome vem de UM
+/// lugar — a função dona —, nunca de um literal de call site que um typo corromperia). Namespace
+/// `config.` (não colide com `back_office.`/`org_admin.` na trilha; doutrina do #1571).
+const ACAO_LER_PREF: &str = "config.ler_pref";
+const ACAO_ESCREVER_PREF: &str = "config.escrever_pref";
+
+/// Desfecho POSITIVO de uma autz de config. **Auditoria por CONSTRUÇÃO (#1583 §1+§2 do @Altair):**
+/// o único caminho de criação (`emitir`, privado) audita — não há como "decidir sem auditar",
+/// quem autoriza sem emitir não produz o valor. Carrega o dono resolvido (o chamador precisa dele
+/// pra saber de QUEM é a pref). Mesmo truque do `Escopo`/`ConfigItem`: estado ilegal (aqui,
+/// "autorizado sem rastro") **não-representável**, não vigilância.
+#[derive(Debug)]
+#[must_use = "o dono autorizado tem de ser usado — a decisão já foi auditada"]
+pub struct Autorizado<'a>(&'a UserId);
+
+impl<'a> Autorizado<'a> {
+    fn emitir(auditor: &dyn Auditor, acao: &'static str, ator: &UserId, dono: &'a UserId) -> Self {
+        auditor.registrar(&EventoAutz {
+            ator,
+            acao,
+            alvo: None, // pref é do USUÁRIO, não de uma org — sem alvo de org (o ator já é o id)
+            resultado: ResultadoAutz::Permitido,
+        });
+        Autorizado(dono)
+    }
+    #[must_use]
+    pub fn dono(&self) -> &UserId {
+        self.0
+    }
+}
+
+/// Desfecho NEGATIVO. Como o positivo, só a emissão o constrói — e **carrega o `ConfigErro`**
+/// (§2 do @Altair): achatar a razão mataria o `match` do chamador (404 de pref alheia ≠
+/// `ChaveNaoPermitida`), que é o anti-oráculo. O negado é o ramo que MAIS importa — escrever pref
+/// alheia ou chave fora da lista é sondagem, e é o que HOJE não deixava rastro.
+#[derive(Debug)]
+#[must_use = "a recusa auditada tem de virar resposta — ignorá-la deixa passar o negado"]
+pub struct Negado(ConfigErro);
+
+impl Negado {
+    fn emitir(auditor: &dyn Auditor, acao: &'static str, ator: &UserId, erro: ConfigErro) -> Self {
+        auditor.registrar(&EventoAutz { ator, acao, alvo: None, resultado: ResultadoAutz::Negado });
+        Negado(erro)
+    }
+    #[must_use]
+    pub fn erro(&self) -> ConfigErro {
+        self.0.clone()
+    }
+}
+
+/// A DECISÃO de owner-scope (SEM emissão): pref de outro ⇒ `NaoEncontrado`. Privada — as funções
+/// públicas emitem; ninguém decide sem auditar. Separada pra a composição (escrita usa owner-scope)
+/// não emitir DUAS vezes por decisão, como o `decidir_acao_admin` do #1571.
+fn decidir_dono<'a>(
     sessao: &'a Sessao,
     alvo_na_rota: Option<&UserId>,
 ) -> Result<&'a UserId, ConfigErro> {
@@ -289,29 +344,68 @@ pub fn resolver_pref_propria<'a>(
     }
 }
 
-/// Autoriza uma ESCRITA de pref: duas guardas, na ordem que não vaza. Devolve o dono (o
-/// usuário da sessão) quando permitido.
-///
-/// 1. **Owner-scope** ([`resolver_pref_propria`]) — pref de outro ⇒ 404 ANTES de olhar a
-///    chave (não revela a política de chaves pra um recurso alheio; AC1/AC3).
-/// 2. **Allowlist** ([`chave_configuravel`]) — chave fora da lista ⇒ `ChaveNaoPermitida` (AC2).
-#[must_use = "a decisão de escrita tem de ser respeitada — ignorá-la grava pref alheia ou fora da allowlist"]
-pub fn autorizar_escrita_pref<'a>(
+/// A DECISÃO de escrita (SEM emissão): owner-scope ANTES da allowlist (não vaza política de chave
+/// pra recurso alheio; AC1/AC3 → AC2). Privada.
+fn decidir_escrita<'a>(
     sessao: &'a Sessao,
     alvo_na_rota: Option<&UserId>,
     chave: &str,
 ) -> Result<&'a UserId, ConfigErro> {
-    let dono = resolver_pref_propria(sessao, alvo_na_rota)?; // 404 primeiro (AC1/AC3)
+    let dono = decidir_dono(sessao, alvo_na_rota)?; // 404 primeiro (AC1/AC3)
     if !chave_configuravel(chave) {
         return Err(ConfigErro::ChaveNaoPermitida); // AC2
     }
     Ok(dono)
 }
 
+/// Resolve o dono das prefs a LER, **auditando os 2 ramos** (#1583). `alvo_na_rota` a `None` =
+/// própria sessão; `Some(id)` != sessão ⇒ `NaoEncontrado` (404) — e o negado, sinal de sondagem
+/// de pref alheia, agora deixa rastro. Devolve [`Autorizado`]/[`Negado`], não `Result<&UserId,_>`:
+/// o desfecho SÓ existe se foi emitido.
+pub fn resolver_pref_propria<'a>(
+    sessao: &'a Sessao,
+    alvo_na_rota: Option<&UserId>,
+    auditor: &dyn Auditor,
+) -> Result<Autorizado<'a>, Negado> {
+    let ator = usuario_da_sessao(sessao);
+    match decidir_dono(sessao, alvo_na_rota) {
+        Ok(dono) => Ok(Autorizado::emitir(auditor, ACAO_LER_PREF, ator, dono)),
+        Err(e) => Err(Negado::emitir(auditor, ACAO_LER_PREF, ator, e)),
+    }
+}
+
+/// Autoriza uma ESCRITA de pref, **auditando os 2 ramos**: owner-scope (404) → allowlist
+/// (`ChaveNaoPermitida`). Escrever pref alheia ou chave fora da lista é sondagem e agora é
+/// auditado. Devolve [`Autorizado`]/[`Negado`] (auditoria por construção).
+pub fn autorizar_escrita_pref<'a>(
+    sessao: &'a Sessao,
+    alvo_na_rota: Option<&UserId>,
+    chave: &str,
+    auditor: &dyn Auditor,
+) -> Result<Autorizado<'a>, Negado> {
+    let ator = usuario_da_sessao(sessao);
+    match decidir_escrita(sessao, alvo_na_rota, chave) {
+        Ok(dono) => Ok(Autorizado::emitir(auditor, ACAO_ESCREVER_PREF, ator, dono)),
+        Err(e) => Err(Negado::emitir(auditor, ACAO_ESCREVER_PREF, ator, e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use galaxie_platform_identity::{Escopo, OrgId, Principal, Sessao, UserId};
+    use std::cell::RefCell;
+
+    /// Auditor no-op pros testes de DECISÃO (a EMISSÃO é testada à parte, com o espião).
+    struct AuditorNulo;
+    impl Auditor for AuditorNulo {
+        fn registrar(&self, _e: &EventoAutz) {}
+    }
+    /// Reduz o desfecho `Autorizado`/`Negado` ao (dono | erro) pros asserts de decisão — a
+    /// emissão em si é coberta pelos testes de auditoria abaixo.
+    fn resolvido(r: Result<Autorizado<'_>, Negado>) -> Result<UserId, ConfigErro> {
+        r.map(|a| a.dono().clone()).map_err(|n| n.erro())
+    }
 
     fn sessao_de(user: &str) -> Sessao {
         Sessao::estabelecer(
@@ -327,14 +421,14 @@ mod tests {
     #[test]
     fn ac1_pref_owner_scoped_outro_e_404() {
         let s = sessao_de("A");
-        assert_eq!(resolver_pref_propria(&s, None), Ok(&UserId("A".into())));
+        assert_eq!(resolvido(resolver_pref_propria(&s, None, &AuditorNulo)), Ok(UserId("A".into())));
         assert_eq!(
-            resolver_pref_propria(&s, Some(&UserId("B".into()))),
+            resolvido(resolver_pref_propria(&s, Some(&UserId("B".into())), &AuditorNulo)),
             Err(ConfigErro::NaoEncontrado)
         );
         // escrita numa chave permitida, mas pref de B ⇒ 404 (owner-scope ANTES da allowlist).
         assert_eq!(
-            autorizar_escrita_pref(&s, Some(&UserId("B".into())), "app.tema"),
+            resolvido(autorizar_escrita_pref(&s, Some(&UserId("B".into())), "app.tema", &AuditorNulo)),
             Err(ConfigErro::NaoEncontrado)
         );
     }
@@ -345,15 +439,15 @@ mod tests {
         let s = sessao_de("A");
         assert!(!chave_configuravel("app.interna_privilegiada"));
         assert_eq!(
-            autorizar_escrita_pref(&s, None, "app.interna_privilegiada"),
+            resolvido(autorizar_escrita_pref(&s, None, "app.interna_privilegiada", &AuditorNulo)),
             Err(ConfigErro::ChaveNaoPermitida)
         );
         assert_eq!(
-            autorizar_escrita_pref(&s, None, "qualquer.coisa"),
+            resolvido(autorizar_escrita_pref(&s, None, "qualquer.coisa", &AuditorNulo)),
             Err(ConfigErro::ChaveNaoPermitida)
         );
         // chave DA allowlist, própria conta ⇒ ok.
-        assert_eq!(autorizar_escrita_pref(&s, None, "app.idioma"), Ok(&UserId("A".into())));
+        assert_eq!(resolvido(autorizar_escrita_pref(&s, None, "app.idioma", &AuditorNulo)), Ok(UserId("A".into())));
     }
 
     // AC3 — id/owner de payload não amplia o escopo: qualquer id != sessão ⇒ 404, mesmo com
@@ -363,7 +457,7 @@ mod tests {
         let s = sessao_de("A");
         for forjado in ["B", "admin", ""] {
             assert_eq!(
-                autorizar_escrita_pref(&s, Some(&UserId(forjado.into())), "app.tema"),
+                resolvido(autorizar_escrita_pref(&s, Some(&UserId(forjado.into())), "app.tema", &AuditorNulo)),
                 Err(ConfigErro::NaoEncontrado),
                 "id de rota {forjado:?} não pode ampliar o escopo além da sessão"
             );
@@ -488,7 +582,7 @@ mod tests {
         let prefs = vec![("app.tema".to_string(), "escuro".to_string(),
             FormaDaChave::Opcao { opcoes: vec!["escuro".into()] })];
         assert_eq!(
-            configs_do_usuario(&s, Some(&UserId("B".into())), prefs),
+            configs_do_usuario(&s, Some(&UserId("B".into())), prefs, &AuditorNulo),
             Err(ConfigErro::NaoEncontrado),
             "config de outro usuário não vira lista — vira 404"
         );
@@ -505,7 +599,7 @@ mod tests {
             ("app.tema".to_string(), "escuro".to_string(),
                 FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] }),
         ];
-        let itens = configs_do_usuario(&s, None, prefs).expect("própria conta monta a lista");
+        let itens = configs_do_usuario(&s, None, prefs, &AuditorNulo).expect("própria conta monta a lista");
         assert_eq!(itens.len(), 2, "só as 2 chaves web saem; a interna foi ignorada");
         assert!(itens.iter().all(|i| match i {
             ConfigItem::Booleano(b) => chave_configuravel(b.chave()),
@@ -521,7 +615,7 @@ mod tests {
         let s = sessao_de("A");
         let prefs = vec![("app.tema".to_string(), "invalido".to_string(),
             FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] })];
-        assert_eq!(configs_do_usuario(&s, None, prefs), Err(ConfigErro::ValorInvalido));
+        assert_eq!(configs_do_usuario(&s, None, prefs, &AuditorNulo), Err(ConfigErro::ValorInvalido));
     }
 
     // ArmazemPrefMemoria — semeado devolve as prefs; usuário não-semeado devolve VAZIO (não Err:
@@ -557,7 +651,72 @@ mod tests {
         );
         let s = sessao_de("A");
         let brutas = arm.prefs_do_usuario(&UserId("A".into())).unwrap();
-        let itens = configs_do_usuario(&s, None, brutas).expect("própria conta monta a lista");
+        let itens = configs_do_usuario(&s, None, brutas, &AuditorNulo).expect("própria conta monta a lista");
         assert_eq!(itens.len(), 2);
+    }
+
+    // ---- #1583 §1+§2: auditoria de autz por construção ----
+
+    #[derive(Default)]
+    struct AuditorEspiao {
+        eventos: RefCell<Vec<(String, ResultadoAutz)>>,
+    }
+    impl Auditor for AuditorEspiao {
+        fn registrar(&self, e: &EventoAutz) {
+            self.eventos.borrow_mut().push((e.acao.to_string(), e.resultado));
+        }
+    }
+
+    // A autz de config AUDITA os 2 ramos — e o NEGADO (sondagem: pref alheia, chave fora da lista)
+    // é o que MAIS importa e HOJE não deixava rastro. Mutante que emitisse só num ramo cai a `len`.
+    #[test]
+    fn autz_de_config_audita_permitido_e_negado() {
+        let s = sessao_de("A");
+        let espiao = AuditorEspiao::default();
+        assert!(autorizar_escrita_pref(&s, None, "app.idioma", &espiao).is_ok()); // permitido
+        assert!(autorizar_escrita_pref(&s, Some(&UserId("B".into())), "app.tema", &espiao).is_err()); // pref alheia
+        assert!(autorizar_escrita_pref(&s, None, "seguranca.exigir_2fa", &espiao).is_err()); // chave fora
+        assert!(resolver_pref_propria(&s, Some(&UserId("B".into())), &espiao).is_err()); // leitura alheia
+
+        let ev = espiao.eventos.borrow();
+        assert_eq!(ev.len(), 4, "toda decisão emite — o negado (sondagem) não some");
+        assert_eq!(ev[0], ("config.escrever_pref".to_string(), ResultadoAutz::Permitido));
+        assert_eq!(ev[1], ("config.escrever_pref".to_string(), ResultadoAutz::Negado));
+        assert_eq!(ev[2], ("config.escrever_pref".to_string(), ResultadoAutz::Negado));
+        assert_eq!(ev[3], ("config.ler_pref".to_string(), ResultadoAutz::Negado));
+    }
+
+    // §2 do @Altair: o `Negado` CARREGA o `ConfigErro` certo (404 de pref alheia ≠ ChaveNaoPermitida)
+    // — o anti-oráculo depende do `match` do chamador; um Negado opaco o mataria.
+    #[test]
+    fn negado_carrega_a_razao_certa() {
+        let s = sessao_de("A");
+        let alheia = autorizar_escrita_pref(&s, Some(&UserId("B".into())), "app.tema", &AuditorNulo)
+            .unwrap_err();
+        assert_eq!(alheia.erro(), ConfigErro::NaoEncontrado);
+        let chave = autorizar_escrita_pref(&s, None, "x.y", &AuditorNulo).unwrap_err();
+        assert_eq!(chave.erro(), ConfigErro::ChaveNaoPermitida);
+    }
+
+    // #1589: o READ-path (configs_do_usuario) audita SÓ o ramo NEGADO — ler config de OUTRO
+    // (sondagem) emite; ler a PRÓPRIA (sucesso) NÃO emite (ruído). Latente hoje (borda passa None),
+    // mas a rota cross-user futura herda por construção. Mutante que emite no sucesso OU não emite
+    // no negado é apanhado pelo count.
+    #[test]
+    fn read_path_audita_so_o_negado() {
+        let s = sessao_de("A");
+        let espiao = AuditorEspiao::default();
+
+        // sucesso (própria config) → NÃO emite (AC2: rotina é ruído)
+        let ok = configs_do_usuario(&s, None, Vec::new(), &espiao);
+        assert!(ok.is_ok());
+        assert_eq!(espiao.eventos.borrow().len(), 0, "leitura da própria config não vai pra trilha");
+
+        // sondagem (config de OUTRO) → emite SÓ o negado (AC1)
+        let neg = configs_do_usuario(&s, Some(&UserId("B".into())), Vec::new(), &espiao);
+        assert_eq!(neg, Err(ConfigErro::NaoEncontrado));
+        let ev = espiao.eventos.borrow();
+        assert_eq!(ev.len(), 1, "só o negado (sondagem) emite");
+        assert_eq!(ev[0], ("config.ler_pref".to_string(), ResultadoAutz::Negado));
     }
 }

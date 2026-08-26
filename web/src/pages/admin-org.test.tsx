@@ -441,6 +441,54 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     expect(estaSuspensa({ ...desconhecida, estado: "provisionada" })).toBe(false);
   });
 
+  // -- a tela nao GAGUEJA (achado da e2e do composto, 25/08) -----------------
+  // Com uma org de fato suspensa, dois caminhos independentes falam ao mesmo
+  // tempo: a FAIXA (le `estado` de /me/orgs) e o PAINEL (le o 403 org_suspensa).
+  // Ambos diziam a MESMA frase, empilhada.
+  //
+  // Nenhum teste pegava, e a razao importa: cada um exercitava UM caminho por
+  // vez. O defeito so existe quando os dois se encontram na mesma tela -- e isso
+  // so acontece contra uma borda com org suspensa de verdade.
+
+  it("org suspensa: a suspensao e anunciada UMA vez, nao duas", async () => {
+    // /me/orgs devolve estado suspensa (faixa sobe) E o recurso devolve 403
+    // org_suspensa (painel reage) -- exatamente o composto da borda real.
+    vi.stubGlobal("fetch", (entrada: string) =>
+      Promise.resolve(
+        String(entrada).endsWith("/me/orgs")
+          ? json([{ org: "acme", papel: "org_admin", estado: "suspensa" }])
+          : json({ erro: "org_suspensa" }, 403),
+      ),
+    );
+    render(<AdminOrgPage idioma="pt-BR" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: t.orgSuspensa })).toBeTruthy(),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(t.orgSuspensaPainel)).toBeTruthy(),
+    );
+
+    // O mutante que este teste mata e voltar a repetir a frase da faixa no painel.
+    expect(screen.getAllByText(t.orgSuspensa).length).toBe(1);
+    expect(screen.getAllByText(t.orgSuspensaDetalhe).length).toBe(1);
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("SEM faixa, o painel volta a mensagem COMPLETA -- nao emudece", async () => {
+    // Direcao oposta, e e ela que impede o conserto de virar regressao: com a
+    // org injetada por prop nao ha descoberta, logo nao ha faixa, e o painel e
+    // o UNICO sinal. Se ele encolher aqui, o usuario fica sem saber o porque.
+    fetchFalso(() => json({ erro: "org_suspensa" }, 403));
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() => expect(screen.getByText(t.orgSuspensa)).toBeTruthy());
+    expect(screen.getByText(t.orgSuspensaDetalhe)).toBeTruthy();
+    expect(screen.queryByText(t.orgSuspensaPainel)).toBeNull();
+  });
+
   it("i18n: as duas linguas do DoD renderizam", () => {
     fetchFalso(() => json([]));
     render(<AdminOrgPage idioma="en" org="acme" />);

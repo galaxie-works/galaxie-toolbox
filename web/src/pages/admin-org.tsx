@@ -167,9 +167,9 @@ export function AdminOrgPage({
         {!orgAtual ? (
           <Aviso titulo={t.orgIndefinida} detalhe={t.orgIndefinidaDetalhe} />
         ) : aba === "membros" ? (
-          <PainelMembros idioma={idioma} org={orgAtual} />
+          <PainelMembros idioma={idioma} org={orgAtual} suspensa={suspensa} />
         ) : aba === "dominios" ? (
-          <PainelDominios idioma={idioma} org={orgAtual} />
+          <PainelDominios idioma={idioma} org={orgAtual} suspensa={suspensa} />
         ) : (
           <PainelPendente
             titulo={t[ROTULO[aba]]}
@@ -206,7 +206,26 @@ type EstadoRecurso =
  * de o estado escorrer silenciosamente pro caminho de conteúdo, que é
  * justamente o jeito permissivo de errar.
  */
-function avisoDoEstado(estado: EstadoRecurso, t: Dicionario): ReactElement | null {
+function avisoDoEstado(
+  estado: EstadoRecurso,
+  t: Dicionario,
+  /**
+   * A faixa da página já anunciou a suspensão?
+   *
+   * Existe por um defeito que **só a e2e do composto revelou**: com uma org de
+   * fato suspensa, a faixa (que lê `estado` de `/me/orgs`) e o painel (que lê o
+   * `403 org_suspensa`) diziam a MESMA frase, empilhada — a tela gaguejava.
+   *
+   * Nenhum teste meu pegava: cada um exercitava um caminho por vez, e os dois
+   * só se encontram quando existe uma org suspensa de verdade do outro lado.
+   *
+   * O painel **não** deixa de falar — ele passa a dizer o que é DELE ("este
+   * conteúdo não vem"), em vez de reexplicar o estado da org. Continua correto
+   * sozinho: se a faixa não subir (org injetada por prop, ou `/me/orgs`
+   * falhando), o painel volta à mensagem completa, que aí é o único sinal.
+   */
+  faixaJaAnunciou = false,
+): ReactElement | null {
   switch (estado) {
     case "carregando":
       return <p>{t.carregando}</p>;
@@ -221,7 +240,11 @@ function avisoDoEstado(estado: EstadoRecurso, t: Dicionario): ReactElement | nul
     case "naoEhAdmin":
       return <Aviso titulo={t.semPermissao} detalhe={t.semPermissaoDetalhe} />;
     case "orgSuspensa":
-      return <Aviso titulo={t.orgSuspensa} detalhe={t.orgSuspensaDetalhe} />;
+      return faixaJaAnunciou ? (
+        <p>{t.orgSuspensaPainel}</p>
+      ) : (
+        <Aviso titulo={t.orgSuspensa} detalhe={t.orgSuspensaDetalhe} />
+      );
     case "naoEhSuaOrg":
       return <Aviso titulo={t.naoEhSuaOrg} detalhe={t.naoEhSuaOrgDetalhe} />;
     case "erro":
@@ -260,12 +283,20 @@ function useRecurso<T>(caminho: string): { estado: EstadoRecurso; dados: T | nul
 }
 
 /** Membros — `GET /orgs/{org}/membros`. */
-function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
+function PainelMembros({
+  idioma,
+  org,
+  suspensa,
+}: {
+  idioma: Idioma;
+  org: string;
+  suspensa: boolean;
+}) {
   const t = DICIONARIOS[idioma];
   const { estado, dados } = useRecurso<Membro[]>(CAMINHOS.membros(org));
   const membros = dados ?? [];
 
-  const aviso = avisoDoEstado(estado, t);
+  const aviso = avisoDoEstado(estado, t, suspensa);
   if (aviso) return aviso;
 
   return (
@@ -300,11 +331,19 @@ function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
  * (carregando / não-é-admin / não-é-sua-org / erro / pronto), e duplicá-la faria
  * a distinção 403≠404 depender de dois acertos em vez de um.
  */
-function PainelDominios({ idioma, org }: { idioma: Idioma; org: string }) {
+function PainelDominios({
+  idioma,
+  org,
+  suspensa,
+}: {
+  idioma: Idioma;
+  org: string;
+  suspensa: boolean;
+}) {
   const t = DICIONARIOS[idioma];
   const { estado, dados } = useRecurso<Dominio[]>(CAMINHOS.dominios(org));
 
-  const aviso = avisoDoEstado(estado, t);
+  const aviso = avisoDoEstado(estado, t, suspensa);
   if (aviso) return aviso;
 
   const dominios = dados ?? [];

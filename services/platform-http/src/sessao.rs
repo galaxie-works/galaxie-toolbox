@@ -11,8 +11,9 @@ use axum::http::header;
 use axum::http::request::Parts;
 use axum::response::Response;
 
-use galaxie_platform_back_office::Auditor;
+use galaxie_platform_identity::auditoria::Auditor;
 use galaxie_platform_conta::ArmazemPerfil;
+use galaxie_platform_config::ArmazemPref;
 use galaxie_platform_identity::armazem::{ArmazemDominio, ArmazemMembro, ArmazemOrg};
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
@@ -45,11 +46,21 @@ pub struct Borda {
     /// Perfil do humano (`GET /me`, #1505/#1473). Mesmo padrão: a borda consome, a impl troca sem
     /// tocar aqui. O perfil real nasce no callback OAuth; hoje o dev-server semeia pro e2e do FE.
     pub perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
+    /// Prefs de config do usuário (`GET /me/config`, #1505/#1563). A borda consome; a impl (memória
+    /// agora, Postgres depois) troca sem tocar aqui. O dev-server semeia pro e2e do FE.
+    pub prefs: Arc<dyn ArmazemPref + Send + Sync>,
 }
 
 impl Borda {
     /// Constrói o estado: armazém de sessão + relógio + auditor + os armazéns de domínio. Envolve
     /// em `Arc` para o axum clonar barato entre handlers.
+    ///
+    /// `too_many_arguments` é ESPERADO e DECLARADO: a borda consome um armazém por domínio (orgs,
+    /// membros, domínios, perfis, prefs, …) e cada costura vertical acrescenta o seu — a lista cresce
+    /// por desenho. O `nova` é o ÚNICO ponto onde convergem, e posicional-explícito faz cada call site
+    /// listar o que injeta (memória nos testes, real na prod). O refactor pra um builder é plano, não
+    /// defeito — cardado à parte; até lá, o `allow` marca a intenção em vez de um smell silencioso.
+    #[allow(clippy::too_many_arguments)]
     pub fn nova(
         armazem: ArmazemMemoria,
         agora: fn() -> u64,
@@ -58,6 +69,7 @@ impl Borda {
         membros: Arc<dyn ArmazemMembro + Send + Sync>,
         dominios: Arc<dyn ArmazemDominio + Send + Sync>,
         perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
+        prefs: Arc<dyn ArmazemPref + Send + Sync>,
     ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
@@ -67,6 +79,7 @@ impl Borda {
             membros,
             dominios,
             perfis,
+            prefs,
         })
     }
 }
