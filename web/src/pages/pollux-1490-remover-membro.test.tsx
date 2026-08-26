@@ -260,7 +260,13 @@ describe("#1490 — remover membro", () => {
       screen.getByRole("dialog").querySelector("button.bg-red-600")!,
     );
 
-    // O ponto: a tabela NÃO fica acionável durante a remoção.
+    // 🔑 O DIÁLOGO CONTINUA ABERTO até a resposta chegar. Esta asserção faltava
+    // e um mutante apanhou-a: sem ela, fechar o diálogo cedo (o defeito exato
+    // que o Codex descreveu) passava, porque os botões da linha continuavam
+    // desabilitados e o teste dava-se por satisfeito.
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+
+    // E a tabela NÃO fica acionável durante a remoção.
     await waitFor(() => {
       const linha = screen.getAllByRole("button", { name: t.removendo })[0];
       expect(linha, "nenhum controlo indica remoção em curso").toBeTruthy();
