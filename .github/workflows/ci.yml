@@ -435,7 +435,9 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read # sem `packages` — a PR não alcança o registry, ponto final.
+      contents: read # ler o código.
+      pull-requests: read # o `dorny/paths-filter` lista os ficheiros da PR pela API (Codex #1632 P1).
+      # SEM `packages` — a PR não alcança o registry, ponto final (é a invariante do split).
     steps:
       - name: Checkout
         uses: actions/checkout@v4
