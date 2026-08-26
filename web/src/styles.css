@@ -1,1 +1,40 @@
 @import "tailwindcss";
+
+/* ── Tokens de SEVERIDADE (#1614) ─────────────────────────────────────────
+ *
+ * Requisito do @Altair ao decidir o AC1: o `web/` NÃO importa componentes do
+ * app desktop — três dependências de runtime é uma **propriedade** deste app,
+ * não um descuido, e o Alert do registry traria `class-variance-authority` +
+ * `clsx` + `tailwind-merge` atrás dele.
+ *
+ * 🔑 O que não pode divergir entre as duas superfícies **não é o markup, é o
+ * vocabulário**: aviso e erro têm de dizer a mesma coisa da mesma cor nas duas.
+ * Por isso os valores abaixo são **os mesmos** do `src/index.css` do desktop,
+ * com a linha de origem anotada. Partilha-se o SIGNIFICADO, não a
+ * implementação.
+ *
+ * ⚠️ É cópia deliberada: se um destes valores mudar no desktop, muda aqui. A
+ * alternativa (importar) custaria a magreza que se está a proteger.
+ *
+ * Só entram os dois que o `Alerta` usa. `--success` e `--info` ficam de fora
+ * até haver quem os consuma — token sem consumidor é o que o ratchet do #1421
+ * cobra, com razão.
+ */
+:root {
+  /* src/index.css:111 — o override semântico, que vence o do bloco do tema */
+  --warning: oklch(0.72 0.17 70);
+  /* src/index.css:54 */
+  --warning-foreground: var(--color-yellow-900);
+  /* src/index.css:30 */
+  --destructive: oklch(0.577 0.245 27.325);
+  /* src/index.css:48 */
+  --destructive-foreground: var(--color-red-800);
+}
+
+/* Mapeia para o Tailwind v4, como o desktop faz em `src/index.css:121`. */
+@theme inline {
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+}

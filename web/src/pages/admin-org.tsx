@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
 import { Modal } from "@/components/modal";
+import { Alerta } from "@/components/alerta";
 import {
   DICIONARIOS,
   idiomaAtual,
@@ -155,14 +156,12 @@ export function AdminOrgPage({
           pra quem usa leitor de tela: duas coisas diferentes anunciando-se com
           a mesma identidade. */}
       {suspensa ? (
-        <div
-          role="status"
-          aria-label={t.orgSuspensa}
-          className="mx-auto mt-4 max-w-4xl rounded-2xl border border-amber-300 bg-amber-50 p-4"
-        >
-          <p className="text-sm font-medium text-amber-900">{t.orgSuspensa}</p>
-          <p className="mt-1 text-sm text-amber-800">{t.orgSuspensaDetalhe}</p>
-        </div>
+        <Alerta
+          tom="aviso"
+          titulo={t.orgSuspensa}
+          detalhe={t.orgSuspensaDetalhe}
+          className="mx-auto mt-4 max-w-4xl"
+        />
       ) : null}
 
       <section className="mx-auto mt-4 max-w-4xl rounded-2xl border border-neutral-200 bg-white p-6">
@@ -444,24 +443,14 @@ function PainelMembros({
         // Região viva NOMEADA — a página já tem outra (`role="status"` da faixa
         // de suspensão), e duas sem nome ficam indistinguíveis para quem usa
         // leitor de ecrã. Foi o achado da @Íris no #1544.
-        <div
-          role="status"
-          aria-label={t.ultimoAdmin}
-          className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4"
-        >
-          <p className="text-sm font-medium text-amber-900">{t.ultimoAdmin}</p>
-          <p className="mt-1 text-sm text-amber-800">{t.ultimoAdminDetalhe}</p>
-        </div>
+        <Alerta
+          tom="aviso"
+          titulo={t.ultimoAdmin}
+          detalhe={t.ultimoAdminDetalhe}
+          className="mb-4"
+        />
       ) : recusa !== null ? (
-        <div
-          role="status"
-          aria-label={t.removerFalhou}
-          className="mb-4 rounded-2xl border border-neutral-300 bg-neutral-50 p-4"
-        >
-          <p className="text-sm font-medium text-neutral-900">
-            {t.removerFalhou}
-          </p>
-        </div>
+        <Alerta tom="erro" titulo={t.removerFalhou} className="mb-4" />
       ) : null}
 
       <table className="w-full text-left text-sm">
@@ -599,10 +588,8 @@ function PainelPendente({
 
 /** Aviso de negativa. O texto vem de fora porque 403 e 404 dizem coisas diferentes. */
 function Aviso({ titulo, detalhe }: { titulo: string; detalhe: string }) {
-  return (
-    <div role="status" className="text-sm">
-      <p className="font-medium text-neutral-900">{titulo}</p>
-      <p className="mt-1 text-neutral-500">{detalhe}</p>
-    </div>
-  );
+  // Passa a ter NOME acessível (o `Alerta` exige-o por assinatura). Antes era
+  // a única região viva sem nome da página — a outra face do achado da @Íris
+  // no #1544: duas `role="status"` indistinguíveis para o leitor de ecrã.
+  return <Alerta tom="simples" titulo={titulo} detalhe={detalhe} />;
 }
