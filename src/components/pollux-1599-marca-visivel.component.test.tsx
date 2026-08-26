@@ -35,12 +35,17 @@ const SUITE = "The GALAXIE";
 // `"pt-BR"` — a lista teria ficado a mentir em silêncio.)
 const IDIOMAS = Object.keys(DICIONARIOS) as Idioma[];
 
+// `orgStatus: "uncontracted"` é o estado que ABRE este ecrã (#698/PS5: o
+// funcionário loga, a empresa ainda não contratou). Com outro valor o `App`
+// nem encaminharia para aqui — a fixture tem de ser a do caminho real.
 const UTILIZADOR: AppUser = {
   displayName: "Ana Ribeiro",
   email: "ana@exemplo.pt",
   initials: "AR",
   provider: "microsoft",
   accountKind: "work",
+  orgStatus: "uncontracted",
+  capabilities: ["identity"],
 };
 
 function montar(ui: React.ReactNode, idioma: Idioma) {
