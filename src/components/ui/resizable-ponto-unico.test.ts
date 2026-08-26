@@ -34,6 +34,12 @@
 // **Uma lista de proibidos só cresce quando alguém é mordido; uma lista de
 // permitidos falha sozinha diante do que ninguém previu.**
 //
+// 🔑 v4, esta (@Íris + @Altair, #1634) — **o TERCEIRO eixo**. A @Íris correu 21
+// mutantes contra a v3: 19 morrem, e os 2 que escapam são `style` inline
+// (`style={{marginLeft:8}}` chega ao mesmo sítio que `ml-2`). A v3 fechou COMO
+// o token se escreve e QUE token produz o efeito; faltava **por que PROP** o
+// efeito entra. Fechar melhor a mesma porta não fecha a porta do lado.
+//
 // Estilo dos gates da casa: parse do fonte, sem montar componente. Rode com
 //   node --test --experimental-strip-types src/components/ui/resizable-ponto-unico.test.ts
 import { test } from "node:test";
@@ -155,6 +161,38 @@ function tokensDoClassName(expr: string): { tokens: string[]; legivel: boolean }
   return { tokens, legivel };
 }
 
+/**
+ * A tag traz `style` inline?
+ *
+ * ## O TERCEIRO eixo (#1634)
+ *
+ * A @Íris correu 21 mutantes contra a allowlist do #1629 — **19 morrem, 2
+ * escapam**, e os dois são a mesma forma:
+ *
+ * ```jsx
+ * <ResizableHandle style={{ marginLeft: 8, marginRight: 8 }} />   // == mx-2
+ * <ResizableHandle style={{ background: "red" }} />               // == bg-*
+ * ```
+ *
+ * O enquadramento é do @Altair, e é o que torna isto acionável: a guarda tinha
+ * fechado **COMO o token é escrito** (eixo A: `cn()`, aspas simples, template,
+ * variantes) e **QUE token produz o efeito** (eixo B: a allowlist). O `style`
+ * inline é um **terceiro eixo — outra PROP que chega ao mesmo efeito**, e
+ * nenhuma allowlist de `className` lá chega. Eu estava a fechar melhor a mesma
+ * porta enquanto havia outra ao lado.
+ *
+ * ⚠️ **Qualquer `style` numa tag inspecionada é infração**, e não só os que
+ * mexem em margem/fundo. Pela mesma razão que `className` não-verificável já é:
+ * **não conseguir verificar ≠ estar bem**. Ler o objeto para decidir quais
+ * propriedades importam seria reconstruir a denylist que este ficheiro já
+ * abandonou duas vezes — e ela voltaria a crescer só quando alguém fosse
+ * mordido. Se um caso legítimo aparecer, entra numa allowlist com o motivo
+ * escrito, como o `print:hidden`.
+ */
+function temStyleInline(tag: string): boolean {
+  return /\bstyle\s*=\s*[{"'`]/.test(tag);
+}
+
 function arquivosTsx(dir: string): string[] {
   const achados: string[] = [];
   for (const entrada of readdirSync(dir)) {
@@ -174,10 +212,21 @@ test("#1629: o `className` de um uso de <ResizableHandle> só tem o que está PE
     const texto = readFileSync(arquivo, "utf8");
     for (const tag of tagsDeUso(texto)) {
       usosVistos++;
+      const nome = arquivo.replace(/\\/g, "/");
+
+      // O terceiro eixo vem PRIMEIRO e não faz `continue`: uma tag pode trazer
+      // `style` E `className`, e as duas infrações interessam a quem lê o erro.
+      if (temStyleInline(tag)) {
+        infratores.push(
+          `${nome}: prop \`style\` inline — margem/fundo do splitter vêm do ponto ` +
+            `único (ui/resizable.tsx). O \`style\` alcança as MESMAS propriedades ` +
+            `que a allowlist do \`className\` governa, por outra via.`,
+        );
+      }
+
       const expr = valorDoClassName(tag);
       if (expr === null) continue; // sem className: herda o ponto único, é o caso bom
       const { tokens, legivel } = tokensDoClassName(expr);
-      const nome = arquivo.replace(/\\/g, "/");
       if (!legivel) {
         infratores.push(`${nome}: className não é verificável estaticamente (${expr.trim()})`);
         continue;
