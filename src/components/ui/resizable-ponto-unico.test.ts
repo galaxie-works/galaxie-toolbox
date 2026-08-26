@@ -193,6 +193,25 @@ function temStyleInline(tag: string): boolean {
   return /\bstyle\s*=\s*[{"'`]/.test(tag);
 }
 
+/**
+ * A tag traz um **spread** `{...algo}`?
+ *
+ * Quarto caminho, achado do Codex nesta PR: `<ResizableHandle {...{ style: {
+ * marginLeft: 8 } }} />` — o `style` está lá, mas dentro de um spread, e o
+ * `temStyleInline` não vê `style=`. O spread é, por definição, **conteúdo que a
+ * análise estática não consegue abrir** — pode trazer `style`, `className` ou
+ * qualquer prop, hoje ou amanhã.
+ *
+ * Por isso a regra não é "procurar `style` dentro do spread" (seria a denylist
+ * outra vez, um nível mais fundo): é **o spread em si é infração**, pela regra
+ * que este ficheiro já aplica duas vezes — *não conseguir verificar ≠ estar
+ * bem*. Medido: nenhum uso real de `<ResizableHandle>` usa spread, então proibir
+ * não custa nada e fecha o caminho antes de alguém o usar.
+ */
+function temSpread(tag: string): boolean {
+  return /\{\s*\.\.\./.test(tag);
+}
+
 function arquivosTsx(dir: string): string[] {
   const achados: string[] = [];
   for (const entrada of readdirSync(dir)) {
@@ -221,6 +240,14 @@ test("#1629: o `className` de um uso de <ResizableHandle> só tem o que está PE
           `${nome}: prop \`style\` inline — margem/fundo do splitter vêm do ponto ` +
             `único (ui/resizable.tsx). O \`style\` alcança as MESMAS propriedades ` +
             `que a allowlist do \`className\` governa, por outra via.`,
+        );
+      }
+
+      if (temSpread(tag)) {
+        infratores.push(
+          `${nome}: spread \`{...}\` numa tag de <ResizableHandle> — não é ` +
+            `verificável estaticamente (pode trazer \`style\` ou \`className\` ` +
+            `proibidos). Passe as props explicitamente.`,
         );
       }
 
