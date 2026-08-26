@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
-use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_conta::ArmazemPerfilMemoria;
 use galaxie_platform_config::{ArmazemPrefMemoria, RegistroFormasMemoria};
 use galaxie_platform_identity::armazem::{
@@ -54,6 +54,9 @@ struct EventoAuditoriaLog<'a> {
     ator: &'a str,
     acao: &'a str,
     resultado: &'a str,
+    /// O TIPO do alvo (`org`/`usuario`/`""`) — #1591: sem isto o log achataria org e usuário no
+    /// mesmo id e a distribuição sobre alvos (a forma da enumeração) sumiria.
+    alvo_tipo: &'a str,
     alvo: &'a str,
 }
 
@@ -88,6 +91,12 @@ fn linha_de_auditoria(e: &EventoAutz) -> Option<String> {
         ResultadoAutz::Permitido => "permitido",
         ResultadoAutz::Negado => "negado",
     };
+    // O alvo (#1591): tipo + id, pra org e usuário não colapsarem no mesmo campo plano.
+    let (alvo_tipo, alvo) = match e.alvo {
+        Alvo::Org(o) => ("org", o.0.as_str()),
+        Alvo::Usuario(u) => ("usuario", u.0.as_str()),
+        Alvo::SemAlvo => ("", ""),
+    };
     let ev = EventoAuditoriaLog {
         // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
         // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
@@ -95,7 +104,8 @@ fn linha_de_auditoria(e: &EventoAutz) -> Option<String> {
         ator: &e.ator.0,
         acao: e.acao,
         resultado,
-        alvo: e.alvo.map(|o| o.0.as_str()).unwrap_or(""),
+        alvo_tipo,
+        alvo,
     };
     serde_json::to_string(&ev).ok()
 }
@@ -199,7 +209,7 @@ mod tests {
         let e = EventoAutz {
             ator: &ator,
             acao: "back_office.suspender_org",
-            alvo: Some(&alvo),
+            alvo: Alvo::Org(&alvo),
             resultado: ResultadoAutz::Negado,
         };
         // Saída OBSERVÁVEL: o `registrar` (o de verdade) escreve aqui em vez de no stdout.

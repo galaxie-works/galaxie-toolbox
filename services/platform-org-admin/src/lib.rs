@@ -20,7 +20,7 @@
 
 #![forbid(unsafe_code)]
 
-use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{
     autorizar, resolver_org, Decisao, Operacao, Org, OrgId, ResolveErro, Sessao,
 };
@@ -141,7 +141,7 @@ pub fn autorizar_acao_admin(
     auditor.registrar(&EventoAutz {
         ator: sessao.principal().usuario(),
         acao: acao.acao_nome(),
-        alvo: Some(&org_alvo.id),
+        alvo: Alvo::Org(&org_alvo.id),
         resultado: if resultado.is_ok() { ResultadoAutz::Permitido } else { ResultadoAutz::Negado },
     });
     resultado
@@ -182,6 +182,7 @@ fn decidir_acao_admin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use galaxie_platform_identity::auditoria::AlvoDono;
     use galaxie_platform_identity::{Escopo, OrgId, Principal, Sessao, UserId};
     use std::cell::RefCell;
     use std::collections::BTreeSet;
@@ -411,7 +412,7 @@ mod tests {
     // ---- #1571: a autz EMITE auditoria nos DOIS ramos (simetria com o back-office) ----
 
     /// (ator, nome da ação, alvo, resultado) — o que o espião captura de cada `EventoAutz`.
-    type EventoEspiado = (UserId, String, Option<OrgId>, ResultadoAutz);
+    type EventoEspiado = (UserId, String, AlvoDono, ResultadoAutz);
     #[derive(Default)]
     struct AuditorEspiao {
         eventos: RefCell<Vec<EventoEspiado>>,
@@ -420,7 +421,7 @@ mod tests {
         fn registrar(&self, e: &EventoAutz) {
             self.eventos
                 .borrow_mut()
-                .push((e.ator.clone(), e.acao.to_string(), e.alvo.cloned(), e.resultado));
+                .push((e.ator.clone(), e.acao.to_string(), e.alvo.para_dono(), e.resultado));
         }
     }
 
@@ -449,12 +450,12 @@ mod tests {
         assert_eq!(
             ev[0],
             (UserId("u1".into()), "org_admin.listar_membros".to_string(),
-             Some(OrgId("orgA".into())), ResultadoAutz::Permitido)
+             AlvoDono::Org(OrgId("orgA".into())), ResultadoAutz::Permitido)
         );
         assert_eq!(
             ev[1],
             (UserId("u2".into()), "org_admin.remover_membro".to_string(),
-             Some(OrgId("orgA".into())), ResultadoAutz::Negado),
+             AlvoDono::Org(OrgId("orgA".into())), ResultadoAutz::Negado),
             "o negado registra ator+ação tentada — a superfície grande não some"
         );
     }
@@ -472,6 +473,6 @@ mod tests {
         let ev = espiao.eventos.borrow();
         assert_eq!(ev.len(), 1);
         assert_eq!(ev[0].3, ResultadoAutz::Negado, "org invisível também vira evento negado auditado");
-        assert_eq!(ev[0].2, Some(OrgId("orgA".into())), "o alvo nomeia a org que ele tentou tocar");
+        assert_eq!(ev[0].2, AlvoDono::Org(OrgId("orgA".into())), "o alvo nomeia a org que ele tentou tocar");
     }
 }
