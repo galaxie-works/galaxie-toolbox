@@ -450,7 +450,7 @@ function PainelMembros({
           className="mb-4"
         />
       ) : recusa !== null ? (
-        <Alerta tom="neutro" titulo={t.removerFalhou} className="mb-4" />
+        <Alerta tom="erro" titulo={t.removerFalhou} className="mb-4" />
       ) : null}
 
       <table className="w-full text-left text-sm">

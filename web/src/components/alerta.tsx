@@ -40,11 +40,17 @@ export function Alerta({
   className,
 }: {
   /**
-   * `aviso` — algo precisa de atenção e o utilizador pode agir (org suspensa,
-   * último admin). `neutro` — falhou e não há ação óbvia. `simples` — texto sem
-   * caixa, para quando o próprio painel já é o contexto (negativa de acesso).
+   * `aviso` — algo precisa de atenção e o utilizador **pode agir** (org
+   * suspensa, último admin). `erro` — falhou e não há ação óbvia. `simples` —
+   * texto sem caixa, quando o próprio painel já é o contexto (negativa de
+   * acesso).
+   *
+   * Os dois primeiros usam os **tokens de severidade do tema** (`warning`,
+   * `destructive`) — os MESMOS do desktop, declarados em `styles.css` com a
+   * origem anotada. Requisito do @Altair: as duas superfícies dizem a mesma
+   * coisa da mesma cor **sem uma linha de código partilhada**.
    */
-  tom: "aviso" | "neutro" | "simples";
+  tom: "aviso" | "erro" | "simples";
   /** Também é o NOME acessível da região viva. Obrigatório de propósito. */
   titulo: string;
   detalhe?: ReactNode;
@@ -52,14 +58,17 @@ export function Alerta({
 }) {
   const caixa =
     tom === "aviso"
-      ? "rounded-2xl border border-amber-300 bg-amber-50 p-4"
-      : tom === "neutro"
-        ? "rounded-2xl border border-neutral-300 bg-neutral-50 p-4"
+      ? "rounded-2xl border border-warning/30 bg-warning/10 p-4"
+      : tom === "erro"
+        ? "rounded-2xl border border-destructive/30 bg-destructive/10 p-4"
         : "text-sm";
   const corTitulo =
-    tom === "aviso" ? "text-amber-900" : "text-neutral-900";
-  const corDetalhe =
-    tom === "aviso" ? "text-amber-800" : "text-neutral-500";
+    tom === "aviso"
+      ? "text-warning-foreground"
+      : tom === "erro"
+        ? "text-destructive-foreground"
+        : "text-neutral-900";
+  const corDetalhe = tom === "simples" ? "text-neutral-500" : corTitulo;
 
   return (
     <div

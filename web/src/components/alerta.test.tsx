@@ -54,6 +54,20 @@ function semComentarios(fonte: string): string {
   return fonte.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
 }
 
+/**
+ * `role="status"` em **qualquer grafia válida de JSX**.
+ *
+ * Achado do Codex nesta PR, e é a **terceira vez hoje** que a mesma cegueira me
+ * apanha: uma varredura que casa só a forma com aspas duplas deixa passar
+ * `role='status'`, `role={"status"}`, `` role={`status`} `` — todas JSX válido,
+ * todas a contornar o ponto único com o gate verde.
+ *
+ * As duas anteriores foram no `resizable-ponto-unico` (#1279, achado da @Íris:
+ * `cn()` e aspas simples; #1629, achado do @Altair: prefixos). Escrevo o padrão
+ * aqui de uma vez, em vez de o alargar quando alguém for mordido outra vez.
+ */
+const ROLE_STATUS = /role\s*=\s*\{?\s*["'`]status["'`]/;
+
 describe("#1614 — a caixa de aviso tem um ponto único", () => {
   it("o `Alerta` monta região viva COM nome acessível", () => {
     render(<Alerta tom="aviso" titulo="Org suspensa" detalhe="Fale com o suporte" />);
@@ -66,13 +80,13 @@ describe("#1614 — a caixa de aviso tem um ponto único", () => {
   });
 
   it("sem `detalhe`, não inventa um parágrafo vazio", () => {
-    const { container } = render(<Alerta tom="neutro" titulo="Não foi possível remover" />);
+    const { container } = render(<Alerta tom="erro" titulo="Não foi possível remover" />);
     expect(container.querySelectorAll("p")).toHaveLength(1);
   });
 
   it("o tom muda a caixa, e `simples` não desenha caixa", () => {
     const { container: aviso } = render(<Alerta tom="aviso" titulo="a" />);
-    expect(aviso.firstElementChild!.className).toContain("bg-amber-50");
+    expect(aviso.firstElementChild!.className).toContain("bg-warning/10");
     cleanup();
     const { container: simples } = render(<Alerta tom="simples" titulo="a" />);
     expect(simples.firstElementChild!.className).not.toContain("bg-");
@@ -95,7 +109,7 @@ describe("#1614 — a caixa de aviso tem um ponto único", () => {
         // duas varreduras, e a outra ficou com folga permanente.
         return nome !== DONO && nome !== ESTE;
       })
-      .filter((p) => semComentarios(readFileSync(p, "utf8")).includes('role="status"'))
+      .filter((p) => ROLE_STATUS.test(semComentarios(readFileSync(p, "utf8"))))
       .map((p) => p.replace(/\\/g, "/").split("/web/src/")[1]);
 
     expect(
@@ -107,7 +121,7 @@ describe("#1614 — a caixa de aviso tem um ponto único", () => {
 
   it("o dono do padrão realmente o carrega (senão a varredura acima é decoração)", () => {
     const dono = readFileSync(join(WEB_SRC, "components", DONO), "utf8");
-    expect(dono).toContain('role="status"');
+    expect(ROLE_STATUS.test(dono)).toBe(true);
     expect(dono).toContain("aria-label={titulo}");
   });
 });
