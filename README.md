@@ -1,44 +1,47 @@
-# GALAXIE
+# The GALAXIE
 
-Aplicativo desktop (workspace de produtividade Microsoft 365) que dá aos
-usuários de um cliente acesso simples aos arquivos da empresa no SharePoint **e**
-um conjunto de ferramentas integradas de e-mail, agenda, contatos, navegação,
-arquivos locais e acesso remoto. O dado vem de **três caminhos**: Microsoft
-Graph delegado (`/me`, sem IMAP) nas contas M365, Google (Drive/appData) nas
-contas pessoais, e o **filesystem local** (Explorer de Arquivos).
+**Assim como a galáxia, The GALAXIE oferece um horizonte infinito de soluções
+para pequenas e grandes corporações.** É a **suite desktop** de produtividade
+Microsoft 365 da [Galaxie Works](https://galaxie.works): um único binário que
+reúne navegador, e-mail, agenda, contatos, arquivos (locais e na nuvem), acesso
+remoto e — a caminho — uma IA que orbita o seu trabalho. Cada capacidade é um
+**membro** da suite; o conjunto é a galáxia.
 
 A pessoa entra com o e-mail corporativo, o app descobre o tenant, ela faz login
-na página oficial da Microsoft e cai no workspace. Feito pela
-[Galaxie Works](https://galaxie.works) para atender múltiplos clientes a partir
-do mesmo binário. Auto-atualiza (installer assinado publicado no repo de
+na página oficial da Microsoft e cai no workspace. Um mesmo binário atende
+múltiplos clientes. Auto-atualiza (installer assinado publicado no repo de
 distribuição; o app se atualiza sozinho).
+
+O dado vem de **três caminhos**: Microsoft Graph delegado (`/me`, sem IMAP) nas
+contas M365, Google (Drive/appData) nas contas pessoais, e o **filesystem
+local** (Explorer de Arquivos).
 
 ---
 
-## O que faz hoje
+## Os membros da suite
 
-**Base (acesso a arquivos)**
+### Prontos hoje
 
-| Recurso | Descrição |
+| Membro | O que é |
 |---|---|
-| **Login por e-mail** | Detecta o tenant pelo domínio (OIDC público) e abre o login oficial da Microsoft já preenchido |
-| **Sessão persistente** | Reabre logado (refresh token cifrado com DPAPI) |
-| **Bibliotecas SharePoint** | Lista os sites que o usuário enxerga; **Conectar/Desconectar** cria/remove o atalho no OneDrive; **Abrir no Explorer**; liga `LongPathsEnabled` via UAC |
-
-**Módulos (Galaxie Apps)**
-
-| Módulo | Descrição |
-|---|---|
-| **Bridge** | Cliente de e-mail (4 painéis) + **Agenda** (eventos, recorrência) + **People** (contatos M365, categorias, organizações) — tudo via Graph delegado |
-| **Navigator** | Navegador embutido (WebView2) com abas, sleeping tabs, command palette, favoritos, histórico/privacidade |
-| **Explorer** (Files) | Gerenciador de arquivos locais (épico #675): árvore This PC/Cloud/Network, copy/move com engine paralela e progresso na central, undo (journal), previews. Backend Rust `fs_explorer.rs` |
-| **Remote** | Acesso remoto (épico #682): captura de tela, input, transporte WebRTC/str0m, agente SYSTEM. Crates em `services/` (feature `remote`); infra de relay em `infra/remote/` |
+| **Navigator** | O navegador embutido e a nave-mãe da suite: WebView2 nativo por aba (não iframe — abre Outlook/Teams/SharePoint que barram frame), sleeping tabs, command palette, favoritos, importação de bookmarks, histórico, modo privado, restauro de sessão. `browser.rs` |
+| **Bridge** | O PIM completo via Graph delegado: **e-mail** (4 painéis, CRUD, caixas compartilhadas, salvar `.eml`/PDF), **Agenda** (eventos, recorrência, RSVP, calendários compartilhados) e **People** (contatos M365, categorias, grupos, organizações, enriquecimento). `screens/control-room.tsx` |
+| **Files** (Explorer) | Gerenciador de arquivos local: árvore This PC / Cloud / Network, copy/move com engine paralela e progresso, undo por journal, previews, watcher. Backend Rust `fs_explorer.rs` |
+| **OneDrive / Sites** | Mapeia as bibliotecas e pastas compartilhadas do SharePoint: **Conectar/Desconectar** liga/desliga um atalho no OneDrive do usuário (`/me/drive/root/children`), que o cliente nativo do OneDrive sincroniza para a máquina; **Abrir no Explorer**; liga `LongPathsEnabled` via UAC. `screens/sites.tsx`, `graph.rs` |
+| **Remote** | Acesso remoto assistido: captura de tela, input, transporte WebRTC/str0m, vídeo H.264, agente SYSTEM, identidade de device Ed25519. Feature `remote` — **shipada nos releases oficiais**. Crates em `services/remote-*`; relay em `infra/remote/` |
 | **Previews** | Preview de anexos (PDF/TXT/docx/xlsx/pptx) dentro do app, com sandbox de segurança |
 | **Telemetria** | Diagnóstico/observabilidade privacy-first (TelemetryPolicy em Rust → OpenObserve self-host; consent por categoria, PII-scrubbed) |
 
 Contas: além do M365 (Graph), o app também loga em **conta Microsoft pessoal** e
 **Google** (provider `google`, épico #692 — nuvem via Drive/appData). Recursos
 que dependem de org (SharePoint/`/sites`) ficam gateados por provider.
+
+### A caminho
+
+| Membro | Estado |
+|---|---|
+| **Astro** — a IA da suite | Em construção. A visão é uma IA que automatiza o trabalho, com destaque para **assistir reuniões do Teams**. Hoje é uma tela reservada (placeholder oculto por flag); não há código de IA no app ainda. Discovery em `docs/astro/` |
+| **The GALAXIE Platform** — gestão corporativa do M365 | Backend de autorização em construção (`platform.thegalaxie.cloud`, épico #1265): onboarding corporativo, concessões, admin de org, back-office. Crates em `services/platform-*`; SPA web em `web/` (em fatias). Em paralelo, o app já traz um painel fino de org-admin (settings/branding/subscription do tenant) |
 
 ## Como funciona a autenticação
 
@@ -105,6 +108,10 @@ Build de produção:
 pnpm tauri build
 ```
 
+> O membro **Remote** só entra no binário com a feature Cargo `remote`
+> (`pnpm tauri build --features remote`) — é o que os releases oficiais usam. Um
+> build local padrão traz o Remote como stub e a UI degrada com gentileza.
+
 Antes do primeiro login é preciso registrar o app no Entra ID — o passo a passo
 está em **[REGISTRO-APP.md](REGISTRO-APP.md)**.
 
@@ -136,11 +143,13 @@ src-tauri/src/          backend (Rust/Tauri) — comandos em lib.rs
   estado.rs             registro local dos atalhos criados
   config.rs             CLIENT_ID, endpoints e SCOPES_BASE/SCOPES_ORG
 services/               crates do Remote (captura, input, transporte, signaling, agente SYSTEM)
+                        e do backend platform.thegalaxie.cloud (platform-*)
 infra/                  stacks de infra: relay do Remote (coturn), OpenObserve, traefik
+web/                    SPA do platform.thegalaxie.cloud (em construção, épico #1265)
 ```
 
 Docs em [`docs/`](docs/), **escopados por área** (ver o índice [`docs/README.md`](docs/README.md)):
-módulos em `bridge/`, `navigator/`, `explorer/`, `remote/`, `astro/` (Galaxie AI);
+membros em `bridge/`, `navigator/`, `explorer/`, `remote/`, `astro/` (Galaxie AI);
 cross-cutting em `reference/`; histórico em `arquivo/` (produtos removidos) e
 `historia/`; processo em `equipe/`, release notes em `releases/`, runbooks em
 `runbooks/`. A **lei do processo** é o [`TEAM-CANON.md`](TEAM-CANON.md) na raiz
@@ -165,6 +174,7 @@ precisa virar *multitenant* e o admin de cada cliente dar consent uma vez.
 
 ## Próximos passos
 
-Em andamento: telemetria live no build shipado; **Astro** (Galaxie AI — créditos de IA + meeting-assistant, ver
-`docs/astro/galaxie-ai-discovery.md`). O roadmap vive no board (GitHub Projects) — ver
-`AGENTS.md` §2.
+O roadmap vive no board (GitHub Projects) — ver `AGENTS.md` §2. As frentes
+maiores em aberto: **Astro** (a IA da suite — créditos de IA + meeting-assistant
+de Teams, discovery em `docs/astro/`) e **The GALAXIE Platform** (gestão
+corporativa do M365 em `platform.thegalaxie.cloud`, épico #1265).
