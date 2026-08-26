@@ -42,32 +42,65 @@ const PONTO_UNICO = "components/ui/resizable.tsx";
 const TOKENS = ["mx-1.5", "bg-transparent", "hover:bg-border"];
 
 /**
- * O que um call-site NÃO pode mexer: margem horizontal, fundo e hover de fundo.
+ * O que um call-site NÃO pode mexer: **margem horizontal e fundo**.
  *
- * Prefixos, não literais — é essa a diferença entre "não repitas estes três" e
- * "não mexas nisto". `mx-4` e `bg-red-500` não estavam em lista nenhuma e
- * quebravam o padrão na mesma.
+ * Prefixos, não literais — a diferença entre "não repitas estes três" e "não
+ * mexas nisto" (achado da @Lúmen). E testado **depois** de tirar as variantes:
+ * `hover:bg-border` e `dark:bg-red-500` normalizam ambos para `bg-…`, portanto
+ * `hover:bg-` deixa de precisar de entrada própria.
  */
-const PROIBIDOS = /^(mx-|bg-|hover:bg-)/;
+const PROIBIDOS = /^(mx-|bg-)/;
 
 /**
- * Todas as strings literais de um trecho, em qualquer invólucro: `"…"`, `'…'`
- * e `` `…` ``. É isto que tira a cegueira ao `cn()`: o conteúdo de
- * `{cn("a", "b")}` são duas strings, e as duas passam a ser lidas.
+ * Tira as VARIANTES do Tailwind de um token: `dark:md:bg-red-500` → `bg-red-500`.
+ *
+ * Achado do Codex nesta PR: a expressão ancorada em `^` não via a utilitária
+ * por baixo de um modificador, e `className="dark:bg-red-500 md:mx-4"` mudava
+ * fundo e margem em estados normais da app — a divergência que este gate existe
+ * para impedir, a passar por baixo dele.
+ *
+ * Pára no `[`: um valor arbitrário (`bg-[url(a:b)]`) tem `:` que **não** é
+ * variante, e cortar por ele mutilaria o token.
  */
-function stringsDe(trecho: string): string[] {
-  return [...trecho.matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map(
-    (m) => m[1] ?? m[2] ?? m[3] ?? "",
-  );
+function semVariantes(token: string): string {
+  let t = token;
+  for (;;) {
+    const i = t.indexOf(":");
+    const colchete = t.indexOf("[");
+    if (i < 0 || (colchete >= 0 && colchete < i)) return t;
+    t = t.slice(i + 1);
+  }
+}
+
+/**
+ * Os candidatos a classe dentro de uma tag — **de qualquer sítio dela**.
+ *
+ * Deliberadamente grosseiro: parte a tag inteira por tudo o que não pode fazer
+ * parte de uma classe Tailwind. Isto atravessa de uma vez os invólucros que já
+ * cegaram este gate — `"…"`, `'…'`, `` `…` ``, `{cn(…)}`, ternários, e
+ * **interpolações `${…}` dentro de template** (3º achado do Codex: o conteúdo
+ * do template era consumido como UMA string e as literais lá dentro nunca eram
+ * lidas).
+ *
+ * Sobre-aproximar é a direção segura: não há razão legítima para um token de
+ * margem ou fundo aparecer num uso de `<ResizableHandle>`, em prop nenhuma.
+ */
+function candidatos(tag: string): string[] {
+  return tag.split(/[^A-Za-z0-9_:\-[\]/.%]+/).filter(Boolean);
 }
 
 /**
  * As tags de abertura de `<ResizableHandle …>`, self-closing ou não.
  *
- * Varredura caractere a caractere em vez de regex porque o `>` pode aparecer
- * dentro de uma string da própria tag, e um `[^>]*` cortaria a tag ao meio —
- * lendo metade dos atributos e declarando-a limpa. Cegueira PARCIAL é pior que
- * nenhuma: passa por medição.
+ * Varredura caractere a caractere, com **aspas E profundidade de chaveta**.
+ *
+ * As aspas entraram primeiro (um `>` dentro de string cortava a tag ao meio).
+ * A profundidade entrou depois, por achado do Codex — e é o mesmo erro uma
+ * camada abaixo: em `<ResizableHandle disabled={count > 0} className="bg-red-500" />`
+ * o `>` do OPERADOR terminava a tag antes do `className`, e a classe proibida
+ * nunca chegava a ser lida. `=>` de uma arrow tem o mesmo efeito.
+ *
+ * Cegueira PARCIAL é pior que nenhuma: passa por medição. Tem caso de teste.
  */
 function tagsDeUso(texto: string): string[] {
   const tags: string[] = [];
@@ -76,6 +109,7 @@ function tagsDeUso(texto: string): string[] {
   while ((m = abre.exec(texto)) !== null) {
     let i = m.index;
     let aspa: string | null = null;
+    let fundo = 0;
     for (; i < texto.length; i++) {
       const c = texto[i]!;
       if (aspa) {
@@ -86,7 +120,9 @@ function tagsDeUso(texto: string): string[] {
         aspa = c;
         continue;
       }
-      if (c === ">") break;
+      if (c === "{") fundo++;
+      else if (c === "}") fundo--;
+      else if (c === ">" && fundo === 0) break;
     }
     tags.push(texto.slice(m.index, Math.min(i + 1, texto.length)));
   }
@@ -111,10 +147,9 @@ test("#1279: nenhum uso de <ResizableHandle> DIVERGE do padrão (barra/hover/mar
       for (const tag of tagsDeUso(texto)) {
         // Qualquer string da tag, em qualquer invólucro — e cada uma partida em
         // tokens de classe.
-        const tokens = stringsDe(tag)
-          .flatMap((s) => s.split(/\s+/))
-          .filter(Boolean);
-        const divergentes = tokens.filter((t) => PROIBIDOS.test(t));
+        const divergentes = candidatos(tag).filter((t) =>
+          PROIBIDOS.test(semVariantes(t)),
+        );
         if (divergentes.length) {
           infratores.push(
             `${arquivo.replace(/\\/g, "/")}: [${divergentes.join(", ")}]`,
