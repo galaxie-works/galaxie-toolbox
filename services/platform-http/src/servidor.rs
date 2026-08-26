@@ -63,23 +63,35 @@ struct EventoAuditoriaLog<'a> {
 /// processo) e melhor que nada.
 struct AuditorLog;
 
+/// A LINHA de auditoria (JSON) a partir do evento — a função PURA que o `registrar` de PRODUÇÃO
+/// usa. Extraída (#1594) porque o teste anti-injeção tem de provar o CAMINHO DE PRODUÇÃO: montar o
+/// struct + chamar `serde_json` À MÃO prova que o serde escapa, NÃO que o nosso `registrar` o usa —
+/// o guard do #1539 continuava verde mesmo com serialização→interpolação DENTRO do `registrar`
+/// ("teste não é consumidor"). Testar ESTA função fecha o furo: mutar serde→interpolação aqui mata o
+/// teste. `None` se a serialização falhar (não deve; campos são `&str`) — não emitir é melhor que
+/// emitir lixo.
+fn linha_de_auditoria(e: &EventoAutz) -> Option<String> {
+    let resultado = match e.resultado {
+        ResultadoAutz::Permitido => "permitido",
+        ResultadoAutz::Negado => "negado",
+    };
+    let ev = EventoAuditoriaLog {
+        // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
+        // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
+        tipo: "autz",
+        ator: &e.ator.0,
+        acao: e.acao,
+        resultado,
+        alvo: e.alvo.map(|o| o.0.as_str()).unwrap_or(""),
+    };
+    serde_json::to_string(&ev).ok()
+}
+
 impl Auditor for AuditorLog {
     fn registrar(&self, e: &EventoAutz) {
-        let resultado = match e.resultado {
-            ResultadoAutz::Permitido => "permitido",
-            ResultadoAutz::Negado => "negado",
-        };
-        let ev = EventoAuditoriaLog {
-            // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
-            // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
-            tipo: "autz",
-            ator: &e.ator.0,
-            acao: e.acao,
-            resultado,
-            alvo: e.alvo.map(|o| o.0.as_str()).unwrap_or(""),
-        };
-        // Se a serialização falhar (não deve, campos são `&str`), não emitir é melhor que emitir lixo.
-        if let Ok(linha) = serde_json::to_string(&ev) {
+        // O `registrar` DE PRODUÇÃO usa `linha_de_auditoria` — a MESMA função que o teste exercita
+        // (AC2 #1594), não uma cópia paralela que o teste provaria sem o código vivo a usar.
+        if let Some(linha) = linha_de_auditoria(e) {
             println!("{linha}");
         }
     }
@@ -149,19 +161,26 @@ pub async fn servir(borda: crate::EstadoBorda, addr: SocketAddr) -> Result<()> {
 mod tests {
     use super::*;
 
-    // Achado 2 do @Altair (#1539): o log de auditoria serializa, não interpola — um `ator` vindo do
-    // `subject` OAuth com `"` NÃO forja entradas. Prova: subject malicioso que tenta injetar um
-    // `"resultado":"permitido"` sai ESCAPADO, e o resultado REAL (negado) sobrevive.
+    use galaxie_platform_identity::{OrgId, UserId};
+
+    // Achado 2 do @Altair (#1539) provado agora no CAMINHO DE PRODUÇÃO (#1594, achado da @Lúmen): o
+    // log serializa, não interpola — um `ator` vindo do `subject` OAuth com `"` NÃO forja entradas.
+    // 🔑 O teste chama `linha_de_auditoria` — a MESMA função que o `registrar` de produção usa — em vez
+    // de montar o struct + serde à mão. Assim mutar serde→interpolação DENTRO do caminho vivo MATA
+    // este teste (AC1); antes (montando o `EventoAuditoriaLog` à mão) o mutante passava: "teste não é
+    // consumidor". O subject malicioso tenta injetar `"resultado":"permitido"`; sai ESCAPADO e o
+    // resultado REAL (negado) sobrevive.
     #[test]
     fn log_de_auditoria_escapa_dado_externo_e_nao_injeta() {
-        let ev = EventoAuditoriaLog {
-            tipo: "autz_backoffice",
-            ator: r#"eve","resultado":"permitido","x":""#, // subject forjando
-            acao: "suspender_org",
-            resultado: "negado",
-            alvo: "acme",
+        let ator = UserId(r#"eve","resultado":"permitido","x":""#.into()); // subject forjando
+        let alvo = OrgId("acme".into());
+        let e = EventoAutz {
+            ator: &ator,
+            acao: "back_office.suspender_org",
+            alvo: Some(&alvo),
+            resultado: ResultadoAutz::Negado,
         };
-        let linha = serde_json::to_string(&ev).unwrap();
+        let linha = linha_de_auditoria(&e).expect("serializa: campos são &str");
         // Reparse: é UM objeto JSON válido, com o resultado VERDADEIRO — a injeção não pegou.
         let v: serde_json::Value = serde_json::from_str(&linha).unwrap();
         assert_eq!(v["resultado"], "negado", "o resultado real, não o forjado pelo ator");
