@@ -131,19 +131,26 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
     const fontes = fontesDoApp();
     expect(fontes.length).toBeGreaterThan(50); // anti-cegueira: a varredura enxerga
 
-    const montagens = (marcador: string, excluir: RegExp) =>
-      fontes
+    // O marcador fecha no fim do NOME (`\s`, `/` ou `>`), e isso não é
+    // preciosismo: a 1ª versão usava `includes("<RecursoOrgEmpty")`, e o
+    // mutante que renomeia a montagem para `<RecursoOrgEmptyMORTO`
+    // **SOBREVIVEU** — o nome mutado contém o original como prefixo. A guarda
+    // teria aceite um componente trocado por outro de nome parecido.
+    const montagens = (nome: string, excluir: RegExp) => {
+      const usa = new RegExp(`<${nome}[\\s/>]`);
+      return fontes
         .filter((p) => !excluir.test(p))
-        .filter((p) => readFileSync(p, "utf8").includes(marcador)).length;
+        .filter((p) => usa.test(readFileSync(p, "utf8"))).length;
+    };
 
     expect(
-      montagens("<RecursoOrgEmpty", /recurso-org-empty\.tsx$/),
+      montagens("RecursoOrgEmpty", /recurso-org-empty\.tsx$/),
       "`RecursoOrgEmpty` deixou de ser montado — o teste de render abaixo passa " +
         "sobre um componente que ninguém mostra (foi isto que aconteceu ao `Wordmark`)",
     ).toBeGreaterThanOrEqual(1);
 
     expect(
-      montagens("<OnboardingEmpresaScreen", /onboarding-empresa\.tsx$/),
+      montagens("OnboardingEmpresaScreen", /onboarding-empresa\.tsx$/),
       "o `App.tsx` deixou de encaminhar para o onboarding de empresa — o ecrã " +
         "existe e nunca é alcançado",
     ).toBeGreaterThanOrEqual(1);
