@@ -9,9 +9,14 @@
 // utilizador vê o nome novo"* — matam o mutante na mesma quando ele está em
 // código morto.
 //
-// Este teste faz a pergunta do DOMÍNIO certo: **MONTA** a superfície e lê o
-// TEXTO VISÍVEL. Se o `Wordmark` tivesse sido o alvo, este ficheiro não
-// conseguiria sequer escrever a asserção — não há o que montar.
+// Este teste faz a pergunta do DOMÍNIO certo: **MONTA** a superfície, prova que
+// ela é ALCANÇÁVEL a partir do app, e lê o texto e o nome acessível. Se o
+// `Wordmark` tivesse sido o alvo, este ficheiro não conseguiria sequer escrever
+// a asserção — não há o que montar.
+//
+// O que ele NÃO responde: pixel. O `happy-dom` não faz layout. A prova de que a
+// marca chega ao ecrã depois da animação vive no `.browser.test.tsx` ao lado
+// (chromium real), e o julgamento visual final é da @Íris (QA-V).
 //
 // DIVISÃO DE TRABALHO, de propósito: o nome ANTIGO não aparece aqui. Quem
 // responde "o rótulo velho saiu da fonte" é o `pollux-1599-nome-da-suite.test.ts`
@@ -60,7 +65,12 @@ function montar(ui: React.ReactNode, idioma: Idioma) {
 }
 
 /**
- * O texto que o olho lê, com o espaço em branco NORMALIZADO.
+ * O texto que está no DOM, com o espaço em branco NORMALIZADO.
+ *
+ * ⚠️ Chamava-se `visivel()` e o Codex teve razão em picar o nome: isto extrai
+ * DOM cru, **não** visibilidade. Chamar-lhe "visível" era a mesma doença que
+ * pôs este card em `Rejected` — batizar de "conferido" o que não foi conferido.
+ * Quem responde por visibilidade real é o `.browser.test.tsx` ao lado.
  *
  * 🔑 Medido, e custa uma hora a quem não souber: o onboarding envolve as frases
  * no `SoftBlurIn`, que parte o texto **caractere a caractere** em spans e troca
@@ -72,7 +82,7 @@ function montar(ui: React.ReactNode, idioma: Idioma) {
  * The GALAXIE…' to contain 'The GALAXIE'" — uma mensagem que parece um bug do
  * matcher e é apenas um code point invisível. `\s` do JS já apanha o NBSP.
  */
-function visivel(container: HTMLElement): string {
+function textoNoDom(container: HTMLElement): string {
   return (container.textContent ?? "").replace(/\s+/g, " ");
 }
 
@@ -105,7 +115,7 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
   // proíbe passaria VERDE sobre um ecrã vazio. Empty-por-erro ≠ empty-de-facto.
   it("as superfícies renderizam de facto (senão as asserções seguintes são vácuo)", () => {
     const empty = montar(<RecursoOrgEmpty />, "pt-BR");
-    expect(visivel(empty.container).length).toBeGreaterThan(20);
+    expect(textoNoDom(empty.container).length).toBeGreaterThan(20);
     cleanup();
 
     const onboarding = montar(
@@ -116,7 +126,7 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
       />,
       "pt-BR",
     );
-    expect(visivel(onboarding.container).length).toBeGreaterThan(20);
+    expect(textoNoDom(onboarding.container).length).toBeGreaterThan(20);
   });
 
   // ── FIAÇÃO: as superfícies são ALCANÇÁVEIS a partir do app ───────────────
@@ -171,7 +181,7 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
   // ── AC1/AC2/AC3: o utilizador LÊ "The GALAXIE", nos dois idiomas ─────────
   it.each(IDIOMAS)("empty-state de recurso de org exibe a marca (%s)", (idioma) => {
     const { container } = montar(<RecursoOrgEmpty />, idioma);
-    const texto = visivel(container);
+    const texto = textoNoDom(container);
 
     expect(texto).toContain(SUITE);
 
@@ -192,7 +202,7 @@ describe("#1599 — a marca é VISÍVEL nas superfícies que a renderizam", () =
       />,
       idioma,
     );
-    const texto = visivel(container);
+    const texto = textoNoDom(container);
     expect(texto).toContain(SUITE);
 
     // 🔑 Aqui a asserção é sobre o NOME ACESSÍVEL, não sobre o `textContent`, e
