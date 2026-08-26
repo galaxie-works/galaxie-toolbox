@@ -181,6 +181,12 @@ pub fn autorizar_acao_admin(
 /// (`MutacaoMembro::Recusada`), não o palpite do snapshot — os dois podem divergir sob corrida, e é o
 /// store que decide. Ações que não tocam a contagem de admin ([`AcaoAdminOrg::nome_guarda_orfa`] =
 /// `None`) não emitem — não há regra de negócio a auditar.
+///
+/// ⚠️ **Este evento responde SÓ a "a guarda RECUSOU?" — NUNCA a "houve MUTAÇÃO?"** (exigência do
+/// @Altair). `Permitido` = a guarda não recusou, o que INCLUI o `NaoEraMembro` (a base permitiu, o
+/// alvo é que não existia — nada mutou). Contar `guarda_orfa=Permitido` como "membros removidos"
+/// contaria remoções que NÃO aconteceram — ausência de mutação lida como acontecimento (a mesma
+/// família de erro do bicondicional). Se um dia fizer falta o registo da MUTAÇÃO em si, é OUTRO evento.
 pub fn auditar_guarda_orfa(
     sessao: &Sessao,
     acao: &AcaoAdminOrg,
