@@ -210,10 +210,15 @@ async fn mutacao_membro_autorizada(
         Ok(None) => return Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Ok(Some(o)) => o,
     };
-    // A guarda do último-admin conta os `OrgAdmin` ATUAIS: a borda lê os membros e passa (o domínio de
-    // autz é PURO, não faz I/O). Infra caída na leitura ⇒ 500 (superfície visível). Nota: a leitura e a
-    // escrita seguinte não são transacionais — janela mínima e serializada no store de memória; a
-    // atomicidade real é da fatia de persistência (Postgres), não desta.
+    // A guarda do último-admin conta os `OrgAdmin` ATUAIS: a borda lê os membros e a autz PURA decide.
+    // ⚠️ DUAS falhas conhecidas nesta forma (Codex #1625), aguardando ratificação do desenho pelo
+    // @Altair antes do enforço (toca o trait `ArmazemMembro` + o audit-combinado dele) — NÃO mergear
+    // como está:
+    //   P1 (race): esta leitura e a escrita seguinte tomam o Mutex do store SEPARADAMENTE. Dois
+    //     DELETE/PATCH concorrentes veem ambos 2 admins, passam aqui e mutam ⇒ org com ZERO admin. A
+    //     guarda só é atômica se check-e-mutação ocorrerem sob o MESMO lock (no store), não na borda.
+    //   P2 (vazamento): esta leitura precede a autz BASE — infra caída ⇒ 500 numa org ALHEIA antes do
+    //     404 canônico, ensinando que a org existe (invariante 1). A base tem de decidir ANTES de ler.
     let membros = match estado.membros.listar(org_id) {
         Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
         Ok(m) => m,

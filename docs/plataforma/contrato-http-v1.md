@@ -76,7 +76,7 @@ Corpo de erro: `application/json`
 ```json
 { "erro": "<codigo>" }
 ```
-`<codigo>` ∈ `{ "nao_autenticado", "nao_encontrado", "negado", "org_suspensa", "payload_invalido", "conflito" }`.
+`<codigo>` ∈ `{ "nao_autenticado", "nao_encontrado", "negado", "org_suspensa", "payload_invalido", "conflito", "ultimo_admin" }`.
 
 **Regra do 404 (invariante 1):** para `nao_encontrado`, corpo e headers são **byte-a-byte iguais**
 quer o recurso não exista, quer exista e não seja do solicitante. A razão **nunca** aparece.
@@ -89,6 +89,7 @@ quer o recurso não exista, quer exista e não seja do solicitante. A razão **n
 | `403` | `org_suspensa` | recurso **visível** (o principal É membro), mas a org está **suspensa** (#1544). Mesmo HTTP que `negado`, slug PRÓPRIO: a UI mostra "fale com o admin", não "papel insuficiente" |
 | `400` | `payload_invalido` | corpo malformado / campo faltando |
 | `409` | `conflito` | conflito **dentro da própria org** (ex.: reivindicar 2× o mesmo domínio na MESMA org). Nunca cross-tenant — ver §4.3 |
+| `409` | `ultimo_admin` | a mutação deixaria a org **sem nenhum `OrgAdmin`** (remover/rebaixar o último) (#1620). Mesmo HTTP que `conflito`, slug PRÓPRIO: a UI mostra "promove outro admin antes", não "sem permissão" (distinto de `negado` de propósito) — ver §4.3 |
 
 > `404` vs `403`: cross-tenant é **sempre** `404` (não enumerar). `403` só quando o recurso é
 > comprovadamente da própria org do principal.
