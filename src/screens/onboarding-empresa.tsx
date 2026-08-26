@@ -12,8 +12,8 @@ import { Alert, AlertDescription } from "@/components/reui/alert";
 import type { AppUser } from "@/lib/types";
 import { preencher, useIdioma } from "@/lib/idioma";
 
-/** Nome do produto exibido no onboarding — {app} das strings. */
-const APP = "GALAXIE Toolbox";
+/** Nome da suite exibido no onboarding — {app} das strings (#1599). */
+const APP = "The GALAXIE";
 
 /**
  * #698 (PS5): estado "empresa NÃO contratada". O funcionário loga (não bloqueia)

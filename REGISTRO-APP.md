@@ -1,17 +1,24 @@
-# Registro do app no Entra ID — GALAXIE Toolbox
+# Registro do app no Entra ID — The GALAXIE
 
-O Toolbox faz login **delegado**: cada pessoa entra com a própria conta, na
+O The GALAXIE faz login **delegado**: cada pessoa entra com a própria conta, na
 página oficial da Microsoft. Isso exige um registro do tipo
 **public client / desktop** (sem secret — o PKCE é que protege o fluxo).
+
+> ⚠️ **O registro JÁ EXISTENTE no portal ainda se chama `GALAXIE Toolbox`.**
+> Este runbook passou a dizer **The GALAXIE** (#1599), mas renomear o registro é
+> **ação de portal do admin/PO**, fora do código — e enquanto não for feita, quem
+> procurar o app no Entra encontra o nome antigo. Renomear no portal **não** muda
+> o `client_id`, que é o que o código usa; por isso a troca é segura e pode ser
+> feita a qualquer momento.
 
 ## Passo a passo no portal
 
 1. Acesse **https://entra.microsoft.com** → **Identity** → **App registrations**
    → **New registration**.
-2. **Name:** `GALAXIE Toolbox`
+2. **Name:** `The GALAXIE`
 3. **Supported account types:**
    - Para atender **um único cliente**: *Accounts in this organizational directory only*.
-   - Para atender **vários clientes** (o caso do Toolbox): **Accounts in any
+   - Para atender **vários clientes** (o nosso caso): **Accounts in any
      organizational directory (Any Microsoft Entra ID tenant — Multitenant)**.
 4. **Redirect URI:** plataforma **Mobile and desktop applications**, e adicione
    exatamente:
