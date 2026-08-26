@@ -414,50 +414,72 @@ jobs:
         working-directory: services/platform-oauth
         run: cargo clippy --all-targets -- -D warnings
 
-  # ── #1312 §5 (desenho do @Altair): publica a imagem do remote-signaling no GHCR ──
-  # É o passo que mata a "cópia de fonte paralela" no host (#1303/#1307): a produção
-  # deixa de COMPILAR e passa a PUXAR uma tag versionada construída aqui. Corre SÓ em
-  # push pra `pre-prod`, NUNCA em PR — publicar a partir de um PR (possível fork) seria
-  # supply-chain. Gated no `rust`+`clippy`: a imagem só sai se o build/testes/lint do
-  # signaling passaram (não se publica um artefato que o gate reprovou).
+  # ── #1312 §5 (desenho do @Altair): imagem do remote-signaling no GHCR ──
+  # Mata a "cópia de fonte paralela" no host (#1303/#1307): produção deixa de COMPILAR e
+  # PUXA uma tag versionada construída aqui. Gated no `rust`+`clippy` (não se toca a imagem
+  # se o build/testes/lint reprovaram).
   #
-  # As 4 condições do @Altair:
-  #  1. `packages: write` VIVE AQUI, no job — nunca no topo do ci.yml. Se estivesse no
-  #     topo, TODO job (inclusive os que só correm testes) poderia publicar pacotes.
-  #     Privilégio mínimo por construção, uma linha no sítio certo.
-  #  2. O PUSH usa o `GITHUB_TOKEN` (sem segredo novo). O PULL do host é PAT read-only,
-  #     fine-grained, 1 pacote, com expiração — §4a do @Altair no host; a chave (sem
-  #     valor) mora no `infra/remote/.env.example`, nunca o valor no repo.
-  #  3. Tag = SHA do commit, NUNCA só `latest`: "o que corre em produção?" TEM de ter
-  #     resposta — `:latest` não a dá. O compose (host, §4) referencia `@sha256:<digest>`;
-  #     o digest sai no resumo do job abaixo, pronto pra colar.
-  #  4. O binário carimba o SHA (`--build-arg GALAXIE_BUILD_SHA`, #1311), lido pelo
-  #     `/healthz` via `option_env!` — é a PROVA de deploy medível de FORA (§2): `ok` =
-  #     imagem velha; JSON com `commit` = a tag entrou. ⚠️ Quando o gate do @Altair
-  #     passar a ler esta imagem, o NOME da linha muda; avisá-lo pra ele trocar a
-  #     verificação no mesmo tick (um gate que não casa lê-se como um gate que passa).
+  # DOIS modos, e o job corre SEMPRE (nunca ausente):
+  #   • push na `pre-prod`  → CONSTRÓI e PUBLICA (tag = SHA).
+  #   • pull_request        → CONSTRÓI SEM publicar, SÓ se a PR tocar algo relevante à
+  #     imagem — é a validação que o Codex teve de fazer a LER no #1631 (o `cargo build
+  #     --locked` do Dockerfile é o detector do desvio COPY-vs-grafo-de-deps). NUNCA
+  #     publica de PR (fork = supply-chain): sem login, sem usar o `packages: write`.
+  #
+  # As condições do @Altair (design + review do #1631):
+  #  1. `packages: write` VIVE AQUI, no job — nunca no topo (senão todo job publicaria).
+  #  2. Push com o `GITHUB_TOKEN` (sem segredo novo). Pull do host = PAT read-only
+  #     fine-grained 1-pacote (§4a); a chave sem valor no `infra/remote/.env.example`.
+  #  3. Tag = SHA, nunca `latest`. Digest no resumo pro compose (§4) usar `@sha256:`.
+  #  4. `--build-arg GALAXIE_BUILD_SHA` (#1311) → `/healthz` vira JSON com `commit` = a
+  #     prova de deploy medível de fora (§2). Quando o gate do @Altair ler esta imagem, o
+  #     nome da linha muda; avisá-lo pra ele trocar no mesmo tick.
+  # Do review (#1631, build-no-push na PR):
+  #  A. `paths:` GENEROSO (services/**, Cargo.toml/lock, **/Dockerfile, ci.yml) — um filtro
+  #     estreito seria a MESMA lista-à-mão que nos furou (COPY atrás do grafo). Construir a
+  #     mais é barato; cobrir a menos foi o que se pagou.
+  #  B. `--locked` no build do container — vive no Dockerfile; é o que falha quando o grafo
+  #     anda e o lock não.
+  #  C. O skip é LEGÍVEL: o job corre SEMPRE (não é ausente) e o resumo diz explicitamente
+  #     se CONSTRUIU, PUBLICOU, ou NÃO construiu — um job ausente ler-se-ia como um que passou.
   publish-signaling:
     needs: [rust, clippy]
-    if: github.event_name == 'push' && github.ref_name == 'pre-prod'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # §1: AQUI, no job — nunca no topo do ficheiro.
+      packages: write # §1: AQUI, no job — nunca no topo. Usado SÓ no push da pre-prod.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login no GHCR (push com o GITHUB_TOKEN — sem segredo novo)
+      # Cond. A: filtro GENEROSO. Só em PR (no push da pre-prod construímos sempre).
+      - name: Mudanças relevantes à imagem?
+        id: changes
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            image:
+              - 'services/**'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - '**/Dockerfile'
+              - '.github/workflows/ci.yml'
+
+      # Login SÓ quando vamos publicar (push na pre-prod). Em PR não se toca no registry.
+      - name: Login no GHCR (só p/ publicar; push com o GITHUB_TOKEN, sem segredo novo)
+        if: github.event_name == 'push' && github.ref_name == 'pre-prod'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `context: .` = raiz do repo: o Dockerfile COPIA services/remote-net + services/
-      # remote-signaling. `GALAXIE_BUILD_SHA` carimba o commit no binário (§4/§2).
-      - name: Build + push (tag = SHA do commit)
+      # `context: .` = raiz do repo (o Dockerfile COPIA services/remote-*). `--locked` (cond.B)
+      # vive no Dockerfile. `push` só na pre-prod; em PR relevante constrói e valida sem push.
+      - name: Build (valida em PR) + push (só na pre-prod), tag = SHA
         id: build
+        if: ${{ (github.event_name == 'push' && github.ref_name == 'pre-prod') || steps.changes.outputs.image == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -465,19 +487,25 @@ jobs:
           build-args: |
             GALAXIE_BUILD_SHA=${{ github.sha }}
           tags: ghcr.io/galaxie-works/galaxie-remote-signaling:${{ github.sha }}
-          push: true
+          push: ${{ github.event_name == 'push' && github.ref_name == 'pre-prod' }}
 
-      # Proveniência no resumo do job: a tag-SHA e o digest, prontos pro compose (§4).
-      - name: Proveniência (tag SHA + digest)
+      # Cond. C: o resultado é LEGÍVEL — publicou / construiu-sem-push / não-construiu.
+      - name: Resumo (o skip é visível, não ausente)
+        env:
+          PUBLISHED: ${{ github.event_name == 'push' && github.ref_name == 'pre-prod' }}
+          CHANGED: ${{ steps.changes.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SHA: ${{ github.sha }}
         run: |
-          {
-            echo "### Imagem publicada — remote-signaling"
-            echo ""
-            echo "- **tag:** \`ghcr.io/galaxie-works/galaxie-remote-signaling:${{ github.sha }}\`"
-            echo "- **digest:** \`${{ steps.build.outputs.digest }}\`"
-            echo ""
-            echo "Compose (host, §4) — prefira o digest imutável:"
-            echo "\`\`\`"
-            echo "ghcr.io/galaxie-works/galaxie-remote-signaling@${{ steps.build.outputs.digest }}"
-            echo "\`\`\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PUBLISHED" = "true" ]; then
+            {
+              echo "### ✅ Imagem CONSTRUÍDA e PUBLICADA — remote-signaling"
+              echo "- **tag:** \`ghcr.io/galaxie-works/galaxie-remote-signaling:$SHA\`"
+              echo "- **digest:** \`$DIGEST\`"
+              echo "- **compose (host, §4):** \`ghcr.io/galaxie-works/galaxie-remote-signaling@$DIGEST\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$CHANGED" = "true" ]; then
+            echo "### ✅ Imagem CONSTRUÍDA (validação de PR, SEM push) — grafo de build (\`cargo build --locked\`) OK." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⏭️ Imagem NÃO construída — nem push na \`pre-prod\`, nem PR a tocar algo relevante (services/**, Cargo.toml/lock, **/Dockerfile, ci.yml). O job correu e é visível; NÃO é ausência." >> "$GITHUB_STEP_SUMMARY"
+          fi
