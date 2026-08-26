@@ -20,9 +20,10 @@
 
 #![forbid(unsafe_code)]
 
+use galaxie_platform_identity::armazem::Membro;
 use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{
-    autorizar, resolver_org, Decisao, Operacao, Org, OrgId, ResolveErro, Sessao,
+    autorizar, resolver_org, Decisao, Operacao, Org, OrgId, Papel, ResolveErro, Sessao, UserId,
 };
 
 /// Ações administrativas de uma org. Enum FECHADO: [`autorizar_acao_admin`] faz um `match`
@@ -80,6 +81,12 @@ pub enum AdminErro {
     Suspensa,
     /// Org visível e ativa, mas o principal não é `org_admin` dela: **negado** (AC1/AC3).
     Negado,
+    /// A ação deixaria a org com ZERO `OrgAdmin` (remover/rebaixar o ÚLTIMO admin) — recusada por
+    /// **construção** (#1620, fatia 1 do #1569). Distinto de `Negado`: o solicitante PODE ter papel
+    /// (é admin), mas a org **não pode ficar órfã** — e o utilizador conserta isto sozinho
+    /// (**promovendo outro admin antes**). Não é política (nenhum knob do PO torna "org sem dono"
+    /// aceitável) — é invariante. Vale inclusive pra auto-remoção (o alvo é o próprio principal).
+    UltimoAdmin,
 }
 
 /// A CAPACIDADE ([`Operacao`]) que uma ação admin-org exige. `match` EXAUSTIVO sem catch-all:
@@ -145,6 +152,68 @@ pub fn autorizar_acao_admin(
         resultado: if resultado.is_ok() { ResultadoAutz::Permitido } else { ResultadoAutz::Negado },
     });
     resultado
+}
+
+/// Autoriza uma **MUTAÇÃO de membro** (`RemoverMembro`/`MudarPapelMembro`) COM a guarda da
+/// org-não-órfã (#1620). Faz a autz base (`decidir_acao_admin`: visibilidade→suspensão→papel) E a
+/// guarda do último `OrgAdmin`, e **audita a decisão COMBINADA uma vez** — se a base passa mas a
+/// guarda recusa, o evento sai `Negado` (nunca "permitido" seguido de recusa silenciosa). A guarda
+/// vive AQUI, na autz, **não no handler**: superfície de mutação nova nasce protegida sem ninguém
+/// combinar. `membros_da_org` = os membros ATUAIS (a borda lê do armazém e passa); `alvo` = o membro
+/// removido/rebaixado (da rota); `novo_papel` = o papel novo do `MudarPapelMembro` (`None` p/ `Remover`).
+#[must_use = "a decisão de autorização tem de ser respeitada — ignorá-la reabre AC1/AC2/AC3 ou orfaniza a org"]
+pub fn autorizar_mutacao_membro(
+    sessao: &Sessao,
+    acao: &AcaoAdminOrg,
+    org_alvo: &Org,
+    membros_da_org: &[Membro],
+    alvo: &UserId,
+    novo_papel: Option<Papel>,
+    auditor: &dyn Auditor,
+) -> Result<(), AdminErro> {
+    let resultado = decidir_acao_admin(sessao, acao, org_alvo)
+        .and_then(|()| decidir_nao_orfa(membros_da_org, alvo, acao, novo_papel));
+    auditor.registrar(&EventoAutz {
+        ator: sessao.principal().usuario(),
+        acao: acao.acao_nome(),
+        alvo: Alvo::Org(&org_alvo.id),
+        resultado: if resultado.is_ok() { ResultadoAutz::Permitido } else { ResultadoAutz::Negado },
+    });
+    resultado
+}
+
+/// A guarda da INVARIANTE org-não-órfã (#1620): a ação deixaria a org com ZERO `OrgAdmin`? PURA —
+/// conta os admins ATUAIS e simula o efeito sobre o `alvo`. Recusa (`UltimoAdmin`) se o `alvo` é o
+/// ÚNICO admin e a ação o remove (`RemoverMembro`) ou o rebaixa (`MudarPapelMembro` p/ papel
+/// não-admin). Vale pra auto-remoção (o `alvo` é o próprio). Rebaixar/remover um NÃO-admin, ou mexer
+/// num admin quando há OUTROS, passa — senão a guarda seria "recusa sempre" e ninguém notaria (o teste
+/// do mutante ancora isto). Só `Remover`/`MudarPapel` tocam a contagem; as outras ações passam direto.
+fn decidir_nao_orfa(
+    membros: &[Membro],
+    alvo: &UserId,
+    acao: &AcaoAdminOrg,
+    novo_papel: Option<Papel>,
+) -> Result<(), AdminErro> {
+    let tira_admin = match acao {
+        AcaoAdminOrg::RemoverMembro => true, // remove o alvo inteiro
+        // rebaixar = novo papel NÃO é admin; promover/manter admin não reduz a contagem.
+        AcaoAdminOrg::MudarPapelMembro => novo_papel != Some(Papel::OrgAdmin),
+        _ => return Ok(()), // nenhuma outra ação mexe na contagem de admin
+    };
+    if !tira_admin {
+        return Ok(());
+    }
+    // Só importa se o alvo É admin — tirar um não-admin nunca orfaniza.
+    let alvo_e_admin = membros.iter().any(|m| &m.uid == alvo && m.papel == Papel::OrgAdmin);
+    if !alvo_e_admin {
+        return Ok(());
+    }
+    // Se o alvo é o ÚNICO admin, a ação deixaria a org com ZERO ⇒ recusa.
+    let admins = membros.iter().filter(|m| m.papel == Papel::OrgAdmin).count();
+    if admins <= 1 {
+        return Err(AdminErro::UltimoAdmin);
+    }
+    Ok(())
 }
 
 /// A DECISÃO pura (sem auditoria), na ordem que não vaza: visibilidade (404) → suspensão (403) →
@@ -474,5 +543,86 @@ mod tests {
         assert_eq!(ev.len(), 1);
         assert_eq!(ev[0].3, ResultadoAutz::Negado, "org invisível também vira evento negado auditado");
         assert_eq!(ev[0].2, AlvoDono::Org(OrgId("orgA".into())), "o alvo nomeia a org que ele tentou tocar");
+    }
+
+    // ── #1620: org não fica órfã (recusar o último OrgAdmin sair) ──────────────────────────────────
+    fn membro(uid: &str, papel: Papel) -> Membro {
+        Membro { uid: UserId(uid.into()), nome: uid.into(), email: format!("{uid}@x.com"), papel }
+    }
+    fn mutacao(
+        s: &Sessao,
+        acao: &AcaoAdminOrg,
+        org_alvo: &Org,
+        membros: &[Membro],
+        alvo: &str,
+        novo_papel: Option<Papel>,
+    ) -> Result<(), AdminErro> {
+        autorizar_mutacao_membro(s, acao, org_alvo, membros, &UserId(alvo.into()), novo_papel, &AuditorNulo)
+    }
+
+    /// **DoD (caso próprio):** o último admin a remover-se A SI MESMO é recusado.
+    #[test]
+    fn auto_remocao_do_ultimo_admin_e_recusada() {
+        let s = sessao_admin("a1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin), membro("m2", Papel::Member)];
+        assert_eq!(mutacao(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA"), &membros, "a1", None), Err(AdminErro::UltimoAdmin));
+    }
+
+    /// **DoD (MUTANTE):** remover um admin quando há DOIS PASSA — senão a guarda é "recusa sempre" e
+    /// ninguém nota. Mata o mutante que ignora a contagem.
+    #[test]
+    fn remover_admin_com_dois_admins_passa() {
+        let s = sessao_admin("a1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin), membro("a2", Papel::OrgAdmin)];
+        assert_eq!(mutacao(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA"), &membros, "a2", None), Ok(()));
+    }
+
+    /// Rebaixar o ÚLTIMO admin (`MudarPapel` p/ `Member`) é recusado (deixaria zero admin).
+    #[test]
+    fn rebaixar_ultimo_admin_e_recusado() {
+        let s = sessao_admin("a1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin), membro("m2", Papel::Member)];
+        assert_eq!(
+            mutacao(&s, &AcaoAdminOrg::MudarPapelMembro, &org("orgA"), &membros, "a1", Some(Papel::Member)),
+            Err(AdminErro::UltimoAdmin)
+        );
+    }
+
+    /// Promover um `Member` a admin NUNCA orfaniza (não reduz a contagem) — passa mesmo com 1 admin.
+    #[test]
+    fn promover_a_admin_passa() {
+        let s = sessao_admin("a1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin), membro("m2", Papel::Member)];
+        assert_eq!(
+            mutacao(&s, &AcaoAdminOrg::MudarPapelMembro, &org("orgA"), &membros, "m2", Some(Papel::OrgAdmin)),
+            Ok(())
+        );
+    }
+
+    /// Remover/rebaixar um NÃO-admin nunca orfaniza, mesmo com 1 só admin.
+    #[test]
+    fn tirar_nao_admin_passa() {
+        let s = sessao_admin("a1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin), membro("m2", Papel::Member)];
+        assert_eq!(mutacao(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA"), &membros, "m2", None), Ok(()));
+    }
+
+    /// **A guarda vive na FUNÇÃO DE AUTZ, não no handler:** o `autorizar_mutacao_membro` recusa o
+    /// órfão sem tocar em handler nem armazém. Se alguém mover a guarda pro handler, este teste — que
+    /// SÓ chama a autz — deixa de ver a recusa.
+    #[test]
+    fn a_guarda_vive_na_autz() {
+        let s = sessao_admin("a1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin)];
+        assert_eq!(mutacao(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA"), &membros, "a1", None), Err(AdminErro::UltimoAdmin));
+    }
+
+    /// A autz BASE vem primeiro: um `Member` (sem papel) a tentar remover ⇒ `Negado`, não
+    /// `UltimoAdmin` — a guarda do órfão nem chega a correr sem papel.
+    #[test]
+    fn base_autz_antes_da_guarda_orfa() {
+        let s = sessao_membro("m1", "orgA");
+        let membros = [membro("a1", Papel::OrgAdmin)];
+        assert_eq!(mutacao(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA"), &membros, "a1", None), Err(AdminErro::Negado));
     }
 }
