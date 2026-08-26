@@ -43,6 +43,9 @@ impl CodigoDeErro for AdminErro {
             // admin", não "papel insuficiente"). Vem antes de `Negado` na autz — ver `autorizar_acao_admin`.
             AdminErro::Suspensa => CodigoErro::OrgSuspensa,
             AdminErro::Negado => CodigoErro::Negado,
+            // Deixaria a org sem `OrgAdmin` (#1620): 409 com slug PRÓPRIO — a UI mostra "promove outro
+            // admin antes", não "sem permissão" (distinto de `Negado` de propósito).
+            AdminErro::UltimoAdmin => CodigoErro::UltimoAdmin,
         }
     }
 }

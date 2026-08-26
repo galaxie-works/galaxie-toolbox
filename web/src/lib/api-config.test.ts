@@ -23,17 +23,41 @@ describe("#1491 api-config", () => {
     expect(init.credentials).toBe("same-origin");
   });
 
-  it("salvarConfig manda PATCH /me/config com o patch em JSON", async () => {
-    fetchMock.mockResolvedValueOnce(respostaOk([]));
-    await salvarConfig({ tema: "escuro" });
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/v1/me/config");
-    expect(init.method).toBe("PATCH");
-    expect(JSON.parse(init.body)).toEqual({ tema: "escuro" });
+  it("salvarConfig manda UM PATCH por chave tocada, corpo {chave, valor} stringificado", async () => {
+    // PATCH devolve a COLEÇÃO (mesmo shape do GET, §4.4/#1617); salvarConfig não lê o corpo, mas o mock reflete a realidade.
+    fetchMock.mockResolvedValueOnce(respostaOk([{ chave: "app.tema", valor: "escuro", tipo: "opcao" }]));
+    fetchMock.mockResolvedValueOnce(respostaOk([{ chave: "app.notificacoes", valor: false, tipo: "bool" }]));
+    const r = await salvarConfig({ "app.tema": "escuro", "app.notificacoes": false });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // um PATCH por chave, não um batch
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(bodies).toContainEqual({ chave: "app.tema", valor: "escuro" });
+    expect(bodies).toContainEqual({ chave: "app.notificacoes", valor: "false" }); // bool → String
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe("/api/v1/me/config");
+      expect(init.method).toBe("PATCH");
+    }
+    expect(r.ok).toEqual(["app.tema", "app.notificacoes"]);
+    expect(r.falhas).toEqual([]);
+  });
+
+  it("uma chave que falha NÃO aborta as outras — reporta POR CHAVE (mandato #1588/@Altair)", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 400 })); // 1ª: valor/opção inválida
+    fetchMock.mockResolvedValueOnce(respostaOk([{ chave: "b", valor: "ok", tipo: "texto" }])); // 2ª grava (coleção)
+    const r = await salvarConfig({ a: "lixo", b: "ok" });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // o 400 NÃO abortou o loop
+    expect(r.ok).toEqual(["b"]);
+    expect(r.falhas).toEqual([{ chave: "a", status: 400 }]);
+  });
+
+  it("401 a meio PROPAGA (sessão morta = sinal do app, não falha de chave)", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    expect(ehNaoAutenticado(await salvarConfig({ a: "x" }).catch((e) => e))).toBe(true);
   });
 
   it("INVARIANTE: só fala /me/config (escopo vem da sessão, sem id de dono)", async () => {
-    fetchMock.mockImplementation(() => Promise.resolve(respostaOk([])));
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(respostaOk([{ chave: "x", valor: true, tipo: "bool" }])),
+    );
     await obterConfig();
     await salvarConfig({ x: true });
     for (const [url] of fetchMock.mock.calls) {

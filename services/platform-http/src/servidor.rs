@@ -16,9 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
-use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_conta::ArmazemPerfilMemoria;
-use galaxie_platform_config::ArmazemPrefMemoria;
+use galaxie_platform_config::{ArmazemPrefMemoria, RegistroFormasMemoria};
 use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria,
 };
@@ -54,33 +54,71 @@ struct EventoAuditoriaLog<'a> {
     ator: &'a str,
     acao: &'a str,
     resultado: &'a str,
+    /// O TIPO do alvo (`org`/`usuario`/`""`) — #1591: sem isto o log achataria org e usuário no
+    /// mesmo id e a distribuição sobre alvos (a forma da enumeração) sumiria.
+    alvo_tipo: &'a str,
     alvo: &'a str,
 }
 
-/// Auditor de produção **INTERINO**: emite o evento como linha JSON estruturada em stdout, que o
-/// coletor (OpenObserve) raspa. O DESTINO próprio (fatia (b) do #1505, cardada com a @Mira) troca
-/// isto por um emissor que sai da caixa; até lá, stdout estruturado já é a direção certa (sair do
-/// processo) e melhor que nada.
-struct AuditorLog;
+/// Auditor de produção **INTERINO**: emite o evento como linha JSON estruturada, que o coletor
+/// (OpenObserve) raspa do stdout. O DESTINO próprio (fatia (b) do #1505, cardada com a @Mira) troca
+/// isto por um emissor que sai da caixa; até lá, stdout estruturado já é a direção certa.
+///
+/// **Saída INJETÁVEL (`W`, #1594 — achado da @Lúmen):** o destino é genérico pra o teste OBSERVAR o
+/// que o `registrar` DE PRODUÇÃO de fato emite. Sem isso, o `registrar` podia chamar `linha_de_auditoria`
+/// só pra descartar o resultado e montar uma **cópia paralela interpolada** — e a suíte ficava verde,
+/// porque o teste exercitava a função pura, não o `registrar`. Era o furo "teste não é consumidor" um
+/// andar acima. Em prod `W = Stdout`; no teste `W = Vec<u8>`, e aí a injeção no fio é observável.
+struct AuditorLog<W = std::io::Stdout> {
+    saida: std::sync::Mutex<W>,
+}
 
-impl Auditor for AuditorLog {
+impl AuditorLog {
+    fn novo() -> Self {
+        Self { saida: std::sync::Mutex::new(std::io::stdout()) }
+    }
+}
+
+/// A LINHA de auditoria (JSON) a partir do evento — a função PURA que o `registrar` de PRODUÇÃO
+/// usa. Extraída (#1594) porque o teste anti-injeção tem de provar o CAMINHO DE PRODUÇÃO: montar o
+/// struct + chamar `serde_json` À MÃO prova que o serde escapa, NÃO que o nosso `registrar` o usa —
+/// o guard do #1539 continuava verde mesmo com serialização→interpolação DENTRO do `registrar`
+/// ("teste não é consumidor"). Testar ESTA função fecha o furo: mutar serde→interpolação aqui mata o
+/// teste. `None` se a serialização falhar (não deve; campos são `&str`) — não emitir é melhor que
+/// emitir lixo.
+fn linha_de_auditoria(e: &EventoAutz) -> Option<String> {
+    let resultado = match e.resultado {
+        ResultadoAutz::Permitido => "permitido",
+        ResultadoAutz::Negado => "negado",
+    };
+    // O alvo (#1591): tipo + id, pra org e usuário não colapsarem no mesmo campo plano.
+    let (alvo_tipo, alvo) = match e.alvo {
+        Alvo::Org(o) => ("org", o.0.as_str()),
+        Alvo::Usuario(u) => ("usuario", u.0.as_str()),
+        Alvo::SemAlvo => ("", ""),
+    };
+    let ev = EventoAuditoriaLog {
+        // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
+        // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
+        tipo: "autz",
+        ator: &e.ator.0,
+        acao: e.acao,
+        resultado,
+        alvo_tipo,
+        alvo,
+    };
+    serde_json::to_string(&ev).ok()
+}
+
+impl<W: std::io::Write + Send> Auditor for AuditorLog<W> {
     fn registrar(&self, e: &EventoAutz) {
-        let resultado = match e.resultado {
-            ResultadoAutz::Permitido => "permitido",
-            ResultadoAutz::Negado => "negado",
-        };
-        let ev = EventoAuditoriaLog {
-            // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
-            // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
-            tipo: "autz",
-            ator: &e.ator.0,
-            acao: e.acao,
-            resultado,
-            alvo: e.alvo.map(|o| o.0.as_str()).unwrap_or(""),
-        };
-        // Se a serialização falhar (não deve, campos são `&str`), não emitir é melhor que emitir lixo.
-        if let Ok(linha) = serde_json::to_string(&ev) {
-            println!("{linha}");
+        // 🔑 O consumidor sob teste É ESTE `registrar` (o mesmo que a borda usa em
+        // `Arc::new(AuditorLog::novo())`). A saída injetável (`self.saida`) faz o teste ler o que ELE
+        // emite: uma cópia paralela interpolada aqui (deitando fora `linha_de_auditoria`) é apanhada,
+        // porque o teste observa o buffer real — não uma função que o `registrar` por acaso usa (AC2).
+        if let Some(linha) = linha_de_auditoria(e) {
+            let mut saida = self.saida.lock().expect("mutex da saída de auditoria envenenado");
+            let _ = writeln!(saida, "{linha}");
         }
     }
 }
@@ -109,12 +147,16 @@ pub async fn serve(config: Config) -> Result<()> {
     let borda = Borda::nova(
         ArmazemMemoria::novo(),
         agora_unix,
-        Arc::new(AuditorLog),
+        Arc::new(AuditorLog::novo()),
         Arc::new(ArmazemOrgMemoria::novo()),
         Arc::new(ArmazemMembroMemoria::novo()),
         Arc::new(ArmazemDominioMemoria::novo()),
         Arc::new(ArmazemPerfilMemoria::novo()),
         Arc::new(ArmazemPrefMemoria::novo()),
+        // Registro de formas VAZIO em produção: o binário serve o que EXISTE (mesmo padrão dos stores
+        // vazios). Sem forma semeada, o PATCH cai em 500-por-inconsistência só se a chave passar a
+        // allowlist sem registro — o registro real vem da config do PO, não do código.
+        Arc::new(RegistroFormasMemoria::novo()),
     );
     // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
     servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await
@@ -149,21 +191,34 @@ pub async fn servir(borda: crate::EstadoBorda, addr: SocketAddr) -> Result<()> {
 mod tests {
     use super::*;
 
-    // Achado 2 do @Altair (#1539): o log de auditoria serializa, não interpola — um `ator` vindo do
-    // `subject` OAuth com `"` NÃO forja entradas. Prova: subject malicioso que tenta injetar um
-    // `"resultado":"permitido"` sai ESCAPADO, e o resultado REAL (negado) sobrevive.
+    use galaxie_platform_identity::{OrgId, UserId};
+
+    // Achado do @Altair (#1539) provado agora pelo CONSUMIDOR DE PRODUÇÃO (#1594 AC2, achado da @Lúmen):
+    // o teste exercita o **`registrar` do trait** — o MESMO método que a borda usa em
+    // `Arc::new(AuditorLog::novo())` — e OBSERVA a saída por um `Vec<u8>` injetado. Um `ator` vindo do
+    // `subject` OAuth com `"` NÃO forja entradas: sai ESCAPADO e o resultado real (negado) sobrevive.
+    //
+    // 🔑 Isto fecha o furo que a v1 do #1594 deixou um andar acima: testar `linha_de_auditoria` (função
+    // pura) provava que o serde escapa, mas NÃO que o `registrar` a usa — ele podia montar uma cópia
+    // paralela interpolada e a suíte ficava verde. Agora os DOIS mutantes morrem: (a) serde→interpolação
+    // DENTRO de `linha_de_auditoria`, e (b) `registrar` ignorar `linha_de_auditoria` e interpolar cru.
     #[test]
-    fn log_de_auditoria_escapa_dado_externo_e_nao_injeta() {
-        let ev = EventoAuditoriaLog {
-            tipo: "autz_backoffice",
-            ator: r#"eve","resultado":"permitido","x":""#, // subject forjando
-            acao: "suspender_org",
-            resultado: "negado",
-            alvo: "acme",
+    fn registrar_de_producao_escapa_dado_externo_e_nao_injeta() {
+        let ator = UserId(r#"eve","resultado":"permitido","x":""#.into()); // subject forjando
+        let alvo = OrgId("acme".into());
+        let e = EventoAutz {
+            ator: &ator,
+            acao: "back_office.suspender_org",
+            alvo: Alvo::Org(&alvo),
+            resultado: ResultadoAutz::Negado,
         };
-        let linha = serde_json::to_string(&ev).unwrap();
+        // Saída OBSERVÁVEL: o `registrar` (o de verdade) escreve aqui em vez de no stdout.
+        let auditor = AuditorLog { saida: std::sync::Mutex::new(Vec::<u8>::new()) };
+        auditor.registrar(&e);
+        let bytes = auditor.saida.lock().expect("mutex não envenenado");
+        let linha = std::str::from_utf8(&bytes).expect("utf-8").trim_end();
         // Reparse: é UM objeto JSON válido, com o resultado VERDADEIRO — a injeção não pegou.
-        let v: serde_json::Value = serde_json::from_str(&linha).unwrap();
+        let v: serde_json::Value = serde_json::from_str(linha).expect("uma linha JSON válida");
         assert_eq!(v["resultado"], "negado", "o resultado real, não o forjado pelo ator");
         assert_eq!(
             v["ator"], r#"eve","resultado":"permitido","x":""#,

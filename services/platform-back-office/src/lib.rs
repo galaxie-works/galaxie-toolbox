@@ -22,7 +22,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_identity::auditoria::{Alvo, AlvoDono, Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{autorizar, Decisao, Operacao, OrgId, Sessao, UserId};
 
 // `Auditor`/`EventoAutz`/`ResultadoAutz` foram para a FUNDAÇÃO (`platform-identity::auditoria`,
@@ -53,15 +53,16 @@ pub enum AcaoBackOffice {
 }
 
 impl AcaoBackOffice {
-    /// O `OrgId` alvo da ação, se houver (`ListarOrgs` não tem). É o que o [`Auditor`] nomeia no
-    /// registro — o "quem" da operação, sem depender de o sink conhecer cada variante.
+    /// O alvo da ação (#1591): back-office é org-scoped ⇒ [`Alvo::Org`] com o id, ou
+    /// [`Alvo::SemAlvo`] (`ListarOrgs` não tem alvo). É o que o [`Auditor`] nomeia no registro — o
+    /// "contra quem" da operação, sem depender de o sink conhecer cada variante.
     #[must_use]
-    pub fn alvo(&self) -> Option<&OrgId> {
+    pub fn alvo(&self) -> Alvo<'_> {
         match self {
-            AcaoBackOffice::ListarOrgs => None,
+            AcaoBackOffice::ListarOrgs => Alvo::SemAlvo,
             AcaoBackOffice::ProvisionarOrg(id)
             | AcaoBackOffice::VerificarOrg(id)
-            | AcaoBackOffice::SuspenderOrg(id) => Some(id),
+            | AcaoBackOffice::SuspenderOrg(id) => Alvo::Org(id),
         }
     }
 
@@ -142,7 +143,7 @@ pub enum EventoAuditado {
     /// Uma decisão de autz (o caso normal), com o mesmo conteúdo do [`EventoAutz`], agora possuído.
     /// `acao` é o nome estável (do `acao_nome()`, de QUALQUER crate de autz — o buffer é agnóstico
     /// à ação desde o #1571); `alvo` é o **id** da org, quando a ação tem alvo.
-    Autz { ator: UserId, acao: String, alvo: Option<OrgId>, resultado: ResultadoAutz },
+    Autz { ator: UserId, acao: String, alvo: AlvoDono, resultado: ResultadoAutz },
     /// `n` eventos foram PERDIDOS por transbordo do buffer antes deste dreno. Nunca silencioso.
     Perda { n: u64 },
 }
@@ -202,7 +203,7 @@ impl Auditor for AuditorBuffer {
         estado.eventos.push_back(EventoAuditado::Autz {
             ator: evento.ator.clone(),
             acao: evento.acao.to_string(),
-            alvo: evento.alvo.cloned(),
+            alvo: evento.alvo.para_dono(),
             resultado: evento.resultado,
         });
     }
@@ -321,15 +322,15 @@ mod tests {
     // `SuspenderOrg` não diz QUEM. `ListarOrgs` não tem alvo.
     #[test]
     fn alvo_nomeia_a_org_das_ops_sobre_org() {
-        assert_eq!(AcaoBackOffice::ListarOrgs.alvo(), None);
+        assert_eq!(AcaoBackOffice::ListarOrgs.alvo(), Alvo::SemAlvo);
         assert_eq!(
             AcaoBackOffice::SuspenderOrg(OrgId("acme".into())).alvo(),
-            Some(&OrgId("acme".into())),
+            Alvo::Org(&OrgId("acme".into())),
             "a op mais destrutiva nomeia a org suspensa no registro"
         );
         assert_eq!(
             AcaoBackOffice::ProvisionarOrg(OrgId("globex".into())).alvo(),
-            Some(&OrgId("globex".into()))
+            Alvo::Org(&OrgId("globex".into()))
         );
     }
 

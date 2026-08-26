@@ -26,7 +26,7 @@ use galaxie_platform_identity::armazem::{
 };
 use galaxie_platform_identity::sessao::{ArmazemMemoria, NOME_COOKIE_SESSAO};
 use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
-use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave};
+use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave, RegistroFormasMemoria};
 use galaxie_platform_identity::{Escopo, Org, OrgId, Papel, Principal, Sessao, UserId};
 use galaxie_platform_http::servidor::{agora_de_producao, servir, Config};
 use galaxie_platform_http::Borda;
@@ -144,6 +144,16 @@ async fn main() -> Result<()> {
         ],
     );
 
+    // Registro de formas (server-side) pro `PATCH /me/config` (#1588): MESMAS formas das prefs
+    // semeadas, pro e2e do @Castor (#1491) poder SALVAR — o PATCH constrói o `ConfigItem` pela forma
+    // que o servidor conhece, não por um `tipo` do cliente. Em prod virá da config do PO.
+    let mut registro_formas = RegistroFormasMemoria::novo();
+    registro_formas.semear(
+        "app.tema",
+        FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into(), "sistema".into()] },
+    );
+    registro_formas.semear("app.notificacoes", FormaDaChave::Booleano);
+
     let borda = Borda::nova(
         armazem,
         agora_de_producao,
@@ -153,6 +163,7 @@ async fn main() -> Result<()> {
         Arc::new(dominios),
         Arc::new(perfis),
         Arc::new(prefs),
+        Arc::new(registro_formas),
     );
 
     // Imprime o cookie pronto pro dev/@Pollux injetar. `__Host-` exige `Secure`; em http://localhost

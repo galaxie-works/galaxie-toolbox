@@ -413,3 +413,71 @@ jobs:
       - name: clippy platform-oauth (-D warnings)
         working-directory: services/platform-oauth
         run: cargo clippy --all-targets -- -D warnings
+
+  # ── #1312 §5 (desenho do @Altair): publica a imagem do remote-signaling no GHCR ──
+  # É o passo que mata a "cópia de fonte paralela" no host (#1303/#1307): a produção
+  # deixa de COMPILAR e passa a PUXAR uma tag versionada construída aqui. Corre SÓ em
+  # push pra `pre-prod`, NUNCA em PR — publicar a partir de um PR (possível fork) seria
+  # supply-chain. Gated no `rust`+`clippy`: a imagem só sai se o build/testes/lint do
+  # signaling passaram (não se publica um artefato que o gate reprovou).
+  #
+  # As 4 condições do @Altair:
+  #  1. `packages: write` VIVE AQUI, no job — nunca no topo do ci.yml. Se estivesse no
+  #     topo, TODO job (inclusive os que só correm testes) poderia publicar pacotes.
+  #     Privilégio mínimo por construção, uma linha no sítio certo.
+  #  2. O PUSH usa o `GITHUB_TOKEN` (sem segredo novo). O PULL do host é PAT read-only,
+  #     fine-grained, 1 pacote, com expiração — §4a do @Altair no host; a chave (sem
+  #     valor) mora no `infra/remote/.env.example`, nunca o valor no repo.
+  #  3. Tag = SHA do commit, NUNCA só `latest`: "o que corre em produção?" TEM de ter
+  #     resposta — `:latest` não a dá. O compose (host, §4) referencia `@sha256:<digest>`;
+  #     o digest sai no resumo do job abaixo, pronto pra colar.
+  #  4. O binário carimba o SHA (`--build-arg GALAXIE_BUILD_SHA`, #1311), lido pelo
+  #     `/healthz` via `option_env!` — é a PROVA de deploy medível de FORA (§2): `ok` =
+  #     imagem velha; JSON com `commit` = a tag entrou. ⚠️ Quando o gate do @Altair
+  #     passar a ler esta imagem, o NOME da linha muda; avisá-lo pra ele trocar a
+  #     verificação no mesmo tick (um gate que não casa lê-se como um gate que passa).
+  publish-signaling:
+    needs: [rust, clippy]
+    if: github.event_name == 'push' && github.ref_name == 'pre-prod'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # §1: AQUI, no job — nunca no topo do ficheiro.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR (push com o GITHUB_TOKEN — sem segredo novo)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `context: .` = raiz do repo: o Dockerfile COPIA services/remote-net + services/
+      # remote-signaling. `GALAXIE_BUILD_SHA` carimba o commit no binário (§4/§2).
+      - name: Build + push (tag = SHA do commit)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/remote-signaling/Dockerfile
+          build-args: |
+            GALAXIE_BUILD_SHA=${{ github.sha }}
+          tags: ghcr.io/galaxie-works/galaxie-remote-signaling:${{ github.sha }}
+          push: true
+
+      # Proveniência no resumo do job: a tag-SHA e o digest, prontos pro compose (§4).
+      - name: Proveniência (tag SHA + digest)
+        run: |
+          {
+            echo "### Imagem publicada — remote-signaling"
+            echo ""
+            echo "- **tag:** \`ghcr.io/galaxie-works/galaxie-remote-signaling:${{ github.sha }}\`"
+            echo "- **digest:** \`${{ steps.build.outputs.digest }}\`"
+            echo ""
+            echo "Compose (host, §4) — prefira o digest imutável:"
+            echo "\`\`\`"
+            echo "ghcr.io/galaxie-works/galaxie-remote-signaling@${{ steps.build.outputs.digest }}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"

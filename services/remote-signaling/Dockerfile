@@ -7,6 +7,12 @@ ARG GALAXIE_BUILD_SHA
 ENV GALAXIE_BUILD_SHA=${GALAXIE_BUILD_SHA}
 
 WORKDIR /build
+# remote-signaling -> remote-net -> remote-capabilities (dep de path, remote-net/Cargo.toml).
+# Sem esta cópia, `cargo build --locked` não carrega o manifesto de `../remote-capabilities`
+# e o build falha — furo que o Codex apanhou no #1631 (o Dockerfile ficou stale: a dep entrou
+# depois da imagem de 12/08 do host). Folha primeiro, para o grafo estar completo antes do build.
+COPY services/remote-capabilities/Cargo.toml services/remote-capabilities/Cargo.lock ./services/remote-capabilities/
+COPY services/remote-capabilities/src ./services/remote-capabilities/src
 COPY services/remote-net/Cargo.toml services/remote-net/Cargo.lock ./services/remote-net/
 COPY services/remote-net/src ./services/remote-net/src
 COPY services/remote-signaling/Cargo.toml services/remote-signaling/Cargo.lock ./services/remote-signaling/

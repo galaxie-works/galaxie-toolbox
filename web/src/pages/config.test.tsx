@@ -33,7 +33,7 @@ function montar(idioma: Idioma) {
 
 beforeEach(() => {
   vi.mocked(api.obterConfig).mockResolvedValue(ALLOWLIST.map((i) => ({ ...i })));
-  vi.mocked(api.salvarConfig).mockResolvedValue(ALLOWLIST.map((i) => ({ ...i })));
+  vi.mocked(api.salvarConfig).mockResolvedValue({ ok: [], falhas: [] });
 });
 afterEach(() => {
   cleanup();
@@ -59,6 +59,43 @@ describe("#1491 ConfigPage", () => {
     await u.click(await screen.findByRole("checkbox")); // toca 'notificacoes' → false
     await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
     await waitFor(() => expect(api.salvarConfig).toHaveBeenCalledWith({ notificacoes: false }));
+  });
+
+  it("save OK (todas gravadas) → mostra 'Salvo'", async () => {
+    vi.mocked(api.salvarConfig).mockResolvedValue({
+      ok: ["notificacoes"],
+      falhas: [],
+    });
+    const u = userEvent.setup();
+    montar("pt-BR");
+    await u.click(await screen.findByRole("checkbox"));
+    await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
+    expect(await screen.findByText(DICIONARIOS["pt-BR"].salvo)).toBeTruthy();
+  });
+
+  it("save PARCIAL (uma chave falha) → reporta POR CHAVE, NUNCA 'Salvo' global (mandato #1588)", async () => {
+    vi.mocked(api.salvarConfig).mockResolvedValue({
+      ok: [],
+      falhas: [{ chave: "notificacoes", status: 400 }],
+    });
+    const u = userEvent.setup();
+    montar("pt-BR");
+    await u.click(await screen.findByRole("checkbox"));
+    await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
+    // nomeia a chave que falhou…
+    expect(await screen.findByText(/notificacoes/)).toBeTruthy();
+    expect(screen.getByText(new RegExp(DICIONARIOS["pt-BR"].naoGuardado))).toBeTruthy();
+    // …e NÃO mente "Salvo" (a mentira que a saída (b) escreveria no servidor)
+    expect(screen.queryByText(DICIONARIOS["pt-BR"].salvo)).toBeNull();
+  });
+
+  it("401 durante o SAVE (sessão morta a meio) → redireciona pro login", async () => {
+    vi.mocked(api.salvarConfig).mockRejectedValue(new ErroApi(401));
+    const u = userEvent.setup();
+    montar("pt-BR");
+    await u.click(await screen.findByRole("checkbox"));
+    await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
+    expect(await screen.findByText("TELA DE LOGIN")).toBeTruthy();
   });
 
   it("botão salvar fica desabilitado sem edição (nada a mandar)", async () => {

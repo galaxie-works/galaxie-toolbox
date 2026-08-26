@@ -32,6 +32,7 @@ export interface Dicionario {
   // #1491 — config do app
   configuracoes: string;
   semConfig: string;
+  naoGuardado: string;
   // #1490 — admin da org. O TIPO é a lista: campo sem tradução nos dois idiomas
   // não compila — o pt/en do DoD fica provado pelo `tsc`, não pela boa vontade
   // de quem editar o dicionário depois.
@@ -46,6 +47,21 @@ export interface Dicionario {
   dominios: string;
   convidarMembro: string;
   remover: string;
+  // #1490 fatia 3 — remoção de membro. O diálogo NOMEIA o membro (nome e e-mail
+  // vêm da linha, são dado e não tradução) e diz o EFEITO. O efeito é verdade
+  // desde o #1545/PR #1570: a borda revoga a sessão do alvo, portanto "perde o
+  // acesso na hora" não é promessa, é o que acontece.
+  removerTitulo: string;
+  /** Enquanto o `DELETE` está em voo — ver o P2 do Codex na PR #1626. */
+  removendo: string;
+  removerAviso: string;
+  removerFalhou: string;
+  // `409 ultimo_admin` (§3, #1620) — MESMO HTTP que `conflito`, mensagem
+  // própria. A diferença está no que o utilizador faz a seguir: esta ele
+  // conserta sozinho, promovendo alguém. "Sem permissão" mandá-lo-ia pedir
+  // suporte para um problema que é dele resolver — condição do @Altair.
+  ultimoAdmin: string;
+  ultimoAdminDetalhe: string;
   papel: string;
   papelAdmin: string;
   papelMembro: string;
@@ -124,11 +140,20 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sair",
     configuracoes: "Configurações",
     semConfig: "Nada para configurar",
+    naoGuardado: "Não guardado",
     adminOrg: "Administração da organização",
     membros: "Membros",
     dominios: "Domínios",
     convidarMembro: "Convidar membro",
     remover: "Remover",
+    removerTitulo: "Remover membro",
+    removendo: "Removendo…",
+    removerAviso:
+      "Perde o acesso imediatamente — a sessão dele é encerrada na hora.",
+    removerFalhou: "Não foi possível remover",
+    ultimoAdmin: "A organização ficaria sem administrador",
+    ultimoAdminDetalhe:
+      "Promova outro administrador antes de remover este.",
     papel: "Papel",
     papelAdmin: "Administrador",
     papelMembro: "Membro",
@@ -188,11 +213,18 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sign out",
     configuracoes: "Settings",
     semConfig: "Nothing to configure",
+    naoGuardado: "Not saved",
     adminOrg: "Organization admin",
     membros: "Members",
     dominios: "Domains",
     convidarMembro: "Invite member",
     remover: "Remove",
+    removerTitulo: "Remove member",
+    removendo: "Removing…",
+    removerAviso: "Access ends immediately — their session is revoked at once.",
+    removerFalhou: "Could not remove",
+    ultimoAdmin: "The organization would be left with no administrator",
+    ultimoAdminDetalhe: "Promote another administrator before removing this one.",
     papel: "Role",
     papelAdmin: "Admin",
     papelMembro: "Member",
