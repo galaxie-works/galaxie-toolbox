@@ -15,7 +15,7 @@
 #![forbid(unsafe_code)]
 
 use galaxie_platform_identity::armazem::ErroArmazem;
-use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{Principal, Sessao, UserId};
 use std::sync::Mutex;
 
@@ -249,7 +249,11 @@ pub fn configs_do_usuario(
     // é inalcançável —, mas a rota cross-user futura (`/users/{id}/config`) herda a auditoria por
     // construção (AC3): ela injeta o alvo e o funil já emite, sem a rota lembrar.
     if let Err(e) = decidir_dono(sessao, alvo_na_rota) {
-        return Err(Negado::emitir(auditor, ACAO_LER_PREF, usuario_da_sessao(sessao), e).erro());
+        let eu = usuario_da_sessao(sessao);
+        // O alvejado é o usuário da ROTA (a config sondada), não o ator — é a distinção que o #1591
+        // preserva; `None` (sem rota) resolve pro próprio.
+        let alvo_uid = alvo_na_rota.unwrap_or(eu);
+        return Err(Negado::emitir(auditor, ACAO_LER_PREF, eu, alvo_uid, e).erro());
     }
     let mut itens = Vec::new();
     for (chave, valor_bruto, forma) in prefs_brutas {
@@ -400,7 +404,8 @@ impl<'a> Autorizado<'a> {
         auditor.registrar(&EventoAutz {
             ator,
             acao,
-            alvo: None, // pref é do USUÁRIO, não de uma org — sem alvo de org (o ator já é o id)
+            // Config é user-scoped: o alvo é o USUÁRIO dono das prefs (#1591 AC1), não uma org.
+            alvo: Alvo::Usuario(dono),
             resultado: ResultadoAutz::Permitido,
         });
         Autorizado(dono)
@@ -420,8 +425,22 @@ impl<'a> Autorizado<'a> {
 pub struct Negado(ConfigErro);
 
 impl Negado {
-    fn emitir(auditor: &dyn Auditor, acao: &'static str, ator: &UserId, erro: ConfigErro) -> Self {
-        auditor.registrar(&EventoAutz { ator, acao, alvo: None, resultado: ResultadoAutz::Negado });
+    /// `alvo_uid` = o usuário cuja config foi alvejada (#1591 AC1): sondar a de OUTRO carrega o id
+    /// DELE (é o que distingue enumeração de ruído); recusa na própria (chave/valor) carrega o
+    /// próprio id. NUNCA `SemAlvo` aqui — config sempre tem um dono alvejado.
+    fn emitir(
+        auditor: &dyn Auditor,
+        acao: &'static str,
+        ator: &UserId,
+        alvo_uid: &UserId,
+        erro: ConfigErro,
+    ) -> Self {
+        auditor.registrar(&EventoAutz {
+            ator,
+            acao,
+            alvo: Alvo::Usuario(alvo_uid),
+            resultado: ResultadoAutz::Negado,
+        });
         Negado(erro)
     }
     #[must_use]
@@ -471,7 +490,7 @@ pub fn resolver_pref_propria<'a>(
     let ator = usuario_da_sessao(sessao);
     match decidir_dono(sessao, alvo_na_rota) {
         Ok(dono) => Ok(Autorizado::emitir(auditor, ACAO_LER_PREF, ator, dono)),
-        Err(e) => Err(Negado::emitir(auditor, ACAO_LER_PREF, ator, e)),
+        Err(e) => Err(Negado::emitir(auditor, ACAO_LER_PREF, ator, alvo_na_rota.unwrap_or(ator), e)),
     }
 }
 
@@ -487,13 +506,16 @@ pub fn autorizar_escrita_pref<'a>(
     let ator = usuario_da_sessao(sessao);
     match decidir_escrita(sessao, alvo_na_rota, chave) {
         Ok(dono) => Ok(Autorizado::emitir(auditor, ACAO_ESCREVER_PREF, ator, dono)),
-        Err(e) => Err(Negado::emitir(auditor, ACAO_ESCREVER_PREF, ator, e)),
+        Err(e) => {
+            Err(Negado::emitir(auditor, ACAO_ESCREVER_PREF, ator, alvo_na_rota.unwrap_or(ator), e))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use galaxie_platform_identity::auditoria::AlvoDono;
     use galaxie_platform_identity::{Escopo, OrgId, Principal, Sessao, UserId};
     use std::cell::RefCell;
 
@@ -862,6 +884,44 @@ mod tests {
         assert_eq!(ev[1], ("config.escrever_pref".to_string(), ResultadoAutz::Negado));
         assert_eq!(ev[2], ("config.escrever_pref".to_string(), ResultadoAutz::Negado));
         assert_eq!(ev[3], ("config.ler_pref".to_string(), ResultadoAutz::Negado));
+    }
+
+    // ---- #1591: o evento diz CONTRA QUEM (user-scoped) ----
+
+    /// Espião que captura o ALVO (owned, via `para_dono`) além do resultado.
+    #[derive(Default)]
+    struct AuditorAlvo {
+        alvos: RefCell<Vec<(AlvoDono, ResultadoAutz)>>,
+    }
+    impl Auditor for AuditorAlvo {
+        fn registrar(&self, e: &EventoAutz) {
+            self.alvos.borrow_mut().push((e.alvo.para_dono(), e.resultado));
+        }
+    }
+
+    // AC1 — a autz user-scoped nomeia o UserId ALVEJADO, não `None`/`SemAlvo`: sondar a config de B
+    // nomeia B (a distribuição sobre alvos é a forma da enumeração); a própria nomeia o próprio.
+    // Mutante que volte o alvo a `SemAlvo`, ao ATOR, ou que perca o id do alvo, morre aqui.
+    #[test]
+    fn autz_user_scoped_nomeia_o_uid_alvejado() {
+        let s = sessao_de("A");
+        let espiao = AuditorAlvo::default();
+        assert!(resolver_pref_propria(&s, None, &espiao).is_ok()); // própria (sucesso)
+        assert!(resolver_pref_propria(&s, Some(&UserId("B".into())), &espiao).is_err()); // sonda B
+        assert!(autorizar_escrita_pref(&s, Some(&UserId("B".into())), "app.tema", &espiao).is_err()); // escrita alheia
+
+        let ev = espiao.alvos.borrow();
+        assert_eq!(
+            ev[0],
+            (AlvoDono::Usuario(UserId("A".into())), ResultadoAutz::Permitido),
+            "própria config nomeia o próprio, não SemAlvo"
+        );
+        assert_eq!(
+            ev[1],
+            (AlvoDono::Usuario(UserId("B".into())), ResultadoAutz::Negado),
+            "sondar a config de B nomeia B — o sinal de enumeração"
+        );
+        assert_eq!(ev[2], (AlvoDono::Usuario(UserId("B".into())), ResultadoAutz::Negado));
     }
 
     // §2 do @Altair: o `Negado` CARREGA o `ConfigErro` certo (404 de pref alheia ≠ ChaveNaoPermitida)

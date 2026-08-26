@@ -27,15 +27,14 @@ export function obterConfig(): Promise<ItemConfig[]> {
 /**
  * Resultado POR CHAVE de `salvarConfig` — nunca um "guardei tudo" único.
  * @nao-contrato — agregação client-side dos resultados por chave; não vai nem
- * vem no fio (o corpo do PATCH é `{chave, valor}`, a resposta é `ItemConfig`).
+ * vem no fio (o corpo do PATCH é `{chave, valor}`, a resposta é a coleção
+ * `ItemConfig[]`, que a tela re-sincroniza pelo GET; não a carregamos aqui).
  */
 export interface ResultadoSalvar {
   /** Chaves gravadas com sucesso. */
   ok: string[];
   /** Chaves que falharam, com o status HTTP (400 = valor/opção inválida). */
   falhas: { chave: string; status: number }[];
-  /** Itens efetivamente gravados (o que o SERVIDOR guardou) — re-sincroniza a tela. */
-  itens: ItemConfig[];
 }
 
 /**
@@ -52,19 +51,21 @@ export interface ResultadoSalvar {
 export async function salvarConfig(patch: Record<string, ValorConfig>): Promise<ResultadoSalvar> {
   const ok: string[] = [];
   const falhas: { chave: string; status: number }[] = [];
-  const itens: ItemConfig[] = [];
   for (const [chave, valor] of Object.entries(patch)) {
     try {
-      const item = await pedir<ItemConfig>("/me/config", {
+      // O PATCH devolve a COLEÇÃO nova `ItemConfig[]` (mesmo shape do GET, §4.4 /
+      // #1617), sempre 200. Não a consumimos aqui: o sucesso é o não-lançar e a
+      // tela re-sincroniza pelo GET (`recarregar`). Tipar como `ItemConfig[]`
+      // mantém o contrato honesto mesmo sem ler o corpo.
+      await pedir<ItemConfig[]>("/me/config", {
         method: "PATCH",
         body: JSON.stringify({ chave, valor: String(valor) }),
       });
       ok.push(chave);
-      itens.push(item);
     } catch (e) {
       if (ehNaoAutenticado(e)) throw e; // 401 = sessão morta → login, não falha de chave
       falhas.push({ chave, status: e instanceof ErroApi ? e.status : 0 });
     }
   }
-  return { ok, falhas, itens };
+  return { ok, falhas };
 }

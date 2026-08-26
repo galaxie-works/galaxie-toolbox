@@ -24,8 +24,9 @@ describe("#1491 api-config", () => {
   });
 
   it("salvarConfig manda UM PATCH por chave tocada, corpo {chave, valor} stringificado", async () => {
-    fetchMock.mockResolvedValueOnce(respostaOk({ chave: "app.tema", valor: "escuro", tipo: "opcao" }));
-    fetchMock.mockResolvedValueOnce(respostaOk({ chave: "app.notificacoes", valor: "false", tipo: "bool" }));
+    // PATCH devolve a COLEÇÃO (mesmo shape do GET, §4.4/#1617); salvarConfig não lê o corpo, mas o mock reflete a realidade.
+    fetchMock.mockResolvedValueOnce(respostaOk([{ chave: "app.tema", valor: "escuro", tipo: "opcao" }]));
+    fetchMock.mockResolvedValueOnce(respostaOk([{ chave: "app.notificacoes", valor: false, tipo: "bool" }]));
     const r = await salvarConfig({ "app.tema": "escuro", "app.notificacoes": false });
     expect(fetchMock).toHaveBeenCalledTimes(2); // um PATCH por chave, não um batch
     const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body));
@@ -41,7 +42,7 @@ describe("#1491 api-config", () => {
 
   it("uma chave que falha NÃO aborta as outras — reporta POR CHAVE (mandato #1588/@Altair)", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 400 })); // 1ª: valor/opção inválida
-    fetchMock.mockResolvedValueOnce(respostaOk({ chave: "b", valor: "ok", tipo: "texto" })); // 2ª grava
+    fetchMock.mockResolvedValueOnce(respostaOk([{ chave: "b", valor: "ok", tipo: "texto" }])); // 2ª grava (coleção)
     const r = await salvarConfig({ a: "lixo", b: "ok" });
     expect(fetchMock).toHaveBeenCalledTimes(2); // o 400 NÃO abortou o loop
     expect(r.ok).toEqual(["b"]);
@@ -55,7 +56,7 @@ describe("#1491 api-config", () => {
 
   it("INVARIANTE: só fala /me/config (escopo vem da sessão, sem id de dono)", async () => {
     fetchMock.mockImplementation(() =>
-      Promise.resolve(respostaOk({ chave: "x", valor: "true", tipo: "bool" })),
+      Promise.resolve(respostaOk([{ chave: "x", valor: true, tipo: "bool" }])),
     );
     await obterConfig();
     await salvarConfig({ x: true });
