@@ -424,7 +424,7 @@ async fn get_me_config(State(estado): State<EstadoBorda>, SessaoAtual(sessao): S
     // O domínio decide (owner-scope/allowlist/validação). A borda NÃO achata as variantes (2 achados
     // do @Altair na PR #1579): cada uma tem a sua direção segura, e o log NÃO pode afirmar uma causa
     // pelas três.
-    let itens = match configs_do_usuario(&sessao, None, prefs_brutas) {
+    let itens = match configs_do_usuario(&sessao, None, prefs_brutas, &*estado.auditor) {
         Ok(itens) => itens,
         // `NaoEncontrado` = owner-scope: config de OUTRO principal. **Hoje LATENTE** (passo `None` como
         // alvo ⇒ o scope resolve pro próprio e nunca nega), mas a borda PROPAGA o 404 anti-oráculo do

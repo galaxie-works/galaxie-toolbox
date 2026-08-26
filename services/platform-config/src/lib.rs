@@ -203,10 +203,17 @@ pub fn configs_do_usuario(
     sessao: &Sessao,
     alvo_na_rota: Option<&UserId>,
     prefs_brutas: impl IntoIterator<Item = (String, String, FormaDaChave)>,
+    auditor: &dyn Auditor,
 ) -> Result<Vec<ConfigItem>, ConfigErro> {
-    decidir_dono(sessao, alvo_na_rota)?; // 404 se de outro (AC2). Usa o decisor SEM emissão: a
-    // leitura da lista não é a autz auditada do #1583 (essa é resolver_pref_propria/escrita), e o
-    // owner-scope aqui é o mesmo; auditar a leitura da lista mudaria a assinatura e a borda (alcor).
+    // Owner-scope (AC2 do #1563) + AUDITA o NEGADO (#1589): pedir a config de OUTRO ⇒ 404, e isso
+    // é SONDAGEM — emite pelo funil (só o negado; a leitura BEM-SUCEDIDA não emite, AC2 do #1589:
+    // rotina é ruído, trilha cheia é a que ninguém lê). Emite via [`Negado`] (o mesmo mecanismo por
+    // construção do #1583). É LATENTE hoje — a borda passa `None` ⇒ resolve pro próprio e o negado
+    // é inalcançável —, mas a rota cross-user futura (`/users/{id}/config`) herda a auditoria por
+    // construção (AC3): ela injeta o alvo e o funil já emite, sem a rota lembrar.
+    if let Err(e) = decidir_dono(sessao, alvo_na_rota) {
+        return Err(Negado::emitir(auditor, ACAO_LER_PREF, usuario_da_sessao(sessao), e).erro());
+    }
     let mut itens = Vec::new();
     for (chave, valor_bruto, forma) in prefs_brutas {
         if !chave_configuravel(&chave) {
@@ -575,7 +582,7 @@ mod tests {
         let prefs = vec![("app.tema".to_string(), "escuro".to_string(),
             FormaDaChave::Opcao { opcoes: vec!["escuro".into()] })];
         assert_eq!(
-            configs_do_usuario(&s, Some(&UserId("B".into())), prefs),
+            configs_do_usuario(&s, Some(&UserId("B".into())), prefs, &AuditorNulo),
             Err(ConfigErro::NaoEncontrado),
             "config de outro usuário não vira lista — vira 404"
         );
@@ -592,7 +599,7 @@ mod tests {
             ("app.tema".to_string(), "escuro".to_string(),
                 FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] }),
         ];
-        let itens = configs_do_usuario(&s, None, prefs).expect("própria conta monta a lista");
+        let itens = configs_do_usuario(&s, None, prefs, &AuditorNulo).expect("própria conta monta a lista");
         assert_eq!(itens.len(), 2, "só as 2 chaves web saem; a interna foi ignorada");
         assert!(itens.iter().all(|i| match i {
             ConfigItem::Booleano(b) => chave_configuravel(b.chave()),
@@ -608,7 +615,7 @@ mod tests {
         let s = sessao_de("A");
         let prefs = vec![("app.tema".to_string(), "invalido".to_string(),
             FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] })];
-        assert_eq!(configs_do_usuario(&s, None, prefs), Err(ConfigErro::ValorInvalido));
+        assert_eq!(configs_do_usuario(&s, None, prefs, &AuditorNulo), Err(ConfigErro::ValorInvalido));
     }
 
     // ArmazemPrefMemoria — semeado devolve as prefs; usuário não-semeado devolve VAZIO (não Err:
@@ -644,7 +651,7 @@ mod tests {
         );
         let s = sessao_de("A");
         let brutas = arm.prefs_do_usuario(&UserId("A".into())).unwrap();
-        let itens = configs_do_usuario(&s, None, brutas).expect("própria conta monta a lista");
+        let itens = configs_do_usuario(&s, None, brutas, &AuditorNulo).expect("própria conta monta a lista");
         assert_eq!(itens.len(), 2);
     }
 
@@ -689,5 +696,27 @@ mod tests {
         assert_eq!(alheia.erro(), ConfigErro::NaoEncontrado);
         let chave = autorizar_escrita_pref(&s, None, "x.y", &AuditorNulo).unwrap_err();
         assert_eq!(chave.erro(), ConfigErro::ChaveNaoPermitida);
+    }
+
+    // #1589: o READ-path (configs_do_usuario) audita SÓ o ramo NEGADO — ler config de OUTRO
+    // (sondagem) emite; ler a PRÓPRIA (sucesso) NÃO emite (ruído). Latente hoje (borda passa None),
+    // mas a rota cross-user futura herda por construção. Mutante que emite no sucesso OU não emite
+    // no negado é apanhado pelo count.
+    #[test]
+    fn read_path_audita_so_o_negado() {
+        let s = sessao_de("A");
+        let espiao = AuditorEspiao::default();
+
+        // sucesso (própria config) → NÃO emite (AC2: rotina é ruído)
+        let ok = configs_do_usuario(&s, None, Vec::new(), &espiao);
+        assert!(ok.is_ok());
+        assert_eq!(espiao.eventos.borrow().len(), 0, "leitura da própria config não vai pra trilha");
+
+        // sondagem (config de OUTRO) → emite SÓ o negado (AC1)
+        let neg = configs_do_usuario(&s, Some(&UserId("B".into())), Vec::new(), &espiao);
+        assert_eq!(neg, Err(ConfigErro::NaoEncontrado));
+        let ev = espiao.eventos.borrow();
+        assert_eq!(ev.len(), 1, "só o negado (sondagem) emite");
+        assert_eq!(ev[0], ("config.ler_pref".to_string(), ResultadoAutz::Negado));
     }
 }
