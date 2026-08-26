@@ -21,11 +21,11 @@ use galaxie_platform_conta::usuario_da_sessao;
 use galaxie_platform_config::{
     autorizar_escrita_pref, configs_do_usuario, item_da_forma, ConfigErro, ConfigItem,
 };
-use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
+use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro, MutacaoMembro};
 use galaxie_platform_identity::sessao::ArmazemSessao;
 use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, Sessao, UserId};
 use galaxie_platform_org_admin::{
-    autorizar_acao_admin, autorizar_mutacao_membro, AcaoAdminOrg, AdminErro,
+    auditar_guarda_orfa, autorizar_acao_admin, AcaoAdminOrg, AdminErro,
 };
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
@@ -191,50 +191,67 @@ async fn listar_membros(
     }
 }
 
-/// Pré-âmbulo das MUTAÇÕES de membro (`RemoverMembro`/`MudarPapelMembro`): carrega o `Org` + os
-/// membros ATUAIS e chama [`autorizar_mutacao_membro`], que aplica a autz base (visibilidade→suspensão
-/// →papel) E a guarda
-/// do último-`OrgAdmin` (#1620), auditando a decisão COMBINADA. `UltimoAdmin` ⇒ **409 `ultimo_admin`**
-/// (a UI mostra "promove outro admin antes", não "sem permissão"). `alvo` = o membro alvo (da rota);
-/// `novo_papel` = o papel novo do `MudarPapelMembro` (`None` p/ `RemoverMembro`).
-async fn mutacao_membro_autorizada(
+/// Autz **BASE** das MUTAÇÕES de membro (#1620, Fork 1 do @Altair): carrega o `Org` e decide
+/// visibilidade→suspensão→papel via [`autorizar_acao_admin`] (que AUDITA o evento de ACESSO nos dois
+/// ramos). **NÃO lê membros** — a leitura só faz sentido pra quem já passou a visibilidade, então uma
+/// infra caída no store de membros NÃO vaza existência de org alheia (Codex #1625 P2: base decide
+/// ANTES de tocar o store). O ENFORÇO da invariante org-não-órfã NÃO vive aqui: é atómico, no store
+/// (`_preservando`), onde o lock está — a DECISÃO pode viver na autz, o enforço vive com o lock
+/// (correção da regra do @Altair). `Ok(())` = a base permitiu; o handler prossegue pro store.
+async fn autz_base_mutacao(
     estado: &EstadoBorda,
     sessao: &galaxie_platform_identity::Sessao,
     acao: &AcaoAdminOrg,
     org_id: &OrgId,
-    alvo: &UserId,
-    novo_papel: Option<Papel>,
 ) -> Result<(), Response> {
     let org = match estado.orgs.buscar(org_id) {
         Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
         Ok(None) => return Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Ok(Some(o)) => o,
     };
-    // A guarda do último-admin conta os `OrgAdmin` ATUAIS: a borda lê os membros e a autz PURA decide.
-    // ⚠️ DUAS falhas conhecidas nesta forma (Codex #1625), aguardando ratificação do desenho pelo
-    // @Altair antes do enforço (toca o trait `ArmazemMembro` + o audit-combinado dele) — NÃO mergear
-    // como está:
-    //   P1 (race): esta leitura e a escrita seguinte tomam o Mutex do store SEPARADAMENTE. Dois
-    //     DELETE/PATCH concorrentes veem ambos 2 admins, passam aqui e mutam ⇒ org com ZERO admin. A
-    //     guarda só é atômica se check-e-mutação ocorrerem sob o MESMO lock (no store), não na borda.
-    //   P2 (vazamento): esta leitura precede a autz BASE — infra caída ⇒ 500 numa org ALHEIA antes do
-    //     404 canônico, ensinando que a org existe (invariante 1). A base tem de decidir ANTES de ler.
-    let membros = match estado.membros.listar(org_id) {
-        Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
-        Ok(m) => m,
-    };
-    match autorizar_mutacao_membro(sessao, acao, &org, &membros, alvo, novo_papel, &*estado.auditor) {
+    match autorizar_acao_admin(sessao, acao, &org, &*estado.auditor) {
         Err(AdminErro::NaoEncontrada) => Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Err(AdminErro::Suspensa) => Err(resposta_de_erro(CodigoErro::OrgSuspensa)),
         Err(AdminErro::Negado) => Err(resposta_de_erro(CodigoErro::Negado)),
+        // Inalcançável (só a mutação no store gera `UltimoAdmin`, nunca a autz base), mas o `match` é
+        // exaustivo por construção — se a fonte mudar, mapeia pro 409 em vez de compilar torto.
         Err(AdminErro::UltimoAdmin) => Err(resposta_de_erro(CodigoErro::UltimoAdmin)),
         Ok(()) => Ok(()),
     }
 }
 
+/// Emite o evento de REGRA DE NEGÓCIO (#1620, Fork 1) a partir do desfecho AUTORITATIVO do store e
+/// traduz esse desfecho pra HTTP. Chamado SÓ depois de a base ter permitido — por isso o evento sai
+/// SEMPRE aqui (nos dois desfechos), e a sua AUSÊNCIA significa exatamente "a base negou" (derivável).
+/// `revogar` roda só no `Feita` (revoga a sessão do alvo NA HORA, #1545) — daí ser um closure que o
+/// handler passa (o `remover` e o `mudar_papel` revogam igual, só o corpo do 2xx difere).
+fn responder_mutacao(
+    sessao: &galaxie_platform_identity::Sessao,
+    acao: &AcaoAdminOrg,
+    org_id: &OrgId,
+    desfecho: MutacaoMembro,
+    auditor: &dyn galaxie_platform_identity::auditoria::Auditor,
+    ao_mutar: impl FnOnce(Membro) -> Response,
+) -> Response {
+    auditar_guarda_orfa(
+        sessao,
+        acao,
+        org_id,
+        matches!(desfecho, MutacaoMembro::Recusada { .. }),
+        auditor,
+    );
+    match desfecho {
+        // Deixaria a org sem OrgAdmin — 409 `ultimo_admin` (a UI mostra "promove outro admin antes").
+        MutacaoMembro::Recusada { .. } => resposta_de_erro(CodigoErro::UltimoAdmin),
+        // `uid` não era membro — 404 (só chega admin autorizado, que PODE ver os membros: não é oráculo).
+        MutacaoMembro::NaoEraMembro => resposta_de_erro(CodigoErro::NaoEncontrado),
+        MutacaoMembro::Feita(m) => ao_mutar(m),
+    }
+}
+
 /// `DELETE /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — remove um membro. Autz: só `org_admin`
-/// da org (visibilidade→suspensão→papel). `204` se removeu; `404` se o `uid` não era membro (a admin
-/// PODE ver os membros, então não é oráculo).
+/// da org (visibilidade→suspensão→papel). `204` se removeu; `409 ultimo_admin` se seria o último admin
+/// (#1620); `404` se o `uid` não era membro (a admin PODE ver os membros, então não é oráculo).
 ///
 /// 🔑 **A remoção REVOGA o acesso NA HORA (#1545):** ao remover, invalida TODAS as sessões vivas do
 /// alvo no servidor — o botão CORTA, não só registra. `Principal`/`Escopo` estão congelados na sessão,
@@ -249,33 +266,34 @@ async fn remover_membro(
 ) -> Response {
     let org_id = OrgId(org);
     let alvo = UserId(uid);
-    // Autz + guarda do último-admin (#1620): recusa por construção remover o ÚLTIMO `OrgAdmin` (409
-    // `ultimo_admin`), inclusive auto-remoção (o `alvo` é o próprio). A guarda vive na autz, não aqui.
-    if let Err(resp) =
-        mutacao_membro_autorizada(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id, &alvo, None).await
-    {
+    // (1) Autz BASE (audita o ACESSO). Nega ⇒ retorna sem tocar no store (Fork 1: base ANTES de ler).
+    if let Err(resp) = autz_base_mutacao(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id).await {
         return resp;
     }
-    match estado.membros.remover(&org_id, &alvo) {
-        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        Ok(true) => {
-            // #1545: revoga NA HORA — mata todas as sessões do alvo (colateral aceito acima).
-            estado
-                .armazem
-                .lock()
-                .expect("armazém de sessão não deve estar envenenado")
-                .invalidar_do_usuario(&alvo);
-            Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body(Body::empty())
-                .expect("resposta 204 é sempre construível")
-        }
-        Ok(false) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
-    }
+    // (2) ENFORÇO ATÓMICO da invariante org-não-órfã (#1620): o store decide-E-muta sob UM lock — é
+    //     AQUI que o race fecha (dois DELETE concorrentes NÃO orfanam), não numa checagem na borda.
+    //     `OrgAdmin` = o papel protegido (a política é do caller; o store só oferece o primitivo).
+    let desfecho = match estado.membros.remover_preservando(&org_id, &alvo, Papel::OrgAdmin) {
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+        Ok(d) => d,
+    };
+    // (3) Evento de REGRA DE NEGÓCIO + tradução pra HTTP; revoga NA HORA (#1545) só se REMOVEU.
+    responder_mutacao(&sessao, &AcaoAdminOrg::RemoverMembro, &org_id, desfecho, &*estado.auditor, |_m| {
+        estado
+            .armazem
+            .lock()
+            .expect("armazém de sessão não deve estar envenenado")
+            .invalidar_do_usuario(&alvo);
+        Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .expect("resposta 204 é sempre construível")
+    })
 }
 
 /// `PATCH /api/v1/orgs/{org}/membros/{uid}` (contrato §4.3) — muda o papel. Autz igual; papel fora da
-/// allowlist ⇒ `400`; `uid` não-membro ⇒ `404`; senão `200` com o membro atualizado.
+/// allowlist ⇒ `400`; rebaixar o ÚLTIMO admin ⇒ `409 ultimo_admin` (#1620); `uid` não-membro ⇒ `404`;
+/// senão `200` com o membro atualizado.
 ///
 /// 🔑 **Mudar o papel REVOGA a sessão do alvo NA HORA (#1545):** como `Principal`/`Escopo` estão
 /// congelados na sessão, o papel novo não valeria até o próximo login — então a escrita invalida as
@@ -289,39 +307,36 @@ async fn mudar_papel_membro(
 ) -> Response {
     let org_id = OrgId(org);
     let alvo = UserId(uid);
-    // O papel do corpo vem ANTES da autz porque a guarda do último-admin (#1620) precisa do papel NOVO
-    // pra decidir se a mudança rebaixa o último `OrgAdmin`. Anti-oráculo preservado: o 400 de corpo
-    // malformado é INDEPENDENTE da org (não distingue org real de inexistente), e a `mutacao_membro_
-    // autorizada` ainda devolve 404 pra org invisível num pedido VÁLIDO. Parsear não APLICA nada — o
-    // único apply (`mudar_papel`) fica depois da autz. Allowlist: fora dela = 400 (nunca "papel novo silencioso").
+    // Parse ANTES da autz: o `400` de corpo malformado é INDEPENDENTE da org (não distingue própria de
+    // alheia). Se a autz base viesse antes, um `400` só em org própria (`404` na alheia) viraria oráculo
+    // de visibilidade. Parsear não APLICA nada — o único apply (o store) fica DEPOIS da autz base.
     let papel = match serde_json::from_slice::<MudarPapelReq>(&corpo).ok().and_then(|r| papel_de_str(&r.papel)) {
         Some(p) => p,
         None => return resposta_de_erro(CodigoErro::PayloadInvalido),
     };
-    // Autz + guarda: rebaixar o ÚLTIMO `OrgAdmin` (papel novo ≠ org_admin) ⇒ 409 `ultimo_admin`.
-    if let Err(resp) =
-        mutacao_membro_autorizada(&estado, &sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id, &alvo, Some(papel)).await
-    {
+    // (1) Autz BASE (audita o ACESSO). Nega ⇒ retorna sem tocar no store.
+    if let Err(resp) = autz_base_mutacao(&estado, &sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id).await {
         return resp;
     }
-    match estado.membros.mudar_papel(&org_id, &alvo, papel) {
-        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
-        Ok(None) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
-        Ok(Some(m)) => {
-            // #1545: revoga NA HORA — o papel novo vale no relogin forçado.
-            estado
-                .armazem
-                .lock()
-                .expect("armazém de sessão não deve estar envenenado")
-                .invalidar_do_usuario(&alvo);
-            let corpo = serde_json::to_string(&MembroDto::from(&m)).expect("MembroDto serializa sempre");
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(corpo))
-                .expect("resposta 200 é sempre construível")
-        }
-    }
+    // (2) ENFORÇO ATÓMICO: rebaixar o ÚLTIMO `OrgAdmin` (papel novo ≠ org_admin) ⇒ Recusada, sob o lock.
+    let desfecho = match estado.membros.mudar_papel_preservando(&org_id, &alvo, papel, Papel::OrgAdmin) {
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+        Ok(d) => d,
+    };
+    // (3) Evento de REGRA DE NEGÓCIO + tradução pra HTTP; revoga NA HORA (#1545) só se MUDOU.
+    responder_mutacao(&sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id, desfecho, &*estado.auditor, |m| {
+        estado
+            .armazem
+            .lock()
+            .expect("armazém de sessão não deve estar envenenado")
+            .invalidar_do_usuario(&alvo);
+        let corpo = serde_json::to_string(&MembroDto::from(&m)).expect("MembroDto serializa sempre");
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(corpo))
+            .expect("resposta 200 é sempre construível")
+    })
 }
 
 /// O estado do domínio como o contrato §4.3 o projeta no fio. Explícito, não `derive` — o valor de
@@ -1880,6 +1895,59 @@ mod tests {
             status,
             StatusCode::INTERNAL_SERVER_ERROR,
             "store fora do ar em superfície visível é 500 (tratado, não panic)"
+        );
+    }
+
+    // #1620 / Codex #1625 P2 (REGRESSÃO): na MUTAÇÃO, a autz BASE decide ANTES de tocar o store de
+    // membros. Org ALHEIA + store de membros CAÍDO ⇒ ainda o 404 canônico, NUNCA um 500 que ensinaria
+    // que a org existe (invariante 1). Antes do #1625 a borda lia os membros ANTES da autz base ⇒ este
+    // caso vazava 500. O `MembrosFalho` (falha TUDO) prova que o caminho nem CHEGA à leitura/mutação.
+    #[tokio::test]
+    async fn mutacao_org_alheia_com_store_de_membros_caido_e_404_nao_500() {
+        struct MembrosFalho;
+        impl ArmazemMembro for MembrosFalho {
+            fn listar(&self, _o: &OrgId) -> Result<Vec<Membro>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+            fn orgs_do_usuario(&self, _u: &UserId) -> Result<Vec<(OrgId, Papel)>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+            fn remover_preservando(&self, _o: &OrgId, _u: &UserId, _p: Papel) -> Result<MutacaoMembro, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+            fn mudar_papel_preservando(
+                &self,
+                _o: &OrgId,
+                _u: &UserId,
+                _n: Papel,
+                _p: Papel,
+            ) -> Result<MutacaoMembro, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+        }
+        let mut armazem = ArmazemMemoria::novo();
+        // Caller = admin de OUTRA org; /orgs/acme/... é alheio a ele.
+        let (id, _) = emitir_sessao(&mut armazem, admin_de("outra"), AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut org_store = ArmazemOrgMemoria::novo();
+        org_store.inserir(org_teste("acme")); // acme EXISTE — senão o 404 viria do `buscar` e não provaria nada.
+        let estado = Borda::nova(
+            armazem,
+            relogio_fixo,
+            nulo(),
+            Arc::new(org_store),
+            Arc::new(MembrosFalho),
+            sem_dominios(),
+            sem_perfis(),
+            sem_prefs(),
+            sem_registro(),
+        );
+        let (s, corpo) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/qualquer", &cookie, "").await;
+        assert_eq!(
+            s,
+            StatusCode::NOT_FOUND,
+            "org alheia ⇒ 404 mesmo com store de membros caído (a base decide ANTES de ler): {}",
+            String::from_utf8_lossy(&corpo)
         );
     }
 
