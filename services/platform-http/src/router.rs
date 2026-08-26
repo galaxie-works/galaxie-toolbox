@@ -23,7 +23,7 @@ use galaxie_platform_config::{
 };
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
 use galaxie_platform_identity::sessao::ArmazemSessao;
-use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, UserId};
+use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, Sessao, UserId};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
@@ -418,7 +418,16 @@ fn config_item_para_fio(item: &ConfigItem) -> serde_json::Value {
 /// construção. **Survive-list (#1544):** NÃO passa pela autz de org (config é pref do USUÁRIO, não
 /// recurso de org) ⇒ sobrevive à suspensão — guardado por `me_config_sobrevive_a_suspensao`.
 async fn get_me_config(State(estado): State<EstadoBorda>, SessaoAtual(sessao): SessaoAtual) -> Response {
-    let uid = usuario_da_sessao(&sessao);
+    colecao_de_config_do_usuario(&estado, &sessao)
+}
+
+/// Projeta a COLEÇÃO de config do PRÓPRIO principal no fio — `200 [{ chave, valor, tipo, opcoes? }]`.
+/// **É o corpo que o §4.4 define pro GET E pro PATCH (mesmo shape).** Compartilhado de propósito:
+/// o P2 do #1610 (Codex) foi o PATCH devolver 1 item quando o contrato pede a coleção — um helper
+/// único torna a divergência impossível de repetir. As variantes de erro seguem a direção segura do
+/// #1579 (infra≠dado). Ler a PRÓPRIA config (alvo `None`) NÃO emite auditoria (só o negado, #1589).
+fn colecao_de_config_do_usuario(estado: &EstadoBorda, sessao: &Sessao) -> Response {
+    let uid = usuario_da_sessao(sessao);
     let prefs_brutas = match estado.prefs.prefs_do_usuario(uid) {
         Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
         Ok(p) => p,
@@ -439,7 +448,7 @@ async fn get_me_config(State(estado): State<EstadoBorda>, SessaoAtual(sessao): S
     //    regista QUEM sondou e não CONTRA QUEM: `A` a tentar 1 e `A` a tentar 500 ficam idênticos,
     //    e a forma da sondagem é justamente a distribuição sobre alvos. **Faça o #1591 antes desta
     //    rota** — trilha que não diz contra quem é pior que trilha vazia, porque parece cobertura.
-    let itens = match configs_do_usuario(&sessao, None, prefs_brutas, &*estado.auditor) {
+    let itens = match configs_do_usuario(sessao, None, prefs_brutas, &*estado.auditor) {
         Ok(itens) => itens,
         // `NaoEncontrado` = owner-scope: config de OUTRO principal. **Hoje LATENTE** (passo `None` como
         // alvo ⇒ o scope resolve pro próprio e nunca nega), mas a borda PROPAGA o 404 anti-oráculo do
@@ -451,10 +460,17 @@ async fn get_me_config(State(estado): State<EstadoBorda>, SessaoAtual(sessao): S
         // não conserta ⇒ 500. O log NOMEIA a variante (`erro = ?e`), não afirma UMA causa pelas três
         // (a lição do "diagnóstico ≠ falha") — e não confunde dado ruim com infra fora.
         Err(e @ (ConfigErro::ValorInvalido | ConfigErro::ChaveNaoPermitida)) => {
-            tracing::error!(uid = %uid.0, erro = ?e, "GET /me/config: pref inconsistente com o registro (dado, não infra)");
+            tracing::error!(uid = %uid.0, erro = ?e, "/me/config: pref inconsistente com o registro (dado, não infra)");
             return resposta_de_falha(Visibilidade::Visivel);
         }
     };
+    resposta_colecao_200(&itens)
+}
+
+/// Serializa a COLEÇÃO de config no fio ⇒ `200 [{...}]`. Compartilhado pelo GET (via
+/// `colecao_de_config_do_usuario`) e pelo sucesso do PATCH — que pode degradar pra o item gravado se
+/// a releitura falhar (o corpo degrada, o status NÃO).
+fn resposta_colecao_200(itens: &[ConfigItem]) -> Response {
     let fio: Vec<serde_json::Value> = itens.iter().map(config_item_para_fio).collect();
     let corpo = serde_json::to_string(&fio).expect("Vec<Value> serializa sempre");
     Response::builder()
@@ -533,13 +549,26 @@ async fn patch_me_config(
     // (o fio confirma o que o SERVIDOR guardou, incluindo a forma que ele resolveu).
     match estado.prefs.definir_pref(&dono, &item) {
         Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        // A ESCRITA foi COMMITADA ⇒ o status reflete a ESCRITA (200), NUNCA um 500 pela releitura
+        // (P2 do Codex/#1617: um 500 aqui MENTIRIA que o save falhou; o cliente re-tentaria uma escrita
+        // que na verdade pegou — e `definir_pref` é upsert idempotente, mas o cliente não deve ver
+        // "falhou"). O §4.4 pede a COLEÇÃO no corpo (mesmo shape do GET): re-lê e devolve-a; se a
+        // releitura falhar (infra, ou OUTRA pref inconsistente), degrada o CORPO pra o item gravado
+        // (coleção de 1) — o FE re-sincroniza no próximo GET. Degrada o corpo, não o status.
         Ok(()) => {
-            let corpo = serde_json::to_string(&config_item_para_fio(&item)).expect("Value serializa");
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(corpo))
-                .expect("resposta 200 é sempre construível")
+            let uid = usuario_da_sessao(&sessao);
+            let colecao = estado
+                .prefs
+                .prefs_do_usuario(uid)
+                .ok()
+                .and_then(|brutas| configs_do_usuario(&sessao, None, brutas, &*estado.auditor).ok());
+            match colecao {
+                Some(itens) => resposta_colecao_200(&itens),
+                None => {
+                    tracing::warn!(uid = %uid.0, "PATCH /me/config: escrita OK mas a releitura da coleção falhou; devolvo o item gravado (o cliente re-sincroniza no GET)");
+                    resposta_colecao_200(std::slice::from_ref(&item))
+                }
+            }
         }
     }
 }
@@ -868,24 +897,26 @@ mod tests {
         (borda, cookie)
     }
 
-    /// **AC1** — valor válido pra chave da allowlist ⇒ grava + 200, e o GET devolve o que foi gravado
-    /// (round-trip pela MESMA borda: `definir_pref` escreve no store que `prefs_do_usuario` lê).
+    /// **AC1** — valor válido pra chave da allowlist ⇒ grava + 200. **P2 (#1610):** o PATCH devolve a
+    /// COLEÇÃO (mesmo shape do GET, §4.4), não o item escrito — e a pref gravada está lá. Round-trip
+    /// confirmado pela MESMA borda (`definir_pref` escreve no store que `prefs_do_usuario` lê).
     #[tokio::test]
-    async fn patch_me_config_grava_e_round_trip() {
+    async fn patch_me_config_grava_e_devolve_colecao() {
         let (estado, cookie) = borda_para_patch(nulo());
         let (status, corpo) =
             requisicao(estado.clone(), "PATCH", "/api/v1/me/config", &cookie, r#"{"chave":"app.tema","valor":"claro"}"#).await;
         assert_eq!(status, StatusCode::OK, "valor válido grava: {}", String::from_utf8_lossy(&corpo));
-        let item: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
-        assert_eq!(item["chave"], "app.tema");
-        assert_eq!(item["valor"], "claro");
-        assert_eq!(item["tipo"], "opcao");
-        // Round-trip: o GET devolve a pref recém-gravada.
+        // O corpo é a COLEÇÃO (array), não um item solto — o mesmo shape do GET (P2 do Codex/#1610).
+        let itens: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let arr = itens.as_array().expect("PATCH devolve a coleção [{...}], não um item: {corpo:?}");
+        let tema = arr.iter().find(|i| i["chave"] == "app.tema").expect("app.tema na coleção devolvida");
+        assert_eq!(tema["valor"], "claro");
+        assert_eq!(tema["tipo"], "opcao");
+        // Round-trip: o GET devolve a MESMA coleção com a pref recém-gravada.
         let (gs, _h, gc) = resposta_crua(estado, &cookie, "/api/v1/me/config").await;
         assert_eq!(gs, StatusCode::OK);
-        let itens: serde_json::Value = serde_json::from_slice(&gc).unwrap();
-        let tema = itens.as_array().unwrap().iter().find(|i| i["chave"] == "app.tema").expect("app.tema persistido");
-        assert_eq!(tema["valor"], "claro", "GET devolve o que o PATCH gravou: {gc:?}");
+        let get_itens: serde_json::Value = serde_json::from_slice(&gc).unwrap();
+        assert_eq!(get_itens, itens, "PATCH e GET devolvem o MESMO shape (a coleção)");
     }
 
     /// **AC2** — valor fora do tipo/opções ⇒ **rejeitado pelo CONSTRUTOR** (`item_da_forma`), não por
@@ -971,6 +1002,44 @@ mod tests {
         let (status, _) =
             requisicao(estado, "PATCH", "/api/v1/me/config", &cookie, r#"{"chave":"app.tema","valor":"claro"}"#).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "allowlisted sem forma no registro = inconsistência ⇒ 500");
+    }
+
+    /// **P2 do Codex (#1617):** a ESCRITA commitou, mas a RELEITURA da coleção falha (infra) ⇒ o PATCH
+    /// devolve **200 com o item gravado** (coleção de 1), NÃO 500 — um 500 mentiria que o save falhou.
+    /// Store que escreve OK e falha a leitura prova que o status reflete a ESCRITA, não a releitura.
+    #[tokio::test]
+    async fn patch_me_config_escrita_ok_releitura_falha_e_200_com_o_item() {
+        use galaxie_platform_config::{ArmazemPref, FormaDaChave, RegistroFormasMemoria};
+        struct PrefEscreveMasNaoLe;
+        impl ArmazemPref for PrefEscreveMasNaoLe {
+            fn prefs_do_usuario(&self, _uid: &UserId) -> Result<Vec<(String, String, FormaDaChave)>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel) // a releitura da coleção falha
+            }
+            fn definir_pref(&self, _uid: &UserId, _item: &ConfigItem) -> Result<(), ErroArmazem> {
+                Ok(()) // mas a escrita PEGOU
+            }
+        }
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut registro = RegistroFormasMemoria::novo();
+        registro.semear("app.notificacoes", FormaDaChave::Booleano);
+        let estado = Borda::nova(
+            armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(),
+            Arc::new(PrefEscreveMasNaoLe), Arc::new(registro),
+        );
+        let (status, corpo) =
+            requisicao(estado, "PATCH", "/api/v1/me/config", &cookie, r#"{"chave":"app.notificacoes","valor":"true"}"#).await;
+        assert_eq!(status, StatusCode::OK, "escrita commitada ⇒ 200 mesmo com releitura falha (não 500): {}", String::from_utf8_lossy(&corpo));
+        let itens: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let arr = itens.as_array().expect("corpo é a coleção");
+        assert_eq!(arr.len(), 1, "corpo degradado = só o item gravado: {corpo:?}");
+        assert_eq!(arr[0]["chave"], "app.notificacoes");
+        assert_eq!(arr[0]["valor"], true);
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
