@@ -33,7 +33,7 @@ function montar(idioma: Idioma) {
 
 beforeEach(() => {
   vi.mocked(api.obterConfig).mockResolvedValue(ALLOWLIST.map((i) => ({ ...i })));
-  vi.mocked(api.salvarConfig).mockResolvedValue({ ok: [], falhas: [], itens: [] });
+  vi.mocked(api.salvarConfig).mockResolvedValue({ ok: [], falhas: [] });
 });
 afterEach(() => {
   cleanup();
@@ -65,7 +65,6 @@ describe("#1491 ConfigPage", () => {
     vi.mocked(api.salvarConfig).mockResolvedValue({
       ok: ["notificacoes"],
       falhas: [],
-      itens: [{ chave: "notificacoes", valor: false, tipo: "bool" }],
     });
     const u = userEvent.setup();
     montar("pt-BR");
@@ -78,7 +77,6 @@ describe("#1491 ConfigPage", () => {
     vi.mocked(api.salvarConfig).mockResolvedValue({
       ok: [],
       falhas: [{ chave: "notificacoes", status: 400 }],
-      itens: [],
     });
     const u = userEvent.setup();
     montar("pt-BR");
