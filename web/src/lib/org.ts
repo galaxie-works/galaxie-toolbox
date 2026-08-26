@@ -273,3 +273,88 @@ export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
     return { estado: "erro", motivo: "resposta não é JSON" };
   }
 }
+
+/**
+ * O que uma ESCRITA de membro pode devolver.
+ *
+ * @nao-contrato estado local da UI. O contrato declara HTTP + `erro` (§3); isto
+ * é a tradução deles para o que a tela precisa decidir. Anotado à mão porque a
+ * guarda do #1490 varre `interface` e **não** `type` — declaro na mesma, em vez
+ * de aproveitar o ponto cego (nota no PR).
+ *
+ * `ultimoAdmin` existe separado de `conflito` pela mesma razão que
+ * `orgSuspensa` existe separado de `naoEhAdmin`: **mesmo HTTP, mensagem
+ * diferente**, e uma delas o utilizador conserta sozinho. Um `409` genérico
+ * aqui transformaria um problema auto-resolúvel ("promove outro admin antes")
+ * num pedido de suporte — condição do @Altair no #1620.
+ */
+export type ResultadoEscrita =
+  | { estado: "feito" }
+  | { estado: "ultimoAdmin" }
+  | { estado: "conflito" }
+  | { estado: "naoAutenticado" }
+  | { estado: "naoEhAdmin" }
+  | { estado: "orgSuspensa" }
+  | { estado: "naoEhSuaOrg" }
+  | { estado: "erro"; motivo: string };
+
+/**
+ * O slug do corpo de erro, quando existe. `null` se o corpo não for JSON ou não
+ * trouxer `erro` — e nesse caso quem chama fica com o genérico, nunca com um
+ * motivo específico que não foi dito. Afirmar a razão errada é pior do que
+ * afirmar "conflito".
+ */
+async function slugDoErro(resposta: Response): Promise<string | null> {
+  try {
+    const corpo: unknown = await resposta.json();
+    if (typeof corpo !== "object" || corpo === null) return null;
+    const e = (corpo as { erro?: unknown }).erro;
+    return typeof e === "string" ? e : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove um membro da org — `DELETE /orgs/{org}/membros/{uid}` (§4.3,
+ * `RemoverMembro`, sucesso `204`).
+ *
+ * **Sem corpo de entrada**: o contrato não declara nenhum para este método e o
+ * `{uid}` já vai no caminho. É exatamente por isso que esta fatia sai agora e a
+ * de convidar/mudar-papel não — essas mutam COM corpo, e o corpo delas continua
+ * por declarar (#1618).
+ *
+ * A remoção **corta o acesso na hora**: o #1545 (PR #1570) faz a borda revogar
+ * a sessão do alvo. Sem isso a UI estaria a oferecer um botão que não remove
+ * por até 12 h, que foi o gate da @Mira em 25/08.
+ *
+ * @rota /orgs/{org}/membros/{uid}
+ */
+export async function removerMembro(
+  org: string,
+  uid: string,
+): Promise<ResultadoEscrita> {
+  let resposta: Response;
+  try {
+    resposta = await chamar(
+      `/orgs/${encodeURIComponent(org)}/membros/${encodeURIComponent(uid)}`,
+      { method: "DELETE" },
+    );
+  } catch (e) {
+    return { estado: "erro", motivo: e instanceof Error ? e.message : "rede" };
+  }
+
+  if (resposta.status === 204) return { estado: "feito" };
+  if (resposta.status === 401) return { estado: "naoAutenticado" };
+  if (resposta.status === 403) return await razaoDo403(resposta);
+  // O `404` continua OPACO (invariante 1): não se lê o corpo dele.
+  if (resposta.status === 404) return { estado: "naoEhSuaOrg" };
+  if (resposta.status === 409) {
+    // Só o slug DECLARADO promove a mensagem específica. Slug desconhecido cai
+    // no genérico — a mesma direção segura do `razaoDo403`.
+    return (await slugDoErro(resposta)) === "ultimo_admin"
+      ? { estado: "ultimoAdmin" }
+      : { estado: "conflito" };
+  }
+  return { estado: "erro", motivo: `HTTP ${resposta.status}` };
+}
