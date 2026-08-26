@@ -1,6 +1,18 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.16 · 2026-08-26 — war-room de-hardcode + lote de LEGIBILIDADE (§1.10)
+Lote em 1 PR (§8 "em lote"). Duas partes.
+
+**(A) War-room de-hardcodeado (#133 congelou em 2500).** Em vez de trocar #133→#1493 no texto (que congela de novo no próximo 2500), **de-hardcodeei**: canon e IDENTIDADES dizem "o índice / war-room"; **o número vive no FATOS**. Rollover feito com go do PO; time avisado por ccd; corpo da #133 aponta pra #1493. (Nesta emenda o §4 deixou de citar "#1493" inline — a doutrina do §1.10 aplicada a ela mesma; o review adversarial pegou a auto-contradição.)
+
+**(B) §1.10 — "legível por máquina, não por prosa"** + 10 aplicações, destiladas de um dia de o time tropeçar em "mecanismo que existe mas ninguém está fiado nele" (todos os casos e proveniência em `CASOS.md`, tracking em #1578):
+- **Princípio §1.10:** fato que um rito precisa DESCOBRIR vive legível por consulta (relação nativa/label/card/campo), no endereço que o CONSUMIDOR lê (publicado ≠ entregue), e **clareia quando se resolve** (sinal sem morte = cry-wolf); **derivável do estado que já existe → CONSULTA, não marcador**; marcador só pro afirmado, e classifica, nunca detecta. **O que não vira mecanismo não sobrevive à sessão.**
+- **§2:** `bloqueado` declara o bloqueador via `blocked_by` NATIVO (não prosa) + transparência (bloqueador fora de coluna ativa → volta pra Backlog; "coluna ativa" definida); reconciliação inclui `Rejected` e o inverso `Released ∧ open` **por consulta derivada, não label**; sub-entregável com dono = **card próprio** (label `dono:<papel>` = dívida com death-condition, dívida paga = endereço estável não comentário); review sob conta única = label `bola:autor`⊕`bola:revisor`.
+- **§4:** cron não-hardcoda o canal (lê FATOS a cada tick; senão fica cego).
+- **§7:** mudez detecta **cego** (índice-varrido ≠ FATOS), não só mudo; **integridade da memória** (Edit/compare-and-swap, nunca `open('w')` — clobber silencioso; `role:` na frontmatter + papel na frase, `originSessionId` não identifica papel).
+- **Passou por review adversarial ANTES da apresentação** (a lição da v1.14): 2 defeitos que bloqueavam — contradição `Rejected` ativa/inativa + transição sem data de morte — corrigidos; transição da aresta `blocked_by` com data real no CASOS.
+
 ## v1.15 · 2026-08-24 — higiene de branch (Pollux mediu: 128 remotas, ~80% resíduo)
 - **Config (feita, não só escrita):** `delete_branch_on_merge = true` ligado no repo — branch de PR integrada some no merge, sem depender de memória. Registrado no FATOS.
 - **§2 higiene de branch:** cada um limpa a sua; **ninguém apaga branch de outro**. Mergeada em pre-prod = resíduo (some sem rito); não-mergeada = trabalho (só sai por triagem do dono).
