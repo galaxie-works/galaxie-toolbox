@@ -52,6 +52,8 @@ export interface Dicionario {
   // desde o #1545/PR #1570: a borda revoga a sessão do alvo, portanto "perde o
   // acesso na hora" não é promessa, é o que acontece.
   removerTitulo: string;
+  /** Enquanto o `DELETE` está em voo — ver o P2 do Codex na PR #1626. */
+  removendo: string;
   removerAviso: string;
   removerFalhou: string;
   // `409 ultimo_admin` (§3, #1620) — MESMO HTTP que `conflito`, mensagem
@@ -145,6 +147,7 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     convidarMembro: "Convidar membro",
     remover: "Remover",
     removerTitulo: "Remover membro",
+    removendo: "Removendo…",
     removerAviso:
       "Perde o acesso imediatamente — a sessão dele é encerrada na hora.",
     removerFalhou: "Não foi possível remover",
@@ -217,6 +220,7 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     convidarMembro: "Invite member",
     remover: "Remove",
     removerTitulo: "Remove member",
+    removendo: "Removing…",
     removerAviso: "Access ends immediately — their session is revoked at once.",
     removerFalhou: "Could not remove",
     ultimoAdmin: "The organization would be left with no administrator",

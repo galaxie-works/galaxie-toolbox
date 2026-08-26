@@ -87,6 +87,13 @@ async function abrirConfirmacao(idioma: Idioma = "pt-BR") {
   await waitFor(() => expect(screen.getByText("Rui Costa")).toBeTruthy());
   const botoes = screen.getAllByRole("button", { name: t.remover });
   // `[1]` = a linha do Rui. A do Ana é a `[0]`.
+  //
+  // O `.focus()` explícito NÃO é conveniência de teste: o `fireEvent.click` não
+  // move o foco, ao contrário de um navegador real (que foca no `mousedown`) e
+  // de quem navega por teclado (que já está com o foco no botão ao carregar
+  // Enter). Sem isto, a pré-condição do teste de devolução de foco seria
+  // `<body>` — e eu estaria a medir o harness, não o comportamento.
+  botoes[1]!.focus();
   fireEvent.click(botoes[1]!);
   return t;
 }
@@ -174,6 +181,98 @@ describe("#1490 — remover membro", () => {
     // Afirmar "é o último admin" sem o servidor o ter dito seria inventar a
     // razão — e mandaria promover alguém para resolver um problema diferente.
     expect(screen.queryByText(t.ultimoAdmin)).toBeNull();
+  });
+
+  // ── Os dois P2 do Codex na PR #1626 ───────────────────────────────────────
+  // Ambos em caminho DESTRUTIVO, e ambos invisíveis a olho: um só aparece com
+  // teclado, o outro só com rede lenta.
+
+  it("P2-A o foco ENTRA no diálogo, e no cancelar — não no botão que destrói", async () => {
+    rede(() => semCorpo(204));
+    const t = await abrirConfirmacao();
+
+    const dialogo = screen.getByRole("dialog");
+    // O foco inicial num caminho destrutivo não pode cair no botão vermelho:
+    // um Enter reflexo removeria alguém.
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: t.cancelar }),
+    );
+    expect(dialogo.contains(document.activeElement)).toBe(true);
+  });
+
+  it("P2-A o Tab CIRCULA dentro do diálogo (não escapa para outra linha)", async () => {
+    rede(() => semCorpo(204));
+    const t = await abrirConfirmacao();
+    const dialogo = screen.getByRole("dialog");
+
+    const cancelar = screen.getByRole("button", { name: t.cancelar });
+    const confirmar = dialogo.querySelector<HTMLElement>("button.bg-red-600")!;
+
+    // Do último, Tab volta ao primeiro — em vez de ir para o "Remover" da
+    // linha de baixo, que é como se troca em silêncio quem o diálogo remove.
+    confirmar.focus();
+    fireEvent.keyDown(dialogo, { key: "Tab" });
+    expect(document.activeElement).toBe(cancelar);
+
+    // E Shift+Tab do primeiro volta ao último.
+    fireEvent.keyDown(dialogo, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirmar);
+  });
+
+  it("P2-A Escape fecha e o foco VOLTA a quem abriu", async () => {
+    rede(() => semCorpo(204));
+    const t = await abrirConfirmacao();
+    const dialogo = screen.getByRole("dialog");
+
+    fireEvent.keyDown(dialogo, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Sem devolver o foco, quem estava na 2ª linha recomeça do topo da página.
+    const botoes = screen.getAllByRole("button", { name: t.remover });
+    expect(document.activeElement).toBe(botoes[1]);
+  });
+
+  it("P2-B enquanto o DELETE está em voo, os controlos ficam DESABILITADOS", async () => {
+    // `DELETE` que não resolve até nós mandarmos: é a única forma de observar o
+    // estado intermédio. Com um duplo instantâneo, a janela não existe.
+    let soltar!: (r: Response) => void;
+    const preso = new Promise<Response>((r) => {
+      soltar = r;
+    });
+    const pedidos: { url: string; metodo: string }[] = [];
+    vi.stubGlobal("fetch", (entrada: string, init?: RequestInit) => {
+      const metodo = init?.method ?? "GET";
+      pedidos.push({ url: String(entrada), metodo });
+      if (metodo === "DELETE") return preso;
+      return Promise.resolve(
+        new Response(JSON.stringify(MEMBROS), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+
+    const t = DICIONARIOS["pt-BR"];
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    await waitFor(() => expect(screen.getByText("Rui Costa")).toBeTruthy());
+    fireEvent.click(screen.getAllByRole("button", { name: t.remover })[1]!);
+    fireEvent.click(
+      screen.getByRole("dialog").querySelector("button.bg-red-600")!,
+    );
+
+    // O ponto: a tabela NÃO fica acionável durante a remoção.
+    await waitFor(() => {
+      const linha = screen.getAllByRole("button", { name: t.removendo })[0];
+      expect(linha, "nenhum controlo indica remoção em curso").toBeTruthy();
+    });
+    for (const b of screen.getAllByRole("button", { name: t.removendo })) {
+      expect((b as HTMLButtonElement).disabled).toBe(true);
+    }
+
+    soltar(new Response(null, { status: 204 }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Um único DELETE saiu — não dois.
+    expect(pedidos.filter((x) => x.metodo === "DELETE")).toHaveLength(1);
   });
 
   it("cancelar não chama a rede", async () => {

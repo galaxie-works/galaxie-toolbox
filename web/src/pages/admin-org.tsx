@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
+import { Modal } from "@/components/modal";
 import {
   DICIONARIOS,
   idiomaAtual,
@@ -315,47 +316,49 @@ function useRecurso<T>(caminho: string): {
 function ConfirmarRemocao({
   idioma,
   membro,
+  aRemover,
   aoConfirmar,
   aoCancelar,
 }: {
   idioma: Idioma;
   membro: Membro;
+  /** O `DELETE` está em voo — 2º P2 do Codex na PR #1626. */
+  aRemover: boolean;
   aoConfirmar: () => void;
   aoCancelar: () => void;
 }) {
   const t = DICIONARIOS[idioma];
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t.removerTitulo}
-      className="fixed inset-0 flex items-center justify-center bg-neutral-900/40 p-4"
-    >
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-sm">
-        <h2 className="font-medium text-neutral-900">{t.removerTitulo}</h2>
-        <p className="mt-2 text-neutral-900">
-          <strong>{membro.nome}</strong>
-        </p>
-        <p className="text-neutral-600">{membro.email}</p>
-        <p className="mt-2 text-neutral-500">{t.removerAviso}</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={aoCancelar}
-            className="rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100"
-          >
-            {t.cancelar}
-          </button>
-          <button
-            type="button"
-            onClick={aoConfirmar}
-            className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-700"
-          >
-            {t.remover}
-          </button>
-        </div>
+    <Modal rotulo={t.removerTitulo} aoFechar={aoCancelar}>
+      <h2 className="font-medium text-neutral-900">{t.removerTitulo}</h2>
+      <p className="mt-2 text-neutral-900">
+        <strong>{membro.nome}</strong>
+      </p>
+      <p className="text-neutral-600">{membro.email}</p>
+      <p className="mt-2 text-neutral-500">{t.removerAviso}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        {/* CANCELAR primeiro no DOM de propósito: é ele que recebe o foco
+            inicial (o `Modal` foca o primeiro focável). Num caminho
+            destrutivo, o foco de entrada não pode cair no botão que destrói —
+            um Enter reflexo apagaria alguém. */}
+        <button
+          type="button"
+          onClick={aoCancelar}
+          disabled={aRemover}
+          className="rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+        >
+          {t.cancelar}
+        </button>
+        <button
+          type="button"
+          onClick={aoConfirmar}
+          disabled={aRemover}
+          className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-700 disabled:opacity-50"
+        >
+          {aRemover ? t.removendo : t.remover}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -376,6 +379,16 @@ function PainelMembros({
   const membros = dados ?? [];
   const [aConfirmar, setAConfirmar] = useState<Membro | null>(null);
   /**
+   * O `uid` cujo `DELETE` está em voo, ou `null`.
+   *
+   * 2º P2 do Codex: sem isto, um `DELETE` lento fecha o diálogo, deixa a tabela
+   * inteira acionável e **sem sinal nenhum** — dá para abrir outra remoção e
+   * disparar pedidos destrutivos concorrentes, sem se saber qual está em curso.
+   * Guardo o `uid` e não um booleano porque a tabela precisa de saber QUAL
+   * linha está a sair.
+   */
+  const [aRemover, setARemover] = useState<string | null>(null);
+  /**
    * A recusa da borda, quando houve uma.
    *
    * Guardo o ESTADO devolvido, não uma frase — a frase escolhe-se na
@@ -390,9 +403,11 @@ function PainelMembros({
   if (aviso) return aviso;
 
   async function confirmar(membro: Membro) {
-    setAConfirmar(null);
     setRecusa(null);
+    setARemover(membro.uid);
     const r = await removerMembro(org, membro.uid);
+    setARemover(null);
+    setAConfirmar(null);
     if (r.estado === "feito") {
       // RELÊ do servidor. Nada de tirar a linha do array local: ver o
       // `recarregar` do `useRecurso`.
@@ -478,9 +493,10 @@ function PainelMembros({
                 <button
                   type="button"
                   onClick={() => setAConfirmar(m)}
-                  className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"
+                  disabled={aRemover !== null}
+                  className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
                 >
-                  {t.remover}
+                  {aRemover === m.uid ? t.removendo : t.remover}
                 </button>
               </td>
             </tr>
@@ -492,6 +508,7 @@ function PainelMembros({
         <ConfirmarRemocao
           idioma={idioma}
           membro={aConfirmar}
+          aRemover={aRemover !== null}
           aoConfirmar={() => void confirmar(aConfirmar)}
           aoCancelar={() => setAConfirmar(null)}
         />
