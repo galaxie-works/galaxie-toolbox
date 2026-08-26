@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 
 use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_conta::ArmazemPerfilMemoria;
-use galaxie_platform_config::ArmazemPrefMemoria;
+use galaxie_platform_config::{ArmazemPrefMemoria, RegistroFormasMemoria};
 use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria,
 };
@@ -143,6 +143,10 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(ArmazemDominioMemoria::novo()),
         Arc::new(ArmazemPerfilMemoria::novo()),
         Arc::new(ArmazemPrefMemoria::novo()),
+        // Registro de formas VAZIO em produção: o binário serve o que EXISTE (mesmo padrão dos stores
+        // vazios). Sem forma semeada, o PATCH cai em 500-por-inconsistência só se a chave passar a
+        // allowlist sem registro — o registro real vem da config do PO, não do código.
+        Arc::new(RegistroFormasMemoria::novo()),
     );
     // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
     servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await

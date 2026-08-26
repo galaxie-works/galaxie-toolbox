@@ -13,7 +13,7 @@ use axum::response::Response;
 
 use galaxie_platform_identity::auditoria::Auditor;
 use galaxie_platform_conta::ArmazemPerfil;
-use galaxie_platform_config::ArmazemPref;
+use galaxie_platform_config::{ArmazemPref, RegistroFormas};
 use galaxie_platform_identity::armazem::{ArmazemDominio, ArmazemMembro, ArmazemOrg};
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
@@ -49,6 +49,10 @@ pub struct Borda {
     /// Prefs de config do usuário (`GET /me/config`, #1505/#1563). A borda consome; a impl (memória
     /// agora, Postgres depois) troca sem tocar aqui. O dev-server semeia pro e2e do FE.
     pub prefs: Arc<dyn ArmazemPref + Send + Sync>,
+    /// Registro chave→forma (`PATCH /me/config`, #1588). A forma é SERVER-SIDE: o PATCH constrói o
+    /// `ConfigItem` pela forma que o SERVIDOR conhece, nunca por um `tipo` do cliente (senão forjaria
+    /// `Opcao→Texto` e furaria as opções). A impl real virá da config do PO; hoje o dev-server semeia.
+    pub registro_formas: Arc<dyn RegistroFormas + Send + Sync>,
 }
 
 impl Borda {
@@ -70,6 +74,7 @@ impl Borda {
         dominios: Arc<dyn ArmazemDominio + Send + Sync>,
         perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
         prefs: Arc<dyn ArmazemPref + Send + Sync>,
+        registro_formas: Arc<dyn RegistroFormas + Send + Sync>,
     ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
@@ -80,6 +85,7 @@ impl Borda {
             dominios,
             perfis,
             prefs,
+            registro_formas,
         })
     }
 }
