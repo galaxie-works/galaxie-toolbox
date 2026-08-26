@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
-import { obterConfig, salvarConfig, type ItemConfig, type ValorConfig } from "@/lib/api-config";
+import { obterConfig, salvarConfig, type ItemConfig, type ValorConfig, type ResultadoSalvar } from "@/lib/api-config";
+import { ehNaoAutenticado } from "@/lib/http";
 import { useCarregar } from "@/lib/use-carregar";
 import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
 
@@ -69,10 +70,14 @@ export function ConfigPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
   // Patch local das edições (só as chaves tocadas); o valor exibido é o do
   // patch quando existe, senão o do servidor.
   const [patch, setPatch] = useState<Record<string, ValorConfig>>({});
-  const [salvo, setSalvo] = useState(false);
+  // Resultado POR CHAVE do último save (nunca um "salvo" booleano global — a
+  // escrita é por chave e pode ficar parcial; mandato do @Altair no #1588).
+  const [resultado, setResultado] = useState<ResultadoSalvar | null>(null);
   const [salvando, setSalvando] = useState(false);
+  // 401 a meio de um save = sessão morta → login (sinal do app inteiro).
+  const [sessaoMorta, setSessaoMorta] = useState(false);
 
-  if (cfg.estado === "nao-autenticado") return <Navigate to="/login" replace />;
+  if (cfg.estado === "nao-autenticado" || sessaoMorta) return <Navigate to="/login" replace />;
 
   const valorDe = (item: ItemConfig): ValorConfig =>
     item.chave in patch ? patch[item.chave] : item.valor;
@@ -96,12 +101,22 @@ export function ConfigPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
             onSubmit={(e) => {
               e.preventDefault();
               setSalvando(true);
-              setSalvo(false);
+              setResultado(null);
               salvarConfig(patch)
-                .then(() => {
-                  setSalvo(true);
-                  setPatch({});
-                  cfg.recarregar();
+                .then((r) => {
+                  setResultado(r);
+                  // Só as chaves GRAVADAS saem do patch; as que falharam FICAM
+                  // (o usuário retenta sem re-editar). O recarregar reflete o
+                  // que o servidor guardou de fato.
+                  setPatch((p) =>
+                    Object.fromEntries(Object.entries(p).filter(([k]) => !r.ok.includes(k))),
+                  );
+                  if (r.ok.length > 0) cfg.recarregar();
+                })
+                .catch((err) => {
+                  if (ehNaoAutenticado(err)) setSessaoMorta(true);
+                  // salvarConfig só lança em 401 (falha de chave vira `falhas`);
+                  // qualquer outra coisa é inesperada — não engulo o estado.
                 })
                 .finally(() => setSalvando(false));
             }}
@@ -114,7 +129,7 @@ export function ConfigPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
                 idioma={idioma}
                 onChange={(v) => {
                   setPatch((p) => ({ ...p, [item.chave]: v }));
-                  setSalvo(false);
+                  setResultado(null);
                 }}
               />
             ))}
@@ -126,7 +141,15 @@ export function ConfigPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
               >
                 {t.salvar}
               </button>
-              {salvo && <span className="text-sm text-green-600">{t.salvo}</span>}
+              {/* Reporte POR CHAVE — nunca "salvo" global quando uma ficou pra trás. */}
+              {resultado && resultado.falhas.length === 0 && resultado.ok.length > 0 && (
+                <span className="text-sm text-green-600">{t.salvo}</span>
+              )}
+              {resultado && resultado.falhas.length > 0 && (
+                <span className="text-sm text-red-600">
+                  {t.naoGuardado}: {resultado.falhas.map((f) => f.chave).join(", ")}
+                </span>
+              )}
             </div>
           </form>
         )}
