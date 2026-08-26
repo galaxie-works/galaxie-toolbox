@@ -9,8 +9,10 @@ remoto e — a caminho — uma IA que orbita o seu trabalho. Cada capacidade é 
 
 A pessoa entra com o e-mail corporativo, o app descobre o tenant, ela faz login
 na página oficial da Microsoft e cai no workspace. Um mesmo binário atende
-múltiplos clientes. Auto-atualiza (installer assinado publicado no repo de
-distribuição; o app se atualiza sozinho).
+múltiplos clientes. Auto-atualiza: os updates são assinados com a chave do
+atualizador (Tauri updater/minisign) e verificados antes de aplicar. Assinatura
+de código do instalador (Authenticode, via SignPath Foundation) está em adoção,
+ainda não operacional.
 
 O dado vem de **três caminhos**: Microsoft Graph delegado (`/me`, sem IMAP) nas
 contas M365, Google (Drive/appData) nas contas pessoais, e o **filesystem
