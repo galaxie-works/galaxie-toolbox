@@ -24,7 +24,9 @@ use galaxie_platform_config::{
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
 use galaxie_platform_identity::sessao::ArmazemSessao;
 use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, Sessao, UserId};
-use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
+use galaxie_platform_org_admin::{
+    autorizar_acao_admin, autorizar_mutacao_membro, AcaoAdminOrg, AdminErro,
+};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
 
@@ -168,6 +170,9 @@ async fn listar_membros(
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
         Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
+        // Inalcançável por `autorizar_acao_admin` (só a mutação de membro gera `UltimoAdmin`), mas o
+        // `match` é exaustivo por construção — mapeia pro 409 caso a fonte mude.
+        Err(AdminErro::UltimoAdmin) => return resposta_de_erro(CodigoErro::UltimoAdmin),
         Ok(()) => {}
     }
 
@@ -186,24 +191,38 @@ async fn listar_membros(
     }
 }
 
-/// Carrega o `Org` e AUTORIZA a `acao` sobre ele — o pré-âmbulo comum das rotas org-scoped (mesma
-/// ordem visibilidade→suspensão→papel do `listar_membros`). `Ok` = autorizado; `Err(resp)` = a
-/// resposta pronta (404/403/`org_suspensa`/500) pra o handler devolver.
-async fn org_autorizada(
+/// Pré-âmbulo das MUTAÇÕES de membro (`RemoverMembro`/`MudarPapelMembro`): carrega o `Org` + os
+/// membros ATUAIS e chama [`autorizar_mutacao_membro`], que aplica a autz base (visibilidade→suspensão
+/// →papel) E a guarda
+/// do último-`OrgAdmin` (#1620), auditando a decisão COMBINADA. `UltimoAdmin` ⇒ **409 `ultimo_admin`**
+/// (a UI mostra "promove outro admin antes", não "sem permissão"). `alvo` = o membro alvo (da rota);
+/// `novo_papel` = o papel novo do `MudarPapelMembro` (`None` p/ `RemoverMembro`).
+async fn mutacao_membro_autorizada(
     estado: &EstadoBorda,
     sessao: &galaxie_platform_identity::Sessao,
     acao: &AcaoAdminOrg,
     org_id: &OrgId,
+    alvo: &UserId,
+    novo_papel: Option<Papel>,
 ) -> Result<(), Response> {
     let org = match estado.orgs.buscar(org_id) {
         Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
         Ok(None) => return Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Ok(Some(o)) => o,
     };
-    match autorizar_acao_admin(sessao, acao, &org, &*estado.auditor) {
+    // A guarda do último-admin conta os `OrgAdmin` ATUAIS: a borda lê os membros e passa (o domínio de
+    // autz é PURO, não faz I/O). Infra caída na leitura ⇒ 500 (superfície visível). Nota: a leitura e a
+    // escrita seguinte não são transacionais — janela mínima e serializada no store de memória; a
+    // atomicidade real é da fatia de persistência (Postgres), não desta.
+    let membros = match estado.membros.listar(org_id) {
+        Err(ErroArmazem::Indisponivel) => return Err(resposta_de_falha(Visibilidade::Visivel)),
+        Ok(m) => m,
+    };
+    match autorizar_mutacao_membro(sessao, acao, &org, &membros, alvo, novo_papel, &*estado.auditor) {
         Err(AdminErro::NaoEncontrada) => Err(resposta_de_erro(CodigoErro::NaoEncontrado)),
         Err(AdminErro::Suspensa) => Err(resposta_de_erro(CodigoErro::OrgSuspensa)),
         Err(AdminErro::Negado) => Err(resposta_de_erro(CodigoErro::Negado)),
+        Err(AdminErro::UltimoAdmin) => Err(resposta_de_erro(CodigoErro::UltimoAdmin)),
         Ok(()) => Ok(()),
     }
 }
@@ -225,7 +244,11 @@ async fn remover_membro(
 ) -> Response {
     let org_id = OrgId(org);
     let alvo = UserId(uid);
-    if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id).await {
+    // Autz + guarda do último-admin (#1620): recusa por construção remover o ÚLTIMO `OrgAdmin` (409
+    // `ultimo_admin`), inclusive auto-remoção (o `alvo` é o próprio). A guarda vive na autz, não aqui.
+    if let Err(resp) =
+        mutacao_membro_autorizada(&estado, &sessao, &AcaoAdminOrg::RemoverMembro, &org_id, &alvo, None).await
+    {
         return resp;
     }
     match estado.membros.remover(&org_id, &alvo) {
@@ -260,16 +283,22 @@ async fn mudar_papel_membro(
     corpo: axum::body::Bytes,
 ) -> Response {
     let org_id = OrgId(org);
-    // Autz ANTES de processar o corpo: quem não pode não tem o payload lido/aplicado.
-    if let Err(resp) = org_autorizada(&estado, &sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id).await {
-        return resp;
-    }
-    // Papel do corpo — allowlist (fora dela = 400, nunca "papel novo silencioso").
+    let alvo = UserId(uid);
+    // O papel do corpo vem ANTES da autz porque a guarda do último-admin (#1620) precisa do papel NOVO
+    // pra decidir se a mudança rebaixa o último `OrgAdmin`. Anti-oráculo preservado: o 400 de corpo
+    // malformado é INDEPENDENTE da org (não distingue org real de inexistente), e a `mutacao_membro_
+    // autorizada` ainda devolve 404 pra org invisível num pedido VÁLIDO. Parsear não APLICA nada — o
+    // único apply (`mudar_papel`) fica depois da autz. Allowlist: fora dela = 400 (nunca "papel novo silencioso").
     let papel = match serde_json::from_slice::<MudarPapelReq>(&corpo).ok().and_then(|r| papel_de_str(&r.papel)) {
         Some(p) => p,
         None => return resposta_de_erro(CodigoErro::PayloadInvalido),
     };
-    let alvo = UserId(uid);
+    // Autz + guarda: rebaixar o ÚLTIMO `OrgAdmin` (papel novo ≠ org_admin) ⇒ 409 `ultimo_admin`.
+    if let Err(resp) =
+        mutacao_membro_autorizada(&estado, &sessao, &AcaoAdminOrg::MudarPapelMembro, &org_id, &alvo, Some(papel)).await
+    {
+        return resp;
+    }
     match estado.membros.mudar_papel(&org_id, &alvo, papel) {
         Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
         Ok(None) => resposta_de_erro(CodigoErro::NaoEncontrado), // `uid` não era membro
@@ -335,6 +364,9 @@ async fn listar_dominios(
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
         Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
+        // Inalcançável por `autorizar_acao_admin` (só a mutação de membro gera `UltimoAdmin`), mas o
+        // `match` é exaustivo por construção — mapeia pro 409 caso a fonte mude.
+        Err(AdminErro::UltimoAdmin) => return resposta_de_erro(CodigoErro::UltimoAdmin),
         Ok(()) => {}
     }
 
@@ -1585,6 +1617,41 @@ mod tests {
         let (s2, corpo) = requisicao(estado, "GET", "/api/v1/orgs/acme/membros", &cookie, "").await;
         assert_eq!(s2, StatusCode::OK);
         assert!(!String::from_utf8_lossy(&corpo).contains("\"u2\""), "u2 saiu da lista: {}", String::from_utf8_lossy(&corpo));
+    }
+
+    // #1620: remover o ÚLTIMO OrgAdmin (aqui, AUTO-remoção — o alvo é o próprio requester) ⇒ 409
+    // `ultimo_admin`, e ele NÃO some (recusa por CONSTRUÇÃO na autz, antes da escrita).
+    #[tokio::test]
+    async fn remover_ultimo_admin_e_409() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member); // adm=OrgAdmin (ÚNICO), u2=Member
+        let (s, corpo) = requisicao(estado.clone(), "DELETE", "/api/v1/orgs/acme/membros/adm", &cookie, "").await;
+        assert_eq!(s, StatusCode::CONFLICT, "remover o último admin ⇒ 409: {}", String::from_utf8_lossy(&corpo));
+        assert!(
+            String::from_utf8_lossy(&corpo).contains("ultimo_admin"),
+            "slug `ultimo_admin` (não `negado`) — a UI mostra 'promove outro admin antes': {}",
+            String::from_utf8_lossy(&corpo)
+        );
+        let (_s2, lista) = requisicao(estado, "GET", "/api/v1/orgs/acme/membros", &cookie, "").await;
+        assert!(String::from_utf8_lossy(&lista).contains("\"adm\""), "o admin continua lá (guarda antes da escrita)");
+    }
+
+    // #1620 (MUTANTE): remover um admin quando há DOIS admins PASSA (204) — senão a guarda seria
+    // "recusa sempre" e ninguém notaria. Gêmeo do teste-mutante do crate, agora no fio.
+    #[tokio::test]
+    async fn remover_admin_com_dois_admins_e_204() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::OrgAdmin); // adm + u2 = DOIS admins
+        let (s, _) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/membros/u2", &cookie, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "com dois admins, remover um passa ⇒ 204");
+    }
+
+    // #1620: rebaixar o ÚLTIMO OrgAdmin (PATCH p/ `member`) ⇒ 409 `ultimo_admin` (deixaria zero admin).
+    #[tokio::test]
+    async fn rebaixar_ultimo_admin_e_409() {
+        let (estado, cookie) = borda_acme_com_u2(Papel::Member); // adm = único admin
+        let (s, corpo) =
+            requisicao(estado, "PATCH", "/api/v1/orgs/acme/membros/adm", &cookie, r#"{"papel":"member"}"#).await;
+        assert_eq!(s, StatusCode::CONFLICT, "rebaixar o último admin ⇒ 409: {}", String::from_utf8_lossy(&corpo));
+        assert!(String::from_utf8_lossy(&corpo).contains("ultimo_admin"));
     }
 
     // DELETE de um uid que NÃO é membro ⇒ 404 (à admin, que pode ver — não é oráculo).
