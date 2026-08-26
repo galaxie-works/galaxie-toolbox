@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
 import {
   DICIONARIOS,
@@ -10,6 +10,7 @@ import {
   buscar,
   minhasOrgs,
   estaSuspensa,
+  removerMembro,
   CAMINHOS,
   type Membro,
   type Dominio,
@@ -262,9 +263,25 @@ function avisoDoEstado(
  * dois acertos independentes, e o terceiro painel dependeria de três. É a mesma
  * razão da porta de rede única: um invariante deve morar num lugar só.
  */
-function useRecurso<T>(caminho: string): { estado: EstadoRecurso; dados: T | null } {
+function useRecurso<T>(caminho: string): {
+  estado: EstadoRecurso;
+  dados: T | null;
+  /**
+   * Relê do SERVIDOR. Existe para as escritas (#1490 fatia 3): depois de um
+   * `DELETE` a lista tem de vir da borda, não de uma remoção otimista no
+   * array local.
+   *
+   * A diferença não é estética. Otimista, a tela mostraria o resultado que o
+   * cliente **supôs** — e se a borda tivesse recusado por uma razão que o
+   * cliente não modela, ou removido mais do que o pedido, a tela mentiria até
+   * ao próximo F5. Reler é a única forma de o que está no ecrã ser o que está
+   * no servidor.
+   */
+  recarregar: () => void;
+} {
   const [estado, setEstado] = useState<EstadoRecurso>("carregando");
   const [dados, setDados] = useState<T | null>(null);
+  const [gatilho, setGatilho] = useState(0);
 
   useEffect(() => {
     let vivo = true;
@@ -277,12 +294,72 @@ function useRecurso<T>(caminho: string): { estado: EstadoRecurso; dados: T | nul
     return () => {
       vivo = false;
     };
-  }, [caminho]);
+  }, [caminho, gatilho]);
 
-  return { estado, dados };
+  const recarregar = useCallback(() => setGatilho((n) => n + 1), []);
+
+  return { estado, dados, recarregar };
 }
 
-/** Membros — `GET /orgs/{org}/membros`. */
+/**
+ * Confirmação de remoção — **nomeia quem sai e diz o efeito**.
+ *
+ * Mesmo desenho do `ConfirmarSuspensao` do back-office, e pela mesma razão que
+ * lá está escrita: um "tem certeza?" genérico clica-se no automático. Aqui o
+ * dano é uma pessoa fora da organização com a sessão cortada na hora, então
+ * quem confirma tem de LER o nome e o e-mail de quem vai remover.
+ *
+ * O e-mail vai junto de propósito: dois membros podem chamar-se igual, e o
+ * nome sozinho não distingue quem está prestes a perder o acesso.
+ */
+function ConfirmarRemocao({
+  idioma,
+  membro,
+  aoConfirmar,
+  aoCancelar,
+}: {
+  idioma: Idioma;
+  membro: Membro;
+  aoConfirmar: () => void;
+  aoCancelar: () => void;
+}) {
+  const t = DICIONARIOS[idioma];
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={t.removerTitulo}
+      className="fixed inset-0 flex items-center justify-center bg-neutral-900/40 p-4"
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-sm">
+        <h2 className="font-medium text-neutral-900">{t.removerTitulo}</h2>
+        <p className="mt-2 text-neutral-900">
+          <strong>{membro.nome}</strong>
+        </p>
+        <p className="text-neutral-600">{membro.email}</p>
+        <p className="mt-2 text-neutral-500">{t.removerAviso}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={aoCancelar}
+            className="rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100"
+          >
+            {t.cancelar}
+          </button>
+          <button
+            type="button"
+            onClick={aoConfirmar}
+            className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-700"
+          >
+            {t.remover}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Membros — `GET /orgs/{org}/membros` + `DELETE /orgs/{org}/membros/{uid}`. */
 function PainelMembros({
   idioma,
   org,
@@ -293,34 +370,133 @@ function PainelMembros({
   suspensa: boolean;
 }) {
   const t = DICIONARIOS[idioma];
-  const { estado, dados } = useRecurso<Membro[]>(CAMINHOS.membros(org));
+  const { estado, dados, recarregar } = useRecurso<Membro[]>(
+    CAMINHOS.membros(org),
+  );
   const membros = dados ?? [];
+  const [aConfirmar, setAConfirmar] = useState<Membro | null>(null);
+  /**
+   * A recusa da borda, quando houve uma.
+   *
+   * Guardo o ESTADO devolvido, não uma frase — a frase escolhe-se na
+   * renderização, a partir do dicionário do idioma corrente. Guardar texto aqui
+   * congelaria o idioma no instante do clique.
+   */
+  const [recusa, setRecusa] = useState<
+    "ultimoAdmin" | "conflito" | "erro" | null
+  >(null);
 
   const aviso = avisoDoEstado(estado, t, suspensa);
   if (aviso) return aviso;
 
+  async function confirmar(membro: Membro) {
+    setAConfirmar(null);
+    setRecusa(null);
+    const r = await removerMembro(org, membro.uid);
+    if (r.estado === "feito") {
+      // RELÊ do servidor. Nada de tirar a linha do array local: ver o
+      // `recarregar` do `useRecurso`.
+      recarregar();
+      return;
+    }
+    if (r.estado === "ultimoAdmin") {
+      setRecusa("ultimoAdmin");
+      return;
+    }
+    if (r.estado === "conflito") {
+      setRecusa("conflito");
+      return;
+    }
+    // As restantes (401/403/404) são estados da PÁGINA, não desta linha: relê e
+    // deixa o `avisoDoEstado` dizer o que é — é ele que já distingue 403 de 404
+    // e a org suspensa. Repetir essa escada aqui seria o segundo acerto que o
+    // ponto único existe para evitar.
+    if (
+      r.estado === "naoAutenticado" ||
+      r.estado === "naoEhAdmin" ||
+      r.estado === "orgSuspensa" ||
+      r.estado === "naoEhSuaOrg"
+    ) {
+      recarregar();
+      return;
+    }
+    setRecusa("erro");
+  }
+
   return (
-    <table className="w-full text-left text-sm">
-      <thead>
-        <tr className="text-neutral-500">
-          <th className="pb-2 font-medium">{t.nome}</th>
-          <th className="pb-2 font-medium">{t.email}</th>
-          <th className="pb-2 font-medium">{t.papel}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {membros.map((m) => (
-          <tr key={m.uid} className="border-t border-neutral-100">
-            <td className="py-2 text-neutral-900">{m.nome}</td>
-            <td className="py-2 text-neutral-600">{m.email}</td>
-            <td className="py-2 text-neutral-600">
-              {/* Rótulo do papel — leitura, não permissão. Ver `lib/org.ts`. */}
-              {m.papel === "org_admin" ? t.papelAdmin : t.papelMembro}
-            </td>
+    <>
+      {recusa === "ultimoAdmin" ? (
+        // Região viva NOMEADA — a página já tem outra (`role="status"` da faixa
+        // de suspensão), e duas sem nome ficam indistinguíveis para quem usa
+        // leitor de ecrã. Foi o achado da @Íris no #1544.
+        <div
+          role="status"
+          aria-label={t.ultimoAdmin}
+          className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4"
+        >
+          <p className="text-sm font-medium text-amber-900">{t.ultimoAdmin}</p>
+          <p className="mt-1 text-sm text-amber-800">{t.ultimoAdminDetalhe}</p>
+        </div>
+      ) : recusa !== null ? (
+        <div
+          role="status"
+          aria-label={t.removerFalhou}
+          className="mb-4 rounded-2xl border border-neutral-300 bg-neutral-50 p-4"
+        >
+          <p className="text-sm font-medium text-neutral-900">
+            {t.removerFalhou}
+          </p>
+        </div>
+      ) : null}
+
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="text-neutral-500">
+            <th className="pb-2 font-medium">{t.nome}</th>
+            <th className="pb-2 font-medium">{t.email}</th>
+            <th className="pb-2 font-medium">{t.papel}</th>
+            <th className="pb-2 font-medium">
+              <span className="sr-only">{t.remover}</span>
+            </th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {membros.map((m) => (
+            <tr key={m.uid} className="border-t border-neutral-100">
+              <td className="py-2 text-neutral-900">{m.nome}</td>
+              <td className="py-2 text-neutral-600">{m.email}</td>
+              <td className="py-2 text-neutral-600">
+                {/* Rótulo do papel — leitura, não permissão. Ver `lib/org.ts`. */}
+                {m.papel === "org_admin" ? t.papelAdmin : t.papelMembro}
+              </td>
+              <td className="py-2 text-right">
+                {/* O botão aparece para TODOS, inclusive o último admin. Esconder
+                    seria a UI a decidir autorização — a mesma doutrina do
+                    cabeçalho deste ficheiro. Quem recusa é a borda (`409
+                    ultimo_admin`), e a recusa vira uma mensagem que diz o que
+                    fazer a seguir. Esconder ensinaria menos e mentiria mais. */}
+                <button
+                  type="button"
+                  onClick={() => setAConfirmar(m)}
+                  className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100"
+                >
+                  {t.remover}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {aConfirmar ? (
+        <ConfirmarRemocao
+          idioma={idioma}
+          membro={aConfirmar}
+          aoConfirmar={() => void confirmar(aConfirmar)}
+          aoCancelar={() => setAConfirmar(null)}
+        />
+      ) : null}
+    </>
   );
 }
 
