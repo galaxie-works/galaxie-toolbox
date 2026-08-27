@@ -13,8 +13,9 @@
 //!     travessia de NAT do #1130(b), rodado de um host de IP público.
 //!
 //! ⚠️ FRONTEIRA DO SEGREDO: o probe NÃO embute o `turn_secret`. A credencial vem
-//! por `--credential` (de um `Registered` v1 real). A derivação local a partir do
-//! `turn_secret` é opt-in explícito (`--derive`) e só sob go do PO.
+//! SEMPRE por `--credential` (de um `Registered` v1 real) — hoje é argv-only.
+//! Derivar a credencial localmente do `turn_secret` fica como follow-up explícito
+//! (sob go do PO); NÃO está implementado aqui.
 //!
 //! ⚠️ Toca o coturn de PRODUÇÃO (aloca relays reais). Correr só após aviso na
 //! #1666 (o gate de produção do @galaxie-altair veria a corrida como anomalia),
@@ -72,9 +73,12 @@ fn classify_allocate(resp: &[u8], txid: &[u8; 12], authenticated: bool) -> Alloc
 
 #[derive(Debug)]
 enum ProbeError {
-    /// O secret local pedido por `--derive` está ausente/ilegível — mensagem
-    /// PRÓPRIA, nunca confundida com "relay falhou" (nuance #3 do @galaxie-alcor).
+    /// Credencial ausente/ilegível — mensagem PRÓPRIA, nunca confundida com
+    /// "relay falhou" (nuance #3 do @galaxie-alcor).
     SecretAbsent(String),
+    /// `expires_at` do username já passou — pré-check antes do round-trip (nuance
+    /// #2 do @galaxie-alcor); poupa um `AuthFailed` confuso na corrida de prod.
+    Expirada(String),
     /// Credencial rejeitada pelo coturn (401 autenticado).
     AuthFailed,
     /// Sem resposta dentro do timeout.
@@ -87,7 +91,8 @@ enum ProbeError {
 impl std::fmt::Display for ProbeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProbeError::SecretAbsent(m) => write!(f, "secret local ausente/ilegível: {m}"),
+            ProbeError::SecretAbsent(m) => write!(f, "credencial ausente/ilegível: {m}"),
+            ProbeError::Expirada(m) => write!(f, "{m}"),
             ProbeError::AuthFailed => write!(
                 f,
                 "credencial REJEITADA pelo coturn (401 autenticado) — cred errada/expirada, \
@@ -139,6 +144,22 @@ fn allocate(
     username: &str,
     credential: &str,
 ) -> Result<Allocation, ProbeError> {
+    // Fail-fast de expiração (nuance #2 do @galaxie-alcor): username = "{expires_at}:{device_id}".
+    // Pega uma cred stale ANTES do round-trip, em vez de um AuthFailed confuso.
+    if let Some((exp, _)) = username.split_once(':') {
+        if let Ok(exp) = exp.parse::<u64>() {
+            let agora = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if exp != 0 && exp < agora {
+                return Err(ProbeError::Expirada(format!(
+                    "credencial expirada (expires_at={exp} < agora={agora}) — pega um Registered v1 fresco"
+                )));
+            }
+        }
+    }
+
     // 1º Allocate SEM auth — esperamos o desafio 401 (NÃO é falha).
     let txid0 = novo_txid();
     let resp = troca(sock, server, &build_allocate_request(&txid0))?;
@@ -204,20 +225,30 @@ fn create_permission(
     username: &str,
     peer: SocketAddr,
 ) -> Result<(), ProbeError> {
-    let txid = novo_txid();
-    let req = build_create_permission_request(
-        &txid, peer, username, &alloc.realm, &alloc.nonce, &alloc.key,
-    );
-    let resp = troca(sock, server, &req)?;
-    if parse_create_permission_success(&resp, &txid) {
-        Ok(())
-    } else if let Some(_novo) = parse_stale_nonce(&resp, &txid) {
-        Err(ProbeError::Unexpected("CreatePermission voltou stale-nonce".into()))
-    } else {
-        Err(ProbeError::Unexpected(format!(
-            "CreatePermission sem sucesso pra peer {peer}"
-        )))
+    // Retry de stale-nonce simétrico ao `allocate` (nit do @galaxie-alcor): o nonce
+    // pode rodar entre o Allocate e o CreatePermission.
+    let mut nonce = alloc.nonce.clone();
+    for tentativa in 0..2 {
+        let txid = novo_txid();
+        let req = build_create_permission_request(
+            &txid, peer, username, &alloc.realm, &nonce, &alloc.key,
+        );
+        let resp = troca(sock, server, &req)?;
+        if parse_create_permission_success(&resp, &txid) {
+            return Ok(());
+        }
+        match parse_stale_nonce(&resp, &txid) {
+            Some(novo) if tentativa == 0 => nonce = novo, // reemite com o nonce novo
+            _ => {
+                return Err(ProbeError::Unexpected(format!(
+                    "CreatePermission sem sucesso pra peer {peer}"
+                )))
+            }
+        }
     }
+    Err(ProbeError::Unexpected(
+        "CreatePermission: stale-nonce persistente após retry".into(),
+    ))
 }
 
 /// Envia `payload` a `peer` pelo relay (Send Indication) e espera recebê-lo de
