@@ -37,7 +37,10 @@ foreach ($papel in $papeis) {
   }
   $items = $resp.Content | ConvertFrom-Json
   $seen  = @(); if ($st -and $st.seenIds) { $seen = @($st.seenIds) }
-  $novos = @($items | Where-Object { $_.unread -and ($_.id -notin $seen) })
+  # chave de dedup = id:updated_at — o id da thread e o MESMO pra sempre por issue, entao
+  # dedup por id puro deixa o papel SURDO a mencoes novas na mesma issue (bug medido 27/08:
+  # 2 comentarios do PO na #1636 mencionando 5 papeis, so o 1o-da-thread foi entregue)
+  $novos = @($items | Where-Object { $_.unread -and (("{0}:{1}" -f $_.id, $_.updated_at) -notin $seen) })
   if ($novos.Count -gt 0) {
     $payload = $novos | ForEach-Object {
       # url de API -> url humana aproximada (issues/pulls)
@@ -60,7 +63,7 @@ foreach ($papel in $papeis) {
     }
   }
   # atualiza estado (lastModified do servidor + ids vistos, janela de 200)
-  $newSeen = @($seen + @($items | ForEach-Object { $_.id })) | Select-Object -Unique | Select-Object -Last 200
+  $newSeen = @($seen + @($items | ForEach-Object { "{0}:{1}" -f $_.id, $_.updated_at })) | Select-Object -Unique | Select-Object -Last 200
   $lm = $resp.Headers["Last-Modified"]; if ($lm -is [array]) { $lm = $lm[0] }
   $entry = [pscustomobject]@{ lastModified = $lm; seenIds = $newSeen }
   if ($state.PSObject.Properties[$papel]) { $state.$papel = $entry } else { $state | Add-Member -NotePropertyName $papel -NotePropertyValue $entry }
