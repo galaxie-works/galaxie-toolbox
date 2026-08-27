@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.19 · 2026-08-27 · identidade gh por-invocação (não escrever no estado da máquina; guard de boot de 3 desfechos) · ratificação PENDENTE (emergência declarada pelo PO) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.19 · 2026-08-27 · identidade gh por-invocação (não escrever no estado da máquina; guard de boot de 3 desfechos) · ratificado pelo PO na PR #1649 · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
