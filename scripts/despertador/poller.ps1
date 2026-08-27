@@ -42,10 +42,14 @@ foreach ($papel in $papeis) {
       $hurl = $_.subject.url -replace 'api\.github\.com/repos','github.com' -replace '/pulls/','/pull/'
       [pscustomobject]@{ id=$_.id; motivo=$_.reason; tipo=$_.subject.type; titulo=$_.subject.title; url=$hurl; repo=$_.repository.full_name; quando=$_.updated_at }
     }
-    $out = Join-Path $inbox "$papel.json"
-    $existing = if (Test-Path $out) { @((Get-Content $out -Raw | ConvertFrom-Json)) } else { @() }
-    ($existing + $payload) | ConvertTo-Json -Depth 4 | Set-Content -Path $out -Encoding UTF8
-    Log "$papel : +$($novos.Count) notificacao(oes)"
+    # lote IMUTAVEL por rodada (papel_<carimboUTC>.json): nunca anexa a arquivo existente.
+    # Escreve em .tmp e renomeia — o consumidor (Porteiro) so ve arquivos completos e
+    # nunca ha leitura/escrita concorrente no MESMO arquivo (fix do review P2, PR #1650).
+    $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfff")
+    $out = Join-Path $inbox ("{0}_{1}.json" -f $papel, $stamp)
+    ,@($payload) | ConvertTo-Json -Depth 4 | Set-Content -Path "$out.tmp" -Encoding UTF8
+    Move-Item -Path "$out.tmp" -Destination $out -Force
+    Log "$papel : +$($novos.Count) notificacao(oes) -> $(Split-Path $out -Leaf)"
   }
   # atualiza estado (lastModified do servidor + ids vistos, janela de 200)
   $newSeen = @($seen + @($items | ForEach-Object { $_.id })) | Select-Object -Unique | Select-Object -Last 200

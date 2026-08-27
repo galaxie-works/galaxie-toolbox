@@ -29,7 +29,8 @@ Write-Host @"
 
 === FALTA FAZER NA MAO (DPAPI nao sobrevive a formatacao) ===
 1. COFRE: emitir PAT novo em cada conta galaxie-<papel> (escopos: repo + notifications + workflow)
-   e gravar via:  scripts\galaxie-pat.ps1 -Name <papel> -Set   (11x)
+   e gravar rodando  scripts\galaxie-pat.ps1  SEM argumentos: abre o loop interativo
+   que pede o PAT de cada papel (cola+Enter; Enter vazio pula). Com -Name o script LE, nao grava.
 2. PORTEIRO: abrir sessao 'Porteiro' (Haiku 4.5, cwd = repo) e colar BOOT-PORTEIRO.md
 3. sessoes.json: preencher com os session_id ccd atuais (list_sessions)
 4. PROTOCOLO DE AMANHECER: apos qualquer reboot/fechar o app, dar um toque no Porteiro
