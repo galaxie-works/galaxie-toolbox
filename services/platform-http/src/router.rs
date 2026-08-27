@@ -487,19 +487,9 @@ fn colecao_de_config_do_usuario(estado: &EstadoBorda, sessao: &Sessao) -> Respon
     // O domínio decide (owner-scope/allowlist/validação). A borda NÃO achata as variantes (2 achados
     // do @Altair na PR #1579): cada uma tem a sua direção segura, e o log NÃO pode afirmar uma causa
     // pelas três.
-    // ⚠️ SE ALGUÉM TROCAR ESTE `None` POR `Some(alvo)` — a rota cross-user (`/users/{id}/config`) —
-    // LEIA ISTO PRIMEIRO. É aqui que a config deixa de ser só a própria, e duas precondições passam
-    // a valer. Estão neste comentário e não num card porque **esta linha é a que é impossível não
-    // editar** para as violar; um card, quem chega aqui não sabe que existe.
-    //
-    //  - **#1589 (FEITO):** o ramo NEGADO já emite auditoria pelo funil da crate. Ao passar
-    //    `Some(alvo)`, pedir a config alheia passa a deixar rasto sem esta rota fazer nada — a
-    //    sondagem é auditada por construção, não por o handler se lembrar.
-    //  - **#1591 (POR FAZER):** o `EventoAutz.alvo` é `Option<&OrgId>` e **não consegue exprimir o
-    //    UTILIZADOR alvejado** — hoje o evento sai com `alvo: None`. Enquanto assim for, a trilha
-    //    regista QUEM sondou e não CONTRA QUEM: `A` a tentar 1 e `A` a tentar 500 ficam idênticos,
-    //    e a forma da sondagem é justamente a distribuição sobre alvos. **Faça o #1591 antes desta
-    //    rota** — trilha que não diz contra quem é pior que trilha vazia, porque parece cobertura.
+    // ⚠️ Trocar este `None` por `Some(alvo)` torna a chamada CROSS-USER: as precondições
+    // (#1589 feito, #1591) estão na doc de `configs_do_usuario`, que é onde toda rota
+    // cross-user tem de passar — um handler novo não leria um aviso deixado aqui.
     let itens = match configs_do_usuario(sessao, None, prefs_brutas, &*estado.auditor) {
         Ok(itens) => itens,
         // `NaoEncontrado` = owner-scope: config de OUTRO principal. **Hoje LATENTE** (passo `None` como
