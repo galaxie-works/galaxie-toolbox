@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.17 · 2026-08-27 · migração conta-por-papel + gate Codex + DoR · ratificação PENDENTE (emergência declarada pelo PO — regularizar por comentário escrito na PR) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.17 · 2026-08-27 · migração conta-por-papel + gate Codex + DoR · ratificado pelo PO na PR #1644 (02:24Z) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
