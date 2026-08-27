@@ -62,11 +62,20 @@ export function Alerta({
       : tom === "erro"
         ? "rounded-2xl border border-destructive/30 bg-destructive/10 p-4"
         : "text-sm";
+  // Cor do texto por tom. ⚠️ `erro` NÃO usa `text-destructive-foreground`: esse
+  // token é quase-branco DE PROPÓSITO — contrasta com o vermelho SÓLIDO do
+  // `--destructive` (4.56:1). Mas o fundo aqui é `bg-destructive/10` (tinta clara
+  // sobre a página branca), onde o quase-branco dá ~1.14:1 — ilegível (P1 do Codex
+  // na #1640). Sobre a tinta o texto tem de ser vermelho ESCURO: `red-800` = 7.01:1
+  // (AA). `text-destructive` (o vermelho médio) só daria 3.99:1 e reprovaria. O
+  // `aviso` PODE usar o seu token porque `--warning-foreground` já é escuro
+  // (yellow-900) e lê bem na tinta — a assimetria no código espelha a assimetria
+  // real dos tokens. Cor crua como o `simples` abaixo. Guarda: `alerta.contrast.test.ts`.
   const corTitulo =
     tom === "aviso"
       ? "text-warning-foreground"
       : tom === "erro"
-        ? "text-destructive-foreground"
+        ? "text-red-800"
         : "text-neutral-900";
   const corDetalhe = tom === "simples" ? "text-neutral-500" : corTitulo;
 
