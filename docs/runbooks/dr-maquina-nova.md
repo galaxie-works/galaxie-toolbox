@@ -77,7 +77,9 @@ Cada papel tem conta própria `galaxie-<papel>`; os tokens saem do gestor de seg
 $env:GH_TOKEN = & .\scripts\galaxie-pat.ps1 -Name altair
 gh api user --jq .login          # tem de dizer: galaxie-altair
 ```
-⚠️ **Verifica com `gh api user`, NUNCA com `gh auth status`.** O script põe o PAT em `$env:GH_TOKEN` **por invocação** e **não toca no keyring** — de propósito, para não atropelar as outras sessões. O `gh auth status` lê o keyring partilhado e mostraria outra conta: **falso-negativo**.
+⚠️ **Verifica com `gh api user`, NUNCA com `gh auth status`.** O script põe o PAT em `$env:GH_TOKEN` **por invocação** e **não toca no keyring** — de propósito, para não atropelar as outras sessões.
+
+🔑 **A razão exata: `gh auth status` relata CONFIGURAÇÃO LOCAL; `gh api user` resolve IDENTIDADE NO SERVIDOR.** Com o `GH_TOKEN` vivo, o `auth status` mostra `(GH_TOKEN) Active: true` — não é um falso-negativo limpo, é **ambíguo**, que é pior. O `gh api user` bate no servidor, e por isso apanha **conta errada, token revogado e `Bad credentials`** — exatamente o que um DR precisa de distinguir. *(Correção da @galaxie-polaris sobre medição da @galaxie-mira; a minha primeira redação dizia "falso-negativo" e era imprecisa.)*
 
 🔴 **E se o `gh api user` FALHAR (`Bad credentials`), pára — não é o mesmo que devolver o nome errado.** Um token inválido cega REST *e* GraphQL, e o erro é **indistinguível de "não encontrei nada"**. Três desfechos, não dois: nome certo → segue · nome errado → pára · **chamada falhou → pára, e investiga o token**.
 
