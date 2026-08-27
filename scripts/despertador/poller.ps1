@@ -22,8 +22,10 @@ foreach ($papel in $papeis) {
   $tok = $null
   try { $tok = & $patScript -Name $papel 2>$null } catch { }
   if (-not $tok) { Log "AVISO ${papel}: sem PAT no cofre"; continue }
-  $st = $state.PSObject.Properties[$papel]?.Value
-  $lastMod = $st?.lastModified
+  # acesso por PONTO: a forma $state.PSObject.Properties[$papel]?.Value devolve NULL neste pwsh
+  # (bug medido 27/08: seen chegava vazio toda rodada -> dedup nunca filtrava -> lotes duplicados)
+  $st = $state.$papel
+  $lastMod = if ($st) { $st.lastModified } else { $null }
   $headers = @{ Authorization = "Bearer $tok"; Accept = "application/vnd.github+json"; "X-GitHub-Api-Version" = "2022-11-28" }
   if ($lastMod) { $headers["If-Modified-Since"] = $lastMod }
   try {
@@ -34,7 +36,7 @@ foreach ($papel in $papeis) {
     Log "AVISO ${papel}: HTTP $code"; continue
   }
   $items = $resp.Content | ConvertFrom-Json
-  $seen  = @($st?.seenIds)
+  $seen  = @(); if ($st -and $st.seenIds) { $seen = @($st.seenIds) }
   $novos = @($items | Where-Object { $_.unread -and ($_.id -notin $seen) })
   if ($novos.Count -gt 0) {
     $payload = $novos | ForEach-Object {
@@ -50,6 +52,12 @@ foreach ($papel in $papeis) {
     ,@($payload) | ConvertTo-Json -Depth 4 | Set-Content -Path "$out.tmp" -Encoding UTF8
     Move-Item -Path "$out.tmp" -Destination $out -Force
     Log "$papel : +$($novos.Count) notificacao(oes) -> $(Split-Path $out -Leaf)"
+    # cinto-e-suspensorio: marca a thread como LIDA no servidor apos lotear —
+    # mesmo que o state.json se perca, o GitHub para de devolver o item (dedup na fonte)
+    foreach($nv in $novos){
+      try { Invoke-WebRequest -Method Patch -Uri "https://api.github.com/notifications/threads/$($nv.id)" -Headers $headers -UseBasicParsing | Out-Null }
+      catch { Log "AVISO ${papel}: falha ao marcar lida thread $($nv.id)" }
+    }
   }
   # atualiza estado (lastModified do servidor + ids vistos, janela de 200)
   $newSeen = @($seen + @($items | ForEach-Object { $_.id })) | Select-Object -Unique | Select-Object -Last 200
