@@ -21,7 +21,9 @@ if (-not (Test-Path $sess)) {
 }
 
 # 4. task agendada (5 em 5 min, usuario atual)
-schtasks /Create /TN "GALAXIE-Despertador" /TR "pwsh -NoProfile -ExecutionPolicy Bypass -File $dest\poller.ps1" /SC MINUTE /MO 5 /F | Out-Null
+# pwsh por caminho ABSOLUTO: o alias curto nao resolve no Task Scheduler (Store install = 0x80070002; pago em producao 27/08)
+$pwshPath = (Get-Command pwsh).Source
+schtasks /Create /TN "GALAXIE-Despertador" /TR "`"$pwshPath`" -NoProfile -ExecutionPolicy Bypass -File $dest\poller.ps1" /SC MINUTE /MO 5 /F | Out-Null
 Write-Host "Task 'GALAXIE-Despertador' registrada (5 min)." -ForegroundColor Green
 
 # 5. checklist do que o script NAO consegue fazer (maquina nova = cofre morto)
