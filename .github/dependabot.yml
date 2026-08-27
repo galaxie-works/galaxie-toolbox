@@ -1,0 +1,13 @@
+# #1637: as GitHub Actions estão presas por SHA de commit (não por tag mutável) —
+# defesa de supply-chain. Um SHA pinado é IMUTÁVEL mas ENVELHECE: sem manutenção,
+# perde correções de segurança da própria action. O Dependabot fecha essa ponta —
+# abre PR a subir o SHA (e o tag no comentário) quando a action lança versão nova,
+# mantendo o pin fresco sem trabalho manual. Semanal p/ não inundar de PRs.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
