@@ -96,14 +96,14 @@ try {
       $jaAvisados = @(); if ($state._fila) { $jaAvisados = @($state._fila) }
       $novosOrfaos = @($orfaos | Where-Object { $_.num -notin $jaAvisados })
       if ($novosOrfaos.Count -gt 0) {
-        # destinatario = MIRA (groomer): ela @-menciona o dev da raia no card (pedido nominal, §3);
-        # o dev PUXA e auto-atribui (§2). SM nunca despacha card-a-card (coluna NUNCA, v1.19) —
-        # corrigido 31/08 apos veto por canon do Polaris V.
+        # destinatario = POLARIS (SM): decreto do PO 31/08 revoga o "nunca despacha card-a-card"
+        # da coluna do SM para o caso FILA PARADA — fila sinalizada pelo vigia = SM atribui o dev
+        # da raia e move o card. Dev-pull (§2) segue como caminho feliz de dev acordado.
         $payload = $novosOrfaos | ForEach-Object {
-          [pscustomobject]@{ id="fila-$($_.num)"; motivo="fila-ready-sem-dono"; tipo="Issue"; titulo="[FILA PARADA] Ready sem dono: $($_.titulo) — DESPACHA: atribui (assign) o dev da raia no card e move (decreto do PO 31/08: fila parada = despacho ativo; dev-pull e o caminho feliz, nao o unico)"; url="https://github.com/galaxie-works/galaxie-toolbox/issues/$($_.num)"; repo="galaxie-works/galaxie-toolbox"; quando=$agora.ToString("o") }
+          [pscustomobject]@{ id="fila-$($_.num)"; motivo="fila-ready-sem-dono"; tipo="Issue"; titulo="[FILA PARADA] Ready sem dono: $($_.titulo) — DESPACHA: atribui (assign) o dev da raia no card e move (decreto do PO 31/08 revoga o 'nunca despacha' do SM para fila parada; dev-pull segue como caminho feliz)"; url="https://github.com/galaxie-works/galaxie-toolbox/issues/$($_.num)"; repo="galaxie-works/galaxie-toolbox"; quando=$agora.ToString("o") }
         }
         $stampF = $agora.ToString("yyyyMMddTHHmmssfff")
-        $outF = Join-Path $inbox ("mira_{0}.json" -f $stampF)
+        $outF = Join-Path $inbox ("polaris_{0}.json" -f $stampF)
         ,@($payload) | ConvertTo-Json -Depth 4 | Set-Content -Path "$outF.tmp" -Encoding UTF8
         Move-Item -Path "$outF.tmp" -Destination $outF -Force
         Log "FILA: +$($novosOrfaos.Count) card(s) Ready sem dono -> $(Split-Path $outF -Leaf)"
