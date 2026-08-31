@@ -63,6 +63,16 @@ fn intervalo_refresh(lifetime_s: u32) -> Duration {
     Duration::from_secs(tres_quartos).max(Duration::from_secs(60))
 }
 
+/// #1527: a antecedência da reemissão da CREDENCIAL a partir de AGORA — 3/4 do `ttl_seconds`
+/// (a DURAÇÃO da credencial, vinda do fio no `IceServer`). Calculada TUDO no relógio do
+/// cliente ⇒ IMUNE a skew: usar `expires_at`(servidor) − `now`(cliente) carregaria o desvio
+/// inteiro, e um cliente ATRASADO agendaria a reemissão DEPOIS de a credencial morrer (a
+/// sessão cai — o defeito que este card existe pra matar). A duração não tem esse problema.
+/// (Achado do @galaxie-altair no #1527; a mesma correção que o FE fez no `remote-ttl.ts`.)
+fn antecedencia_reemissao(ttl_seconds: u64) -> Duration {
+    Duration::from_secs(ttl_seconds.saturating_mul(3) / 4)
+}
+
 #[derive(Default)]
 pub struct RemoteRuntime {
     active: Mutex<Option<ActiveSession>>,
@@ -290,6 +300,12 @@ struct RelayState {
     /// Quando reenviar o Refresh da alocação (antes do lifetime expirar) — senão o
     /// coturn libera o relay e a sessão CAI.
     refresh_em: Instant,
+    /// #1527: quando REEMITIR a CREDENCIAL (Allocate novo sobrepondo), a 3/4 do
+    /// `ttl_seconds` (duração, do fio — imune a skew). DISTINTO do `refresh_em` (que renova
+    /// o LIFETIME da alocação; a credencial morrer é outro furo — o `Refresh` não a salva,
+    /// porque a alocação é amarrada ao username que a criou). `None` = sem `ttl_seconds` no
+    /// `IceServer` (o FE ainda não forwarda a duração — fatia B) ⇒ relógio desarmado.
+    reemitir_em: Option<Instant>,
     /// Peers com CreatePermission instalada → quando REEMITIR (a permissão do coturn
     /// expira em ~300s; sem reemitir, o relay dropa o peer no meio da sessão). Chave =
     /// IP do peer (a permissão é por IP, RFC 5766 §9).
@@ -763,8 +779,10 @@ impl RuntimeSession {
         // coturn seriam fallback, improvável no MVP). NÃO-fatal: sem relay a sessão
         // segue host/srflx, exatamente como antes.
         let mut relay: Option<RelayState> = None;
-        for (turn_server, username, credential) in &turn_alvos {
-            if let Some(estado) = gather_relay(&socket, *turn_server, username, credential) {
+        for (turn_server, username, credential, ttl_seconds) in &turn_alvos {
+            if let Some(estado) =
+                gather_relay(&socket, *turn_server, username, credential, *ttl_seconds)
+            {
                 transport
                     .candidato_relay(estado.relayed)
                     .map_err(transport_error)?;
@@ -1062,6 +1080,26 @@ impl RuntimeSession {
             return Ok(());
         };
         let agora = Instant::now();
+        // #1527: relógio da CREDENCIAL (distinto do Refresh do lifetime). Dispara a 3/4 do
+        // `ttl_seconds` (duração, imune a skew) e sinaliza que precisa de credencial NOVA — o
+        // `Refresh` não a salva (a alocação é amarrada ao username que a criou, AC3). Limpa
+        // pra sinalizar UMA vez; quando a credencial nova chega (fatia B → comando), a fatia 2
+        // faz o Allocate NOVO sobrepondo + troca o data-path + libera o antigo.
+        //
+        // ⚠️ REQUISITO DA FATIA B (Altair, review do #1700 — o aviso mora AQUI, no site onde a
+        // credencial nova é aplicada, não só no card): ao reaplicar a credencial nova, REARMAR
+        // `relay.reemitir_em = Some(Instant::now() + antecedencia_reemissao(ttl_novo))`. Sem
+        // rearme, a 1ª reemissão funciona e a 2ª NUNCA acontece ⇒ a sessão cai no 2º TTL com a
+        // funcionalidade a PARECER entregue (a família "auto-desligar silencioso", no futuro).
+        // E quando o FE passar a forwardar `ttl_seconds`, o braço `None`/`warn` do `gather_relay`
+        // deixa de ser estado desenhado e vira ANOMALIA real (o FE devia forwardar e não o fez).
+        if relay.reemitir_em.is_some_and(|t| agora >= t) {
+            relay.reemitir_em = None;
+            log::warn!(
+                "[remote] #1527: credencial TURN a 3/4 do TTL — reemissao necessaria \
+                 (sinal p/ a fatia B: RenewIceServers; o Refresh nao salva credencial expirada)"
+            );
+        }
         // 1. Refresh da alocação antes do lifetime expirar.
         if agora >= relay.refresh_em {
             let mut txid = [0u8; 12];
@@ -1604,7 +1642,7 @@ fn logar_sondagem_ice_servers(ice_servers: &[IceServer]) {
 /// fora, o Allocate aqui é UDP). Deduplica por `SocketAddr` preservando a ordem.
 /// Falha de resolução DNS é NÃO-fatal (loga o HOST e pula). O `credential` (o
 /// segredo) É CARREGADO no retorno pra o `derive_key`, mas NUNCA aparece em log.
-fn resolver_turn_alvos(ice_servers: &[IceServer]) -> Vec<(SocketAddr, String, String)> {
+fn resolver_turn_alvos(ice_servers: &[IceServer]) -> Vec<(SocketAddr, String, String, Option<u64>)> {
     let mut vistos = HashSet::new();
     let mut alvos = Vec::new();
     for server in ice_servers {
@@ -1620,6 +1658,7 @@ fn resolver_turn_alvos(ice_servers: &[IceServer]) -> Vec<(SocketAddr, String, St
                                 addr,
                                 server.username.clone(),
                                 server.credential.clone(),
+                                server.ttl_seconds, // #1527: DURAÇÃO da credencial (imune a skew)
                             ));
                         }
                     }
@@ -1688,6 +1727,7 @@ fn gather_relay(
     turn_server: SocketAddr,
     username: &str,
     credential: &str,
+    ttl_seconds: Option<u64>,
 ) -> Option<RelayState> {
     // Passo 1: Allocate sem auth → espera 401 Unauthorized com REALM/NONCE.
     let mut txid = [0u8; 12];
@@ -1716,6 +1756,16 @@ fn gather_relay(
         "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
          (renovação do lifetime = fatia 3c; segredo NÃO logado)"
     );
+    // #1527 (review do Altair, ponto 2): dá VOZ ao desarme. `warn`, não `info` — o desarme
+    // não é benigno: sem reemissão a sessão CAI no TTL. Anunciá-lo com a consequência torna
+    // "sessão cai aos ~30 min" encontrável em vez de um mistério silencioso ("ausência lida
+    // como saúde"). Some quando o FE forwardar a duração (fatia B).
+    if ttl_seconds.is_none() {
+        log::warn!(
+            "[remote] #1527: IceServer sem ttl_seconds — relógio da credencial DESARMADO \
+             (o FE ainda não forwarda o campo). A sessão vai cair no TTL."
+        );
+    }
     // Guarda a credencial pro data-path (Send indication + CreatePermission) e agenda
     // o 1º Refresh a 3/4 do lifetime (#1130 fatia 3c — "não cai").
     Some(RelayState {
@@ -1727,6 +1777,11 @@ fn gather_relay(
         key,
         lifetime_s: lifetime,
         refresh_em: Instant::now() + intervalo_refresh(lifetime),
+        // #1527: relógio da credencial — 3/4 do `ttl_seconds` (DURAÇÃO, do fio), TUDO no
+        // relógio do cliente (imune a skew). `None` = o FE ainda não forwarda a duração
+        // (fatia B) ⇒ relógio DESARMADO — escolhido por HONESTIDADE, não por segurança
+        // (o desarmado falha sempre; o `warn` abaixo torna o estado encontrável).
+        reemitir_em: ttl_seconds.map(|ttl| Instant::now() + antecedencia_reemissao(ttl)),
         permitidos: HashMap::new(),
         ultimo_txid: [0u8; 12],
     })
@@ -1775,6 +1830,17 @@ mod tests {
     use super::*;
     use galaxie_remote_transport::{BotaoMouse, CodedFrame, Tecla};
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    // ---- #1527: relógio da CREDENCIAL — antecedência 3/4 do TTL (duração, imune a skew) ----
+    #[test]
+    fn antecedencia_reemissao_e_tres_quartos_do_ttl() {
+        // ttl 1000s -> reemite a 750s (250s de margem antes de expirar), TUDO no relógio do
+        // cliente — sem subtrair `expires_at`(servidor) − now(cliente), não há skew que
+        // empurre o disparo pra DEPOIS da morte da credencial.
+        assert_eq!(antecedencia_reemissao(1000), Duration::from_secs(750));
+        assert_eq!(antecedencia_reemissao(80), Duration::from_secs(60)); // 3/4 de 80
+        assert_eq!(antecedencia_reemissao(0), Duration::ZERO); // sem TTL restante -> reemitir já
+    }
 
     // ---- #1000 (AC1/AC3): autorização por-frame do host -----------------------
     // A matriz do design do `altair` (canon v1.1 §2), exercitada pela fn PURA
@@ -2035,16 +2101,19 @@ mod tests {
                 urls: vec!["turn:127.0.0.1:3478".into()],
                 username: String::new(),
                 credential: String::new(),
+                ttl_seconds: None,
             },
             IceServer {
                 urls: vec!["turn:127.0.0.1:3479?transport=udp".into()],
                 username: "u".into(),
                 credential: "segredo".into(),
+                ttl_seconds: None,
             },
             IceServer {
                 urls: vec!["stun:127.0.0.1:3478".into()],
                 username: String::new(),
                 credential: String::new(),
+                ttl_seconds: None,
             },
         ];
         let alvos = resolver_turn_alvos(&servers);
@@ -2251,6 +2320,7 @@ mod tests {
             urls: vec![url.to_string()],
             username: "usuario-efemero".into(),
             credential: SEGREDO.into(),
+            ttl_seconds: None,
         }
     }
 
@@ -2262,6 +2332,7 @@ mod tests {
                 urls: vec!["stun:127.0.0.1:3478".into()],
                 username: String::new(),
                 credential: String::new(),
+                ttl_seconds: None,
             },
         ];
 
