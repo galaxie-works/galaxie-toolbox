@@ -94,6 +94,8 @@ jobs:
         run: python3 scripts/test_roster_guarda.py
       - name: galaxie.db (#1655) -- 4 ACs + rollup + CHECK
         run: python3 scripts/test_galaxie_db.py
+      - name: auditoria de consumo (#1663) -- feeder do consumo_diario
+        run: python3 scripts/test_auditoria_consumo.py
 
   # #1484: scaffold do app web da plataforma (platform.thegalaxie.cloud). É o
   # pacote `web/` (Vite SPA, workspace pnpm próprio, SEPARADO do app Tauri). Gate
