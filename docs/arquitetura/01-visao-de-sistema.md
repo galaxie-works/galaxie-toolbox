@@ -10,28 +10,31 @@ Que peças existem, em que linguagem vivem, e **quem depende de quem**. Não mos
 ```mermaid
 flowchart TB
     subgraph desktop["Aplicação desktop (Tauri 2)"]
-        direction TB
         UI["<b>src/</b> — React + TypeScript<br/>telas, componentes, store"]
-        IPC{{"IPC Tauri<br/>(comandos tipados)"}}
+        IPC["IPC Tauri<br/>(comandos tipados)"]
         APP["<b>src-tauri/</b> — crate app<br/>Rust, MSRV 1.85"]
-        UI --> IPC --> APP
+        UI --> IPC
+        IPC --> APP
     end
 
     subgraph membros["Membros da suite (dentro do desktop)"]
-        direction LR
         NAV["Navigator<br/><i>browser.rs · bookmarks.rs · favicon.rs</i>"]
         FILES["Files<br/><i>fs_explorer.rs</i>"]
         OD["OneDrive / M365<br/><i>graph.rs</i>"]
         GD["Google Drive<br/><i>gdrive.rs</i>"]
         REM["Remote<br/><i>remote.rs · remote_identity.rs</i>"]
         BRI["Bridge"]
-        AST["Astro<br/>[0 código]"]
+        AST["Astro<br/><i>0 código — só docs</i>"]
     end
 
-    APP --> NAV & FILES & OD & GD & REM & BRI
+    APP --> NAV
+    APP --> FILES
+    APP --> OD
+    APP --> GD
+    APP --> REM
+    APP --> BRI
 
     subgraph rust_remote["services/remote-* — 8 crates"]
-        direction TB
         RNET["remote-net<br/><i>fronteira congelada v2:<br/>enrolamento, auth, sessão</i>"]
         RTRANS["remote-transport<br/><i>str0m sans-I/O, DTLS-SRTP</i>"]
         RCAP["remote-capture<br/><i>WGC / DesktopDup + H.264</i>"]
@@ -42,8 +45,7 @@ flowchart TB
         RHELPER["remote-system-helper<br/><b>Delphi</b> — broker SCM/sessão"]
     end
 
-    subgraph rust_platform["services/platform-* — 9 crates [nascente]"]
-        direction TB
+    subgraph rust_platform["services/platform-* — 9 crates, nascente"]
         PIDENT["platform-identity<br/><i>fundação: principal, tenancy,<br/>papel, default-deny</i>"]
         PCONC["platform-concessao<br/><i>2.º eixo: o que foi CONCEDIDO</i>"]
         PHTTP["platform-http<br/><i>borda axum (Router)</i>"]
@@ -57,7 +59,9 @@ flowchart TB
 
     WEB["<b>web/</b> — front da plataforma<br/>workspace pnpm (1 membro)"]
 
-    REM --> RNET & RTRANS & RCAP
+    REM --> RNET
+    REM --> RTRANS
+    REM --> RCAP
     RNET -.->|concede ticket| RCAPS
     RTRANS -.->|aplica| RCAPS
     REM -.->|"feature remote (OFF por omissão)"| RTRANS
@@ -66,8 +70,18 @@ flowchart TB
     APP --> RBROKER
 
     WEB --> PHTTP
-    PHTTP --> PIDENT & POAUTH & PWEB & PORG & PBO & PCONTA & PCFG & PCONC
-    PORG & PBO & PCONTA & PCFG --> PIDENT
+    PHTTP --> PIDENT
+    PHTTP --> POAUTH
+    PHTTP --> PWEB
+    PHTTP --> PCONC
+    PORG --> PIDENT
+    PBO --> PIDENT
+    PCONTA --> PIDENT
+    PCFG --> PIDENT
+    PHTTP --> PORG
+    PHTTP --> PBO
+    PHTTP --> PCONTA
+    PHTTP --> PCFG
     RSIG -.->|"serve o endpoint de sinalização"| RNET
 
     classDef scaffold stroke-dasharray: 5 5;
