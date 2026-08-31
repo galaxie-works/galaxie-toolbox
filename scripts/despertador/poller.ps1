@@ -85,27 +85,41 @@ try {
     if ($tokP) {
       $gq = 'query($after:String){ user(login:"galaxie-works"){ projectV2(number:3){ items(first:100, after:$after){ pageInfo{hasNextPage endCursor} nodes{ fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } content{ ... on Issue { number title state labels(first:10){nodes{name}} assignees(first:3){nodes{login}} } } } } } } }'
       $hG = @{ Authorization = "Bearer $tokP"; "Content-Type" = "application/json" }
-      $after = $null; $orfaos = @()
+      $after = $null; $orfaos = @(); $wip = @{}
       do {
         $body = @{ query = $gq; variables = @{ after = $after } } | ConvertTo-Json -Depth 4
         $rq = Invoke-WebRequest -Method Post -Uri "https://api.github.com/graphql" -Headers $hG -Body $body -UseBasicParsing
         $rj = ($rq.Content | ConvertFrom-Json).data.user.projectV2.items
         foreach($n in $rj.nodes){
-          # so card PUXAVEL: Ready, aberto, sem dono e sem label 'bloqueado' (bloqueado nao e puxavel, §2)
-          if ($n.content.number -and $n.fieldValueByName.name -eq "Ready" -and $n.content.state -eq "OPEN" -and -not @($n.content.assignees.nodes).Count -and (@($n.content.labels.nodes.name) -notcontains "bloqueado")) {
+          # so card PUXAVEL: Ready, aberto, sem dono, sem 'bloqueado' e sem 'precisa design' pendente
+          # ('precisa design' sem 'design ok' espera o ARQUITETO, nao um dev — furo pego no adversarial
+          # da v1.21 pelo Hiparco, 31/08). WIP e checado adiante (saturacao = backpressure, nao fila parada).
+          $lbls = @($n.content.labels.nodes.name)
+          $aguardaDesign = ($lbls -contains "precisa design") -and ($lbls -notcontains "design ok")
+          if ($n.content.number -and $n.fieldValueByName.name -eq "Ready" -and $n.content.state -eq "OPEN" -and -not @($n.content.assignees.nodes).Count -and ($lbls -notcontains "bloqueado") -and -not $aguardaDesign) {
             $orfaos += [pscustomobject]@{ num = $n.content.number; titulo = $n.content.title }
+          }
+          # censo de WIP: cards In progress por assignee (pro guarda de saturacao e pro snapshot no telegrama)
+          if ($n.content.number -and $n.fieldValueByName.name -eq "In progress" -and $n.content.state -eq "OPEN") {
+            foreach($a in @($n.content.assignees.nodes.login)){ $wip[$a] = 1 + [int]$wip[$a] }
           }
         }
         $after = $rj.pageInfo.endCursor
       } while ($rj.pageInfo.hasNextPage)
+      # guarda de SATURACAO: se TODOS os devs estao em WIP >= 2, a fila esta parada por
+      # backpressure saudavel (§2), nao por falta de quem puxe — sinal nenhum (furo 2 do adversarial).
+      $devs = @("galaxie-castor","galaxie-pollux","galaxie-mizar","galaxie-alcor")
+      $devLivre = @($devs | Where-Object { [int]$wip[$_] -lt 2 }).Count -gt 0
+      $wipSnap = ($devs | ForEach-Object { "{0}={1}" -f ($_ -replace 'galaxie-',''), [int]$wip[$_] }) -join " "
       $jaAvisados = @(); if ($state._fila) { $jaAvisados = @($state._fila) }
       $novosOrfaos = @($orfaos | Where-Object { $_.num -notin $jaAvisados })
-      if ($novosOrfaos.Count -gt 0) {
+      if (-not $devLivre -and $novosOrfaos.Count -gt 0) { Log "FILA: $($novosOrfaos.Count) orfao(s) retidos — todos os devs em WIP>=2 ($wipSnap)" }
+      if ($devLivre -and $novosOrfaos.Count -gt 0) {
         # destinatario = POLARIS (SM): decreto do PO 31/08 revoga o "nunca despacha card-a-card"
         # da coluna do SM para o caso FILA PARADA — fila sinalizada pelo vigia = SM atribui o dev
         # da raia e move o card. Dev-pull (§2) segue como caminho feliz de dev acordado.
         $payload = $novosOrfaos | ForEach-Object {
-          [pscustomobject]@{ id="fila-$($_.num)"; motivo="fila-ready-sem-dono"; tipo="Issue"; titulo="[FILA PARADA] Ready sem dono: $($_.titulo) — DESPACHA: atribui (assign) o dev da raia no card e move (decreto do PO 31/08 revoga o 'nunca despacha' do SM para fila parada; dev-pull segue como caminho feliz)"; url="https://github.com/galaxie-works/galaxie-toolbox/issues/$($_.num)"; repo="galaxie-works/galaxie-toolbox"; quando=$agora.ToString("o") }
+          [pscustomobject]@{ id="fila-$($_.num)"; motivo="fila-ready-sem-dono"; tipo="Issue"; titulo="[FILA PARADA] Ready sem dono: $($_.titulo) — DESPACHA: le a issue, atribui (assign) o dev da raia e move (decreto PO 31/08; WIP atual: $wipSnap)"; url="https://github.com/galaxie-works/galaxie-toolbox/issues/$($_.num)"; repo="galaxie-works/galaxie-toolbox"; quando=$agora.ToString("o") }
         }
         $stampF = $agora.ToString("yyyyMMddTHHmmssfff")
         $outF = Join-Path $inbox ("polaris_{0}.json" -f $stampF)
@@ -113,8 +127,11 @@ try {
         Move-Item -Path "$outF.tmp" -Destination $outF -Force
         Log "FILA: +$($novosOrfaos.Count) card(s) Ready sem dono -> $(Split-Path $outF -Leaf)"
       }
-      # _fila = fotografia atual: card que ganhou dono sai da lista (e re-alerta se voltar a orfao)
-      if ($state.PSObject.Properties["_fila"]) { $state._fila = @($orfaos | ForEach-Object num) } else { $state | Add-Member -NotePropertyName _fila -NotePropertyValue @($orfaos | ForEach-Object num) }
+      # _fila: com dev livre = fotografia atual (card que ganhou dono sai; re-alerta se voltar a orfao).
+      # Saturado = so INTERSECAO (mantem os ja-avisados ainda orfaos, NAO absorve os retidos — senao
+      # eles nunca alertariam quando um dev liberasse)
+      $novaFila = if ($devLivre) { @($orfaos | ForEach-Object num) } else { @($jaAvisados | Where-Object { $_ -in @($orfaos | ForEach-Object num) }) }
+      if ($state.PSObject.Properties["_fila"]) { $state._fila = $novaFila } else { $state | Add-Member -NotePropertyName _fila -NotePropertyValue $novaFila }
       if ($state.PSObject.Properties["_filaCheckedAt"]) { $state._filaCheckedAt = $agora.ToString("o") } else { $state | Add-Member -NotePropertyName _filaCheckedAt -NotePropertyValue $agora.ToString("o") }
     } else { Log "AVISO fila: sem PAT do polaris no cofre" }
   }
