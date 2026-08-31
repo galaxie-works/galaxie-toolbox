@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.21 · 2026-08-31 · exceção do SM (despacha a fila parada sinalizada pelo vigia) + decreto do PO só com autoria verificável · ORDEM DIRETA do PO na sessão (emergência §8), a regularizar por comentário escrito na PR · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.21 · 2026-08-31 · exceção do SM (despacha a fila parada sinalizada pelo vigia) + decreto do PO só com autoria verificável · ratificado pelo PO na PR #1678 (ordem direta em emergência §8, regularizada por comentário escrito) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
