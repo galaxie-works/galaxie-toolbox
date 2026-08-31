@@ -1085,6 +1085,14 @@ impl RuntimeSession {
         // `Refresh` não a salva (a alocação é amarrada ao username que a criou, AC3). Limpa
         // pra sinalizar UMA vez; quando a credencial nova chega (fatia B → comando), a fatia 2
         // faz o Allocate NOVO sobrepondo + troca o data-path + libera o antigo.
+        //
+        // ⚠️ REQUISITO DA FATIA B (Altair, review do #1700 — o aviso mora AQUI, no site onde a
+        // credencial nova é aplicada, não só no card): ao reaplicar a credencial nova, REARMAR
+        // `relay.reemitir_em = Some(Instant::now() + antecedencia_reemissao(ttl_novo))`. Sem
+        // rearme, a 1ª reemissão funciona e a 2ª NUNCA acontece ⇒ a sessão cai no 2º TTL com a
+        // funcionalidade a PARECER entregue (a família "auto-desligar silencioso", no futuro).
+        // E quando o FE passar a forwardar `ttl_seconds`, o braço `None`/`warn` do `gather_relay`
+        // deixa de ser estado desenhado e vira ANOMALIA real (o FE devia forwardar e não o fez).
         if relay.reemitir_em.is_some_and(|t| agora >= t) {
             relay.reemitir_em = None;
             log::warn!(
