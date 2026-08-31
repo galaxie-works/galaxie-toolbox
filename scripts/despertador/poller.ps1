@@ -68,4 +68,47 @@ foreach ($papel in $papeis) {
   $entry = [pscustomobject]@{ lastModified = $lm; seenIds = $newSeen }
   if ($state.PSObject.Properties[$papel]) { $state.$papel = $entry } else { $state | Add-Member -NotePropertyName $papel -NotePropertyValue $entry }
 }
+# --- VIGIA DE FILA (a cada ~30 min): card Ready ABERTO sem assignee = fila parada.
+# A reforma aboliu o "pull" dos devs (crons); notificacao nativa so cobre trabalho ENDERECADO.
+# Este bloco fabrica a notificacao que falta: card orfao novo -> lote pro SM (polaris) despachar
+# (assign no card notifica o dev nativamente e o circuito renasce). Dedup por card em _fila.
+try {
+  $agora = (Get-Date).ToUniversalTime()
+  $ultimo = if ($state._filaCheckedAt) { [datetime]::Parse($state._filaCheckedAt).ToUniversalTime() } else { [datetime]::MinValue }
+  if (($agora - $ultimo).TotalMinutes -ge 25) {
+    $tokP = & $patScript -Name polaris 2>$null
+    if ($tokP) {
+      $gq = 'query($after:String){ user(login:"galaxie-works"){ projectV2(number:3){ items(first:100, after:$after){ pageInfo{hasNextPage endCursor} nodes{ fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } content{ ... on Issue { number title state assignees(first:3){nodes{login}} } } } } } } }'
+      $hG = @{ Authorization = "Bearer $tokP"; "Content-Type" = "application/json" }
+      $after = $null; $orfaos = @()
+      do {
+        $body = @{ query = $gq; variables = @{ after = $after } } | ConvertTo-Json -Depth 4
+        $rq = Invoke-WebRequest -Method Post -Uri "https://api.github.com/graphql" -Headers $hG -Body $body -UseBasicParsing
+        $rj = ($rq.Content | ConvertFrom-Json).data.user.projectV2.items
+        foreach($n in $rj.nodes){
+          if ($n.content.number -and $n.fieldValueByName.name -eq "Ready" -and $n.content.state -eq "OPEN" -and -not @($n.content.assignees.nodes).Count) {
+            $orfaos += [pscustomobject]@{ num = $n.content.number; titulo = $n.content.title }
+          }
+        }
+        $after = $rj.pageInfo.endCursor
+      } while ($rj.pageInfo.hasNextPage)
+      $jaAvisados = @(); if ($state._fila) { $jaAvisados = @($state._fila) }
+      $novosOrfaos = @($orfaos | Where-Object { $_.num -notin $jaAvisados })
+      if ($novosOrfaos.Count -gt 0) {
+        $payload = $novosOrfaos | ForEach-Object {
+          [pscustomobject]@{ id="fila-$($_.num)"; motivo="fila-ready-sem-dono"; tipo="Issue"; titulo="[FILA PARADA] Ready sem dono: $($_.titulo) — DESPACHA (assign + move card)"; url="https://github.com/galaxie-works/galaxie-toolbox/issues/$($_.num)"; repo="galaxie-works/galaxie-toolbox"; quando=$agora.ToString("o") }
+        }
+        $stampF = $agora.ToString("yyyyMMddTHHmmssfff")
+        $outF = Join-Path $inbox ("polaris_{0}.json" -f $stampF)
+        ,@($payload) | ConvertTo-Json -Depth 4 | Set-Content -Path "$outF.tmp" -Encoding UTF8
+        Move-Item -Path "$outF.tmp" -Destination $outF -Force
+        Log "FILA: +$($novosOrfaos.Count) card(s) Ready sem dono -> $(Split-Path $outF -Leaf)"
+      }
+      # _fila = fotografia atual: card que ganhou dono sai da lista (e re-alerta se voltar a orfao)
+      if ($state.PSObject.Properties["_fila"]) { $state._fila = @($orfaos | ForEach-Object num) } else { $state | Add-Member -NotePropertyName _fila -NotePropertyValue @($orfaos | ForEach-Object num) }
+      if ($state.PSObject.Properties["_filaCheckedAt"]) { $state._filaCheckedAt = $agora.ToString("o") } else { $state | Add-Member -NotePropertyName _filaCheckedAt -NotePropertyValue $agora.ToString("o") }
+    } else { Log "AVISO fila: sem PAT do polaris no cofre" }
+  }
+} catch { Log "AVISO fila: $($_.Exception.Message)" }
+
 $state | ConvertTo-Json -Depth 4 | Set-Content -Path $stateF -Encoding UTF8
