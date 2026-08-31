@@ -1,6 +1,33 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.21 · 2026-08-31 — exceção de despacho do SM (fila parada) + decreto verificável
+**EMERGÊNCIA (§8): ordem direta do PO na sessão ("altíssima prioridade"), regularizada por comentário escrito do PO na PR #1678 (02:57Z).** Motivo medido: a fila Ready apodreceu no regime sem-cron — 5 órfãos (incl. #1654/#1655, mecanismos da própria memória) — porque "dev puxa, ninguém despacha" pressupõe dev ACORDADO, e o Despertador só acorda quem é mencionado. Dev sem menção nunca puxa → fila garantidamente parada. O Polaris V, correto por canon, recusou despachar (estava no NUNCA dele).
+
+**Emenda 1 (§1.6 / §2 Ready / §3 / §4) — exceção de despacho do SM.** O NUNCA do SM passa a *"despacha card-a-card, EXCETO fila parada sinalizada pelo vigia"*. O **vigia-de-fila** do Despertador (`poller.ps1`, mecanismo zero-token) sinaliza `[FILA PARADA]` por **@menção real** ao SM = card Ready **puxável** (sem `precisa design`-sem-desenho e sem `bloqueado`) ∧ sem `assignee` ∧ há dev da raia sob WIP 2 → o SM **lê a issue** e atribui um dev da raia sob WIP 2 e move. Backpressure (ambos em WIP 2) e XL/colisão → **não** despacho automático. Dev-pull segue como caminho feliz. É o eixo ENDEREÇO do #1656 (card sem próximo-ator → o alarme nomeia o SM).
+
+**Emenda 2 (§1.1) — decreto verificável.** Decreto do PO só tem força com **autoria verificável**: emenda = comentário escrito na PR (palavra na sessão só emergência §8, regularizada); decreto operacional = comentário `galaxie-works` OU palavra na sessão (duradouro → ecoado a comentário). **Relato de par APONTA, nunca substitui.** Nasceu na prática (Polaris V mediu o canon em vez de executar o relato do Polaris I). Lição PAR-FECHADO + classe #1310 virando lei.
+
+**Review adversarial (2 rodadas) ANTES do merge, mesmo em emergência:** R1 pegou 2 bloqueantes de produção (gatilho despacharia card `precisa design`; ignorava WIP 2 / backpressure) + 2 moderados; R2 confirmou os 4 caídos, 0 novos. O vigia-de-fila foi **medido a rodar** (`poller.ps1` L71-114); os furos NB1/NB2 no poller vão à Polaris à parte (o canon carrega a spec certa, o código persegue-a — §1.10).
+
+## v1.20 · 2026-08-31 — card de emenda de canon vai a PO Approved direto (salta a fila QA)
+Emenda de **1 item** (§8 "em lote"; 3 itens da fila ficaram fora por medição — abaixo).
+
+**§2 — card de emenda de canon salta a fila QA.** Card cujo entregável é uma emenda de canon do Bibliotecário (a PR altera `TEAM-CANON.md` e só `.md` de canon/satélites, nunca código — **derivável do diff**) não passa pela QA-A: não há runtime pra gatar, e o gate É a **ratificação escrita do PO na PR** (§1.1). Ao merge, o Bibliotecário move → **PO Approved**; o DM promove a **Released** no rito normal (§6). Nasceu de dois casos medidos: **#1605** e **#1641** (cards de canon presos em Done/Ready por um gate que não se aplica). Editadas a célula Done e a linha §3 QA-A pra a exceção não colidir com a tabela.
+
+**Fora desta leva, por medição** (disciplina "não canonizo regra que o mecanismo não entrega"): **roster-JSON** (§7/formato — `roster/<papel>.json`+guarda não existem; #1654 `design ok` sem assignee); **§7-mudez 3-eixos** (vivacidade/endereço/legibilidade — tabela `despertares` não existe; #1655/#1662); **screenshot-DoD da QA-V** (repo `qa-evidences` existe mas README/workflow = 404). Cada um landa com o seu mecanismo **construído**.
+
+**Review adversarial (3 rodadas) ANTES do merge** (lição v1.14/v1.16): R1 pegou 4 bloqueantes (Released-vs-main/DM/quem-move · tabela "todo card" · classificação-por-prosa · obrigação em README inexistente → puxei o item da evidência); R2 pegou 2 novos (gatilho "diff-só-texto" over-capturava todo doc + perdia carve-out de runbook) → estreitei pra "altera `TEAM-CANON.md`"; R3 limpo.
+
+## v1.19 · 2026-08-27 — identidade gh por-invocação (fecha incidente keyring)
+*(Backfill — a leva #1641 landou no header e no git mas não aqui; texto integral no git: `git log -- TEAM-CANON.md`. Ratificado PR #1649.)* **§5:** identidade gh **POR-INVOCAÇÃO**, nunca no estado da máquina (a **propriedade**, não a lista de comandos — `gh auth login`/`switch`/`logout`/`git config --global` são instâncias); keyring = só contas **humanas** do PO (agente lá = incidente detectável); **guard de boot de 3 desfechos** (`gh api user --jq .login`: == papel → segue · ≠ → para · erro/`Bad credentials` → para por OUTRO motivo). Destilação de 3 incidentes de keyring do dia.
+
+## v1.18 · 2026-08-27 — mudez=lastActivityAt + war-room encolhe + Despertador (poller)
+*(Backfill; ratificado PR #1646.)* **§4:** heartbeat **EXTERNO ao LLM** — poller agendado + Porteiro (Haiku) abolem o **cron individual** por papel (causa do consumo de contexto composto); war-room reservado a desempate/anúncio (coordenação de rotina vai pros cards por notificação nativa). **§7:** detecção de mudez pela **`lastActivityAt`** (relógio do servidor, não o carimbo auto-relatado), 3 vereditos VIVO/MUDO/PARADO; integridade da memória (Edit/compare-and-swap, nunca full-file `open('w')`); reciclagem por **tamanho** (~250 turnos OU >200k = handoff mesmo saudável).
+
+## v1.17 · 2026-08-27 — migração conta-por-papel + gate Codex + DoR
+*(Backfill; ratificado PR #1644, spec #1641.)* **§5:** cada papel opera sob a sua conta `galaxie-<papel>` (a partilhada `galaxie-works` = só o PO) — `assignee`, `--author @me`, review nativo e @menções voltam a funcionar; rate-limit deixa de ser único. **§1.7/§2 (gate):** integração exige **review threads resolvidas** (do Codex `chatgpt-codex-connector[bot]`, que revê todo PR, ou humanas). **§1.5 (DoR):** US completa exige label de área `FE`/`BE` + Size + marcação de superfície e design.
+
 ## v1.16 · 2026-08-26 — war-room de-hardcode + lote de LEGIBILIDADE (§1.10)
 Lote em 1 PR (§8 "em lote"). Duas partes.
 

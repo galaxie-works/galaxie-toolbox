@@ -32,10 +32,18 @@
   sem/antes do gate)" (Done/QA Approved/PO Approved/Rejected). SÓ lista — não move nada
   (mover é do dono; canon §2). Reaproveita a paginação do board (nenhuma query nova).
 
+.PARAMETER ReadyIncompletos
+  #1642 — 2º detetor da rede de reconciliação (também consumido pela Groomer): varre os
+  cards em **Ready** e lista os que violam a Definição-de-Ready (#1641) — sem Priority, sem
+  Size, ou sem label de área (FE/BE/processo/docs). Detetor DERIVÁVEL do estado; torna o
+  requisito de canon auto-fiscal (mecanismo > vigilância). `assignee`-em-Ready fica de fora
+  por ora (tensão de canon por reconciliar, #1641). O modo -Inconsistentes já imprime este
+  detetor como 2ª secção distinta; este switch dá-o isolado (com -Json testável).
+
 .PARAMETER FixtureFile
   #1464 — hook de TESTE: caminho de um JSON de itens (mesmo shape do Get-BoardItems) que
-  substitui a query real no modo -Inconsistentes. Permite testar a classificação offline
-  (sem gh/rede). Uso interno do board.Tests.ps1.
+  substitui a query real nos modos -Inconsistentes e -ReadyIncompletos. Permite testar a
+  classificação offline (sem gh/rede). Uso interno do board.Tests.ps1.
 
 .EXAMPLE
   pwsh scripts/board.ps1 -Coluna "In review"
@@ -53,6 +61,7 @@ param(
   [switch]$Json,
   [switch]$Fresh,
   [switch]$Inconsistentes,
+  [switch]$ReadyIncompletos,
   [string]$FixtureFile
 )
 
@@ -220,6 +229,36 @@ function Select-Inconsistentes {
   return $out
 }
 
+# --- #1642: Definicao-de-Ready — cards em Ready sem Priority/Size/label de area -
+# O canon (#1641) exige que todo Ready tenha esses campos; requisito que depende de
+# lembranca nao se cumpre (o proprio #1641 nasceu sem eles), entao o detetor torna-o
+# AUTO-FISCAL (mecanismo > vigilancia). Funcao PURA (testavel offline via fixture),
+# derivavel do estado do board. `assignee`-em-Ready fica FORA por ora (tensao de canon
+# #1641 por reconciliar). Area = ALLOWLIST {FE,BE,processo,docs} — afirma a forma CERTA,
+# nao enumera as erradas (licao do guard-allowlist). Ready completo NAO flaga (AC3).
+function Select-ReadyIncompletos {
+  param([object[]]$Items)
+  $areas = @('FE', 'BE', 'processo', 'docs')
+  $out = [System.Collections.Generic.List[object]]::new()
+  foreach ($it in $Items) {
+    if ($it.Coluna -ne 'Ready') { continue }          # so a coluna Ready (AC3: ign. o resto)
+    $falta = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($it.Prio)) { $falta.Add('Priority') }
+    if ([string]::IsNullOrWhiteSpace($it.Size)) { $falta.Add('Size') }
+    $rotulos = @(($it.Labels -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if (-not (@($rotulos | Where-Object { $areas -contains $_ }).Count)) { $falta.Add('label de area') }
+    if ($falta.Count -eq 0) { continue }              # Ready COMPLETO: nao flaga (AC3)
+    $out.Add([pscustomobject]@{
+      Numero = $it.Numero
+      Coluna = $it.Coluna
+      Faltam = ($falta -join ', ')
+      Titulo = $it.Titulo
+      Url    = $it.Url
+    })
+  }
+  return $out
+}
+
 # --- Saída ---------------------------------------------------------------------
 if ($Inconsistentes) {
   # FixtureFile (teste) substitui a query real; senão reaproveita a paginação do board.
@@ -229,13 +268,37 @@ if ($Inconsistentes) {
   # só — e aí `.Count` some ("cannot be found on this object"). A catraca falhava em silêncio com
   # exatamente 1 inconsistente, que é justo quando ela mais importa (achado da @Mira).
   $inc = @(Select-Inconsistentes -Items $fonte)
-  if ($Json) { $inc | ConvertTo-Json -Depth 5; return }
+  if ($Json) { $inc | ConvertTo-Json -Depth 5; return }   # -Json = catraca CLOSED (back-compat #1464)
+  # Seccao 1 — catraca CLOSED x coluna ativa (#1464)
   if ($inc.Count -eq 0) {
     Write-Host "Reconciliacao: 0 cards inconsistentes (issue CLOSED x coluna ativa)." -ForegroundColor Green
+  } else {
+    Write-Host "Reconciliacao: $($inc.Count) card(s) inconsistente(s) — issue CLOSED x coluna ativa:"
+    $inc | Sort-Object Classe, Numero | Format-Table Numero, Coluna, Estado, Classe, Titulo -AutoSize
+  }
+  # Seccao 2 — Definicao-de-Ready (#1642), DISTINTA da catraca acima (AC2: nao polui a leitura)
+  $dor = @(Select-ReadyIncompletos -Items $fonte)
+  if ($dor.Count -eq 0) {
+    Write-Host "Definicao-de-Ready: 0 cards Ready incompletos (Priority + Size + label de area)." -ForegroundColor Green
+  } else {
+    Write-Host "Definicao-de-Ready: $($dor.Count) card(s) Ready incompleto(s) — falta Priority/Size/area:"
+    $dor | Sort-Object Numero | Format-Table Numero, Faltam, Titulo -AutoSize
+  }
+  return
+}
+
+# --- #1642: Definicao-de-Ready standalone (saida propria + -Json testavel) ------
+if ($ReadyIncompletos) {
+  $fonte = if ($FixtureFile) { @(Get-Content -Raw -LiteralPath $FixtureFile | ConvertFrom-Json) }
+           else              { Get-BoardItems }
+  $dor = @(Select-ReadyIncompletos -Items $fonte)      # @() FORCA array (idem #1464: .Count some com 1 item)
+  if ($Json) { $dor | ConvertTo-Json -Depth 5; return }
+  if ($dor.Count -eq 0) {
+    Write-Host "Definicao-de-Ready: 0 cards Ready incompletos (Priority + Size + label de area)." -ForegroundColor Green
     return
   }
-  Write-Host "Reconciliacao: $($inc.Count) card(s) inconsistente(s) — issue CLOSED x coluna ativa:"
-  $inc | Sort-Object Classe, Numero | Format-Table Numero, Coluna, Estado, Classe, Titulo -AutoSize
+  Write-Host "Definicao-de-Ready: $($dor.Count) card(s) Ready incompleto(s) — falta Priority/Size/area:"
+  $dor | Sort-Object Numero | Format-Table Numero, Faltam, Titulo -AutoSize
   return
 }
 

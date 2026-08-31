@@ -80,6 +80,21 @@ jobs:
       - name: Testes em navegador (vitest browser-mode)
         run: pnpm test:browser
 
+  # #1654/#1655: gate das FERRAMENTAS Python do time (scripts/*.py). O ROSTER e o
+  # galaxie.db vivem FORA do repo, entao o CI nao os ve -- mas gateia as GUARDAS que os
+  # escrevem (decisao 3 do #1652: "o CI gateia a guarda; a guarda gateia os dados"). Se
+  # uma guarda deixar de recusar um mutante, o CI parte. Ubuntu tem python3 nativo.
+  tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Guarda do roster (#1654) -- os mutantes tem de morder
+        run: python3 scripts/test_roster_guarda.py
+      - name: galaxie.db (#1655) -- 4 ACs + rollup + CHECK
+        run: python3 scripts/test_galaxie_db.py
+
   # #1484: scaffold do app web da plataforma (platform.thegalaxie.cloud). É o
   # pacote `web/` (Vite SPA, workspace pnpm próprio, SEPARADO do app Tauri). Gate
   # próprio — typecheck+build+testes do pacote web — pra não misturar com o
