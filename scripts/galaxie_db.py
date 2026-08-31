@@ -129,12 +129,19 @@ def reg_reciclagem(con, a):
 
 
 def reg_consumo(con, a):
-    # UPSERT: soma no rollup do (dia, papel) — reidempotente por chamada de auditoria.
+    # UPSERT no rollup do (dia, papel). Dois modos:
+    #  - soma (default): incrementa — pra feeders que mandam DELTAS (#1655).
+    #  - substitui (--substituir): SET — pra um produtor que re-escaneia e manda o TOTAL do
+    #    dia (#1663): re-rodar tem de ATUALIZAR, nao dobrar (AC2 idempotente).
+    if getattr(a, "substituir", False):
+        acao = ("chamadas=excluded.chamadas, peso=excluded.peso, "
+                "cache_read=excluded.cache_read, output=excluded.output")
+    else:
+        acao = ("chamadas=chamadas+excluded.chamadas, peso=peso+excluded.peso, "
+                "cache_read=cache_read+excluded.cache_read, output=output+excluded.output")
     con.execute(
         "INSERT INTO consumo_diario(dia,papel,chamadas,peso,cache_read,output) VALUES (?,?,?,?,?,?)"
-        " ON CONFLICT(dia,papel) DO UPDATE SET"
-        "  chamadas=chamadas+excluded.chamadas, peso=peso+excluded.peso,"
-        "  cache_read=cache_read+excluded.cache_read, output=output+excluded.output",
+        f" ON CONFLICT(dia,papel) DO UPDATE SET {acao}",
         (a.dia, a.papel, a.chamadas, a.peso, a.cache_read, a.output),
     )
     con.commit()
@@ -257,6 +264,8 @@ def build_parser():
     co.add_argument("--peso", type=int, default=0)
     co.add_argument("--cache-read", type=int, dest="cache_read", default=0)
     co.add_argument("--output", type=int, default=0)
+    co.add_argument("--substituir", action="store_true",
+                    help="SET em vez de somar (produtor que re-escaneia e manda o total do dia, #1663)")
 
     ev = sub.add_parser("registrar-evento")
     ev.add_argument("--papel")
