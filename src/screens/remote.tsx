@@ -52,6 +52,11 @@ import {
   type IceServer,
   type SinalizadorS0,
 } from "@/lib/remote-signaling";
+import {
+  deveAvisarExpiracao,
+  horizonteTtl,
+  type HorizonteTtl,
+} from "@/lib/remote-ttl";
 import { useIdioma } from "@/lib/idioma";
 
 type Modo = "escolha" | "host" | "controller";
@@ -70,6 +75,11 @@ export function RemoteScreen() {
   const [copiado, setCopiado] = useState(false);
   const [codigoInput, setCodigoInput] = useState("");
   const [screenInfo, setScreenInfo] = useState<ScreenInfo | null>(null);
+  // #1148 (fatia C): relógio do TTL da credencial TURN. `horizonte` guarda o
+  // primeiro `expiresAt` e o TTL efetivo (medido no relógio do cliente); o
+  // `avisoExpiracao` acende no último 1/4 dele. Lógica pura em `remote-ttl.ts`.
+  const [horizonte, setHorizonte] = useState<HorizonteTtl | null>(null);
+  const [avisoExpiracao, setAvisoExpiracao] = useState(false);
 
   // Refs de sessão (não disparam render; lidos nos callbacks assíncronos).
   const sinalizadorRef = useRef<SinalizadorS0 | null>(null);
@@ -86,6 +96,8 @@ export function RemoteScreen() {
     sessionIdRef.current = null;
     peerIdRef.current = null;
     iceServersRef.current = [];
+    setHorizonte(null);
+    setAvisoExpiracao(false);
     setEstado(null);
     setConectandoS0(false);
     setErro(null);
@@ -111,6 +123,33 @@ export function RemoteScreen() {
       sinalizadorRef.current?.fechar();
     };
   }, []);
+
+  // #1148 (fatia C): registra o horizonte de expiração dos ICE servers e zera o
+  // aviso. `ttlEfetivo` é relativo ao relógio do cliente (expira − agora, medido
+  // AGORA), então o gatilho de 1/4 é imune a skew entre servidor e cliente.
+  function registrarExpiracao(iceServers: IceServer[]): void {
+    setHorizonte(horizonteTtl(iceServers, Math.floor(Date.now() / 1000)));
+    setAvisoExpiracao(false);
+  }
+
+  // #1148 (fatia C): o relógio. Acende o aviso quando resta ≤ 1/4 do TTL efetivo,
+  // durante uma sessão viva. Só AVISA — a renovação viva da credencial
+  // (re-aplicar no transporte str0m) é a fatia B, que pende do seam do #1527.
+  useEffect(() => {
+    const emSessao =
+      estado != null && estado !== "ended" && estado !== "error";
+    if (!emSessao || horizonte == null) {
+      setAvisoExpiracao(false);
+      return;
+    }
+    const avaliar = (): void =>
+      setAvisoExpiracao(
+        deveAvisarExpiracao(horizonte, Math.floor(Date.now() / 1000)),
+      );
+    avaliar();
+    const id = setInterval(avaliar, 15_000);
+    return () => clearInterval(id);
+  }, [estado, horizonte]);
 
   function traduzErro(code: ErrorCodeS0, message: string): string {
     if (
@@ -219,8 +258,15 @@ export function RemoteScreen() {
           // WS caiu: só reflete se a sessão de transporte ainda não assumiu.
           if (!sessionIdRef.current) setErro(t.remote.erroConexao);
         },
+        onIceServersRenovados: (novos) => {
+          // #1148: chegou credencial fresca — atualiza o relógio do FE (o aviso
+          // some). Re-aplicar no transporte vivo é a fatia B (seam Rust/str0m).
+          iceServersRef.current = novos;
+          registrarExpiracao(novos);
+        },
       });
       iceServersRef.current = iceServers;
+      registrarExpiracao(iceServers);
       setConectandoS0(false);
       sinal.criarSessao();
     } catch (e) {
@@ -267,8 +313,15 @@ export function RemoteScreen() {
         onFechado: () => {
           if (!sessionIdRef.current) setErro(t.remote.erroConexao);
         },
+        onIceServersRenovados: (novos) => {
+          // #1148: credencial fresca → relógio do FE atualizado (aviso some). A
+          // re-aplicação no transporte vivo é a fatia B (seam Rust/str0m).
+          iceServersRef.current = novos;
+          registrarExpiracao(novos);
+        },
       });
       iceServersRef.current = iceServers;
+      registrarExpiracao(iceServers);
       sinal.resgatarSessao(code);
     } catch (e) {
       setConectandoS0(false);
@@ -338,6 +391,19 @@ export function RemoteScreen() {
           </SoftBlurIn>
         </h1>
       </div>
+
+      {/* #1148 (fatia C): aviso de expiração da credencial TURN — surfa a queda
+          antes de ela acontecer em silêncio no TTL. Só informa; a renovação viva
+          é a fatia B. Tokens `warning` do tema (padrão do badge.tsx). */}
+      {avisoExpiracao && (
+        <div
+          role="status"
+          className="flex shrink-0 flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground dark:bg-warning/15 dark:text-warning"
+        >
+          <span className="font-medium">{t.remote.avisoExpiracaoTitulo}</span>
+          <span className="opacity-90">{t.remote.avisoExpiracaoDetalhe}</span>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1">
         {modo === "escolha" && (

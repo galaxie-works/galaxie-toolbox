@@ -1584,6 +1584,10 @@ const pt = {
     codecNaoSuportado: "Vídeo não suportado neste dispositivo.",
     // #839: build sem a feature `remote` (comandos stubados) — degrade gracioso.
     remoteIndisponivel: "O Remote não está disponível nesta versão do app.",
+    // #1148: credencial TURN perto de expirar — avisa antes da queda silenciosa no TTL.
+    avisoExpiracaoTitulo: "A sessão pode cair em breve",
+    avisoExpiracaoDetalhe:
+      "A credencial de conexão está a expirar. Se a sessão cair, encerre e reconecte.",
   },
 
   caminhosLongos: {
@@ -3830,6 +3834,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     codecNaoSuportado: "Video not supported on this device.",
     // #839: build without the `remote` feature (stubbed commands) — graceful degrade.
     remoteIndisponivel: "Remote isn't available in this build of the app.",
+    // #1148: TURN credential near expiry — warn before the silent TTL drop.
+    avisoExpiracaoTitulo: "The session may drop soon",
+    avisoExpiracaoDetalhe:
+      "The connection credential is expiring. If the session drops, end it and reconnect.",
   },
 
   caminhosLongos: {
