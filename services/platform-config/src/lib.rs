@@ -836,13 +836,28 @@ mod tests {
         assert_eq!(brutas[0].1, "false", "vence a última escrita");
     }
 
-    // definir_pref é por-usuário: a pref de A não vaza pra B (a chave da HashMap é o UserId).
+    // definir_pref escreve no balde do DONO e de mais ninguém (#1593, reprova da Lúmen). O teste
+    // antigo (`isola_por_usuario`) escrevia por A e lia por B vazio — um mutante que fixasse a chave
+    // em `UserId("A")` (todos num balde) SOBREVIVIA, porque a pref de A caía no balde de A e B ficava
+    // vazio na mesma. Aqui CADA dono escreve a SUA e todos os outros são conferidos: um mutante que
+    // fixe QUALQUER uid faz ≥2 donos colidirem → `len==1` ou o valor quebram. É guarda, não
+    // coincidência de fixture (o furo que a Lúmen mediu: crate="A"/borda="u1" apanhavam por sorte).
     #[test]
-    fn definir_pref_isola_por_usuario() {
+    fn definir_pref_escreve_no_balde_do_dono_e_de_mais_ninguem() {
         let arm = ArmazemPrefMemoria::novo();
-        arm.definir_pref(&UserId("A".into()), &ConfigItem::Texto(Texto::novo("app.rotulo", "de-A").unwrap()))
+        let donos = ["A", "B", "C"];
+        for d in donos {
+            arm.definir_pref(
+                &UserId(d.into()),
+                &ConfigItem::Texto(Texto::novo("app.rotulo", format!("de-{d}")).unwrap()),
+            )
             .unwrap();
-        assert_eq!(arm.prefs_do_usuario(&UserId("B".into())).unwrap(), vec![], "B não vê a pref de A");
+        }
+        for d in donos {
+            let lidas = arm.prefs_do_usuario(&UserId(d.into())).unwrap();
+            assert_eq!(lidas.len(), 1, "{d} vê exatamente a sua pref, nem mais nem menos");
+            assert_eq!(lidas[0].1, format!("de-{d}"), "{d} lê o valor que {d} gravou");
+        }
     }
 
     // RegistroFormas: chave semeada devolve a forma (server-side, o cliente não a manda); chave
