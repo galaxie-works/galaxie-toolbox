@@ -29,9 +29,10 @@ use galaxie_platform_org_admin::{
 };
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
+use galaxie_platform_oauth::{iniciar_fluxo, ErroAutorizacao, InicioFluxo, Provedor};
 
 use crate::erro::{resposta_de_erro, resposta_de_falha, Visibilidade};
-use crate::sessao::{EstadoBorda, SessaoAtual, SessaoOculta};
+use crate::sessao::{montar_cookie_amarra_oauth, EstadoBorda, SessaoAtual, SessaoOculta};
 
 /// Fallback do `Router` — a peça que o @Altair **travou** para a fatia 2. Sem ele, uma rota
 /// inexistente cai no fallback PADRÃO do axum (corpo vazio, sem content-type) ≠ o meu 404 de
@@ -98,6 +99,60 @@ async fn encerrar(State(estado): State<EstadoBorda>, headers: HeaderMap) -> Resp
         .header(header::SET_COOKIE, expurgo)
         .body(Body::empty())
         .expect("resposta 204 é sempre construível")
+}
+
+/// `GET /api/v1/auth/{provedor}` — INICIA o login federado (fatia B do #1695). Gera PKCE+state+amarra
+/// (a decisão vive no `platform-oauth`), GRAVA o fluxo pendente, SETA o cookie curto de amarra e
+/// REDIRECIONA (302) pro provedor. Não-autenticada por natureza (é como a sessão NASCE).
+///
+/// 🔒 **Falha uniforme (invariante 6 — não enumera provedores):** slug desconhecido, provedor
+/// não-configurado e OAuth desligado saem TODOS pelo MESMO 404 de rota inexistente — de fora não dá
+/// pra distinguir "não existe" de "existe mas não ligado". Em produção sem OAuth (antes da fatia 5),
+/// isso é TODO provedor → 404: a rota não existe pra quem não a configurou.
+///
+/// ⚠️ **Falha de INFRA ≠ falha de auth:** armazém indisponível, ou um `redirect_uri` NOSSO fora da
+/// NOSSA allowlist (misconfig), viram **500 visível** (`resposta_de_falha`), NUNCA um redirect nem um
+/// 404 — conflar uma queda com "provedor inválido" nos cegaria pra incidente (mesma regra do `/me`).
+async fn iniciar_auth(State(estado): State<EstadoBorda>, Path(provedor): Path<String>) -> Response {
+    // OAuth desligado ⇒ a rota "não existe" (prod da fatia 1; ligado só na 5 / no dev-server).
+    let Some(oauth) = estado.oauth.as_ref() else {
+        return resposta_de_erro(CodigoErro::NaoEncontrado);
+    };
+    // Slug conhecido? Desconhecido ⇒ mesmo 404 (não confirma quais existem).
+    let Some(provedor) = Provedor::da_rota(&provedor) else {
+        return resposta_de_erro(CodigoErro::NaoEncontrado);
+    };
+    // Provedor LIGADO? Não-configurado ⇒ mesmo 404 (indistinguível de slug desconhecido).
+    let Some(cfg) = oauth.config_de(provedor) else {
+        return resposta_de_erro(CodigoErro::NaoEncontrado);
+    };
+    // A DECISÃO (pura): PKCE+state+amarra + URL de autorização segura. `Err` = redirect NOSSO fora da
+    // NOSSA allowlist = bug de config ⇒ 500 (nunca redireciona), não um 404 de auth.
+    let InicioFluxo { state, fluxo, amarra, url_autorizacao } = match iniciar_fluxo(
+        provedor,
+        &cfg.client_id,
+        &cfg.redirect_uri,
+        oauth.allowlist(),
+        (estado.agora)(),
+        oauth.ttl_fluxo_seg(),
+    ) {
+        Ok(inicio) => inicio,
+        Err(ErroAutorizacao::RedirectNaoPermitido) => {
+            return resposta_de_falha(Visibilidade::Visivel)
+        }
+    };
+    // GRAVA o fluxo (uso único no callback). Queda de infra ⇒ 500 visível, distinta do 404 de auth.
+    if oauth.iniciar(state, fluxo).is_err() {
+        return resposta_de_falha(Visibilidade::Visivel);
+    }
+    // Cookie curto de amarra (o callback confere que foi ESTE browser) + 302 pro provedor.
+    let cookie = montar_cookie_amarra_oauth(&amarra.0, oauth.ttl_fluxo_seg());
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, url_autorizacao)
+        .header(header::SET_COOKIE, cookie)
+        .body(Body::empty())
+        .expect("resposta 302 é sempre construível")
 }
 
 /// O `papel` como o contrato §4.3 o projeta no fio. Explícito (não `Debug`/derive): o valor de
@@ -688,6 +743,7 @@ pub fn rotas(estado: EstadoBorda) -> Router {
             delete(remover_membro).patch(mudar_papel_membro),
         )
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
+        .route("/api/v1/auth/{provedor}", get(iniciar_auth))
         .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
         .with_state(estado)
@@ -1175,6 +1231,163 @@ mod tests {
             alheio, inexistente,
             "resposta INTEIRA (status+headers+corpo) tem de ser idêntica — senão é oráculo de localização"
         );
+    }
+
+    // --- #1695 fatia B: GET /api/v1/auth/{provedor} -----------------------------
+
+    use crate::sessao::{ConfigProvedor, EstadoOAuth, NOME_COOKIE_AMARRA_OAUTH};
+
+    /// Config de teste de um provedor: `client_id` + `redirect_uri` (o callback do próprio slug).
+    fn cfg_provedor(slug: &str) -> ConfigProvedor {
+        ConfigProvedor {
+            client_id: format!("cid-{slug}"),
+            redirect_uri: format!("https://plat.example/api/v1/auth/{slug}/callback"),
+        }
+    }
+
+    /// Borda com OAuth LIGADO só pros provedores dados (armazém OAuth em memória, relógio fixo).
+    fn borda_oauth(provedores: Vec<(Provedor, ConfigProvedor)>) -> EstadoBorda {
+        let oauth = EstadoOAuth::nova(
+            Box::new(galaxie_platform_oauth::ArmazemMemoria::novo()),
+            provedores,
+            galaxie_platform_oauth::TTL_FLUXO_OAUTH_SEG,
+        );
+        Borda::nova_com_oauth(
+            ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(),
+            sem_dominios(), sem_perfis(), sem_prefs(), sem_registro(), oauth,
+        )
+    }
+
+    /// Acha o valor de um header (nome lower-case) na lista devolvida por `resposta_crua`.
+    fn header_de<'a>(headers: &'a [(String, String)], nome: &str) -> Option<&'a str> {
+        headers.iter().find(|(n, _)| n == nome).map(|(_, v)| v.as_str())
+    }
+
+    /// Extrai o valor de um parâmetro de query `chave=valor` (até `&`) de uma URL — nos testes.
+    fn query_de(url: &str, chave: &str) -> String {
+        url.split(&format!("{chave}="))
+            .nth(1)
+            .expect("parâmetro presente")
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    /// **AC1+AC2 fim-a-fim:** `/auth/microsoft` gera o fluxo, GRAVA-o, seta o cookie de amarra e
+    /// redireciona (302) com a authority SEGURA. Prova pela PORTA DE PRODUÇÃO: extrai o `state` da
+    /// Location + a `amarra` do cookie e CONSOME o fluxo do armazém — só fecha se o handler gravou o
+    /// que redirecionou (verifier cujo sha256 == o challenge da URL). Não é teste da função pura.
+    #[tokio::test]
+    async fn iniciar_auth_grava_seta_amarra_e_redireciona() {
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, headers, corpo) =
+            resposta_crua(estado.clone(), "", "/api/v1/auth/microsoft").await;
+
+        assert_eq!(status, StatusCode::FOUND, "302 pro provedor");
+        assert!(corpo.is_empty(), "redirect não tem corpo");
+
+        let location = header_de(&headers, "location").expect("Location no 302");
+        assert!(
+            location.starts_with(
+                "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?"
+            ),
+            "authority SEGURA (organizations, nunca /common): {location}"
+        );
+        assert!(location.contains("client_id=cid-microsoft"));
+        assert!(location.contains("code_challenge_method=S256"));
+
+        // Cookie de amarra com a política: __Host- + HttpOnly + Secure + SameSite=Lax + Path=/ + Max-Age.
+        let set_cookie = header_de(&headers, "set-cookie").expect("Set-Cookie no 302");
+        assert!(set_cookie.starts_with(&format!("{NOME_COOKIE_AMARRA_OAUTH}=")));
+        for marca in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/", "Max-Age="] {
+            assert!(set_cookie.contains(marca), "cookie carrega {marca}: {set_cookie}");
+        }
+
+        // Porta de produção: reconstrói state (da URL) + amarra (do cookie) e CONSOME o fluxo gravado.
+        let state = galaxie_platform_oauth::Estado(query_de(location, "state"));
+        let amarra_val = set_cookie
+            .strip_prefix(&format!("{NOME_COOKIE_AMARRA_OAUTH}="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        let amarra = galaxie_platform_oauth::AmarraNavegador(amarra_val.to_string());
+        let oauth = estado.oauth.as_ref().expect("borda com OAuth");
+        let fluxo = oauth
+            .consumir(&state, &amarra, AGORA)
+            .expect("armazém disponível")
+            .expect("o fluxo redirecionado FOI gravado sob o state");
+        assert_eq!(fluxo.provedor, Provedor::Microsoft, "o provedor gravado é o da rota");
+        // O verifier gravado não é vazio (o casamento verifier↔challenge é provado no unit do
+        // platform-oauth `iniciar_fluxo_amarra_pkce_state_amarra_e_url`; aqui basta que gravou o par).
+        assert!(!fluxo.verificador_pkce.is_empty(), "gravou o verifier PKCE do fluxo redirecionado");
+    }
+
+    /// Slug DESCONHECIDO ⇒ o MESMO 404 de rota inexistente (invariante 6 — não enumera provedores).
+    #[tokio::test]
+    async fn iniciar_auth_slug_desconhecido_e_404_uniforme() {
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let alvo = resposta_crua(estado, "", "/api/v1/auth/facebook").await;
+
+        // Referência: uma rota que não existe.
+        let ref_estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let inexistente = resposta_crua(ref_estado, "", "/api/v1/isto/nao/existe").await;
+
+        assert_eq!(alvo.0, StatusCode::NOT_FOUND);
+        assert_eq!(alvo, inexistente, "slug desconhecido é indistinguível de rota inexistente");
+    }
+
+    /// Provedor VÁLIDO mas NÃO-configurado ⇒ mesmo 404 (não revela quais provedores estão ligados).
+    #[tokio::test]
+    async fn iniciar_auth_provedor_nao_configurado_e_404() {
+        // Só microsoft ligado; google é slug válido mas não-configurado.
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, _h, _c) = resposta_crua(estado, "", "/api/v1/auth/google").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "não-configurado = indistinguível de desconhecido");
+    }
+
+    /// OAuth DESLIGADO na borda (prod da fatia 1, `Borda::nova`) ⇒ todo provedor é 404.
+    #[tokio::test]
+    async fn iniciar_auth_oauth_desligado_e_404() {
+        let estado = Borda::nova(
+            ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(),
+            sem_dominios(), sem_perfis(), sem_prefs(), sem_registro(),
+        );
+        let (status, _h, _c) = resposta_crua(estado, "", "/api/v1/auth/microsoft").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "sem OAuth configurado, /auth não existe");
+    }
+
+    /// Armazém OAuth INDISPONÍVEL ⇒ **500** (falha de infra), NUNCA 404 nem redirect: conflar uma
+    /// queda com "provedor inválido" nos cegaria pra incidente (mesma regra do `/me`).
+    #[tokio::test]
+    async fn iniciar_auth_armazem_indisponivel_e_500() {
+        use galaxie_platform_oauth::{AmarraNavegador, ArmazemEstadoOAuth, ErroArmazem, Estado, FluxoPendente};
+        struct ArmazemQuebrado;
+        impl ArmazemEstadoOAuth for ArmazemQuebrado {
+            fn iniciar(&mut self, _s: Estado, _f: FluxoPendente) -> Result<(), ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+            fn consumir(
+                &mut self,
+                _s: &Estado,
+                _a: &AmarraNavegador,
+                _n: u64,
+            ) -> Result<Option<FluxoPendente>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+        }
+        let oauth = EstadoOAuth::nova(
+            Box::new(ArmazemQuebrado),
+            vec![(Provedor::Microsoft, cfg_provedor("microsoft"))],
+            galaxie_platform_oauth::TTL_FLUXO_OAUTH_SEG,
+        );
+        let estado = Borda::nova_com_oauth(
+            ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(),
+            sem_dominios(), sem_perfis(), sem_prefs(), sem_registro(), oauth,
+        );
+        let (status, _h, _c) = resposta_crua(estado, "", "/api/v1/auth/microsoft").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "queda de infra ⇒ 500, não 404/redirect");
     }
 
     /// Borda com o admin `u1` de `orgA` + a org no store (suspensa ou não) + `u1` como membro

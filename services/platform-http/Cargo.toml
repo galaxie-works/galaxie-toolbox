@@ -38,6 +38,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 galaxie-platform-identity = { path = "../platform-identity" }
 galaxie-platform-web = { path = "../platform-web" }
+# Domínio OAuth (#1695): a DECISÃO do fluxo (PKCE/state/amarra, authority segura, allowlist). Puro —
+# a borda BUSCA bytes e seta cookie; este crate decide. Sem HTTP nem segredo, como o próprio doc diz.
+galaxie-platform-oauth = { path = "../platform-oauth" }
 galaxie-platform-conta = { path = "../platform-conta" }
 galaxie-platform-org-admin = { path = "../platform-org-admin" }
 galaxie-platform-config = { path = "../platform-config" }
