@@ -1,6 +1,15 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.21 · 2026-08-31 — exceção de despacho do SM (fila parada) + decreto verificável
+**EMERGÊNCIA (§8): ordem direta do PO na sessão ("altíssima prioridade"), a regularizar por comentário escrito na PR.** Motivo medido: a fila Ready apodreceu no regime sem-cron — 5 órfãos (incl. #1654/#1655, mecanismos da própria memória) — porque "dev puxa, ninguém despacha" pressupõe dev ACORDADO, e o Despertador só acorda quem é mencionado. Dev sem menção nunca puxa → fila garantidamente parada. O Polaris V, correto por canon, recusou despachar (estava no NUNCA dele).
+
+**Emenda 1 (§1.6 / §2 Ready / §3 / §4) — exceção de despacho do SM.** O NUNCA do SM passa a *"despacha card-a-card, EXCETO fila parada sinalizada pelo vigia"*. O **vigia-de-fila** do Despertador (`poller.ps1`, mecanismo zero-token) sinaliza `[FILA PARADA]` por **@menção real** ao SM = card Ready **puxável** (sem `precisa design`-sem-desenho e sem `bloqueado`) ∧ sem `assignee` ∧ há dev da raia sob WIP 2 → o SM **lê a issue** e atribui um dev da raia sob WIP 2 e move. Backpressure (ambos em WIP 2) e XL/colisão → **não** despacho automático. Dev-pull segue como caminho feliz. É o eixo ENDEREÇO do #1656 (card sem próximo-ator → o alarme nomeia o SM).
+
+**Emenda 2 (§1.1) — decreto verificável.** Decreto do PO só tem força com **autoria verificável**: emenda = comentário escrito na PR (palavra na sessão só emergência §8, regularizada); decreto operacional = comentário `galaxie-works` OU palavra na sessão (duradouro → ecoado a comentário). **Relato de par APONTA, nunca substitui.** Nasceu na prática (Polaris V mediu o canon em vez de executar o relato do Polaris I). Lição PAR-FECHADO + classe #1310 virando lei.
+
+**Review adversarial (2 rodadas) ANTES do merge, mesmo em emergência:** R1 pegou 2 bloqueantes de produção (gatilho despacharia card `precisa design`; ignorava WIP 2 / backpressure) + 2 moderados; R2 confirmou os 4 caídos, 0 novos. O vigia-de-fila foi **medido a rodar** (`poller.ps1` L71-114); os furos NB1/NB2 no poller vão à Polaris à parte (o canon carrega a spec certa, o código persegue-a — §1.10).
+
 ## v1.20 · 2026-08-31 — card de emenda de canon vai a PO Approved direto (salta a fila QA)
 Emenda de **1 item** (§8 "em lote"; 3 itens da fila ficaram fora por medição — abaixo).
 

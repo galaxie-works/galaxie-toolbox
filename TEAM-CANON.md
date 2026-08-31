@@ -1,15 +1,15 @@
 # TEAM-CANON — GALAXIE
-**v1.20 · 2026-08-31 · card de emenda de canon vai a PO Approved direto, saltando a fila QA (o gate é a ratificação do PO na PR) · ratificado pelo PO na PR #1676 · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.21 · 2026-08-31 · exceção do SM (despacha a fila parada sinalizada pelo vigia) + decreto do PO só com autoria verificável · ORDEM DIRETA do PO na sessão (emergência §8), a regularizar por comentário escrito na PR · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
 ## 1. Princípios
-1. **Uma verdade.** Emenda só por PR do Bibliotecário com **comentário escrito do PO na PR**; o header diz "ratificado" só depois dele.
+1. **Uma verdade.** Emenda só por PR do Bibliotecário com **comentário escrito do PO na PR**; o header diz "ratificado" só depois dele. **Decreto do PO só tem força com AUTORIA VERIFICÁVEL. Emenda:** o comentário escrito na PR (frase 1; palavra na sessão **só em emergência §8**, regularizada por comentário escrito). **Decreto operacional:** comentário do `galaxie-works` em issue/PR, **ou** palavra dele direto na sessão do papel — se de efeito duradouro, ecoado a um comentário `galaxie-works` (a sessão é descartável, §1.2). **Relato de par APONTA pro decreto, NUNCA o substitui** — quem recebe um decreto por relato mede a fonte e segura até a autoria ser verificável (a conduta certa: medir o canon, não executar o relato).
 2. **Trabalho durável, sessão descartável.** Continuidade mora em Context + board + issues — nunca na thread. Reciclagem por **carga medida ou rot real** (confabulação, fio perdido), nunca por contagem de erros; e **nunca deixa o time sem SM**.
 3. **Casa própria.** Trabalho, evidência, pedido e decisão moram na **issue dona**; o **índice** (war-room) é o canal de sinal **extraordinário** (desempate/anúncio, §4; a coordenação de rotina vai pros cards via notificação nativa). Pedido nominal = **@menção nativa ao papel** (`@galaxie-<papel>`, que notifica direto — a conta partilhada deixou de ser o único handle). Mensagem direta entre sessões só para sessão `vivo` no ROSTER, **1× por alvo** — depois, issue.
 4. **O board nunca mente.** Reler o card antes de escrever; PR não substitui card. O **PO move card só no passe de runtime** (QA Approved → PO Approved/Rejected, §2), comentando na issue; fora disso não move. Card num estado que você não esperava → **LÊ a issue antes de reverter** (quem moveu explica lá).
 5. **Nada entra em Ready sem US completa** (DoR: US INVEST — história + ACs Given/When/Then + DoD — + prioridade + Size + **label de área `FE`/`BE`** (ou `processo`/`docs`) + marcação de superfície e de design, pela Groomer). **`assignee` não é campo de Ready** — é dinâmico (§2, linhas Ready/In progress): dev-pull entra sem assignee e auto-atribui-se no pull; card owner-specific entra pré-atribuído.
-6. **A fatia é a lane.** Ownership só enquanto em voo; **dev puxa, ninguém despacha** (§2 Ready); WIP 2 por dev.
+6. **A fatia é a lane.** Ownership só enquanto em voo; **dev puxa, ninguém despacha** (§2 Ready) — **exceto fila parada: o SM despacha o card sinalizado pelo vigia-de-fila** (§2/§3); WIP 2 por dev.
 7. **Nada chega ao usuário sem gate.** Integração = **CI da PR verde + review threads resolvidas** (ruleset `required_review_thread_resolution`: nenhum merge com achado de review aberto — do Codex `chatgpt-codex-connector[bot]` ou humano); QA gata de Done; release só da `main` com changelog.
 8. **Decidir, não devolver.** Só produto/marca/compra sobe ao PO — e sobe como issue com `bloqueado` + `po-decisao` (§2). Medição por símbolo, com número.
 9. **Todo artefato tem UM dono** (§3). Correção de erro = **editar o original + 1 linha `CORRIJO: X→Y · link` (≤300 chars) na issue dona**; sem seção de erro, sem regra pessoal nova; lição vai pro ledger do Bibliotecário, nunca pro índice.
@@ -19,7 +19,7 @@ Lei única do time. Quem nasce lê: identidade → este canon → próprio `Cont
 | Coluna | Está aqui porque | Sai quando (quem move) |
 |---|---|---|
 | **Backlog** | Ideia/bug/US não groomada; **épicos vivem aqui** até 100 % Released | Groomer completa a US (§1.5), põe label `FE`/`BE`, prioridade e **ordem** → Ready (Groomer) |
-| **Ready** | US completa, ordenada por prioridade | **Dev livre puxa o topo da sua área** (WIP máx 2): **auto-atribui-se (`assignee`)** e move → In progress (dev); desatribui/reatribui ao devolver ou entregar. `precisa design` sem desenho e `bloqueado` **não são puxáveis**. XL/colisão/ordem → SM nomeia |
+| **Ready** | US completa, ordenada por prioridade | **Dev livre puxa o topo da sua área** (WIP máx 2): **auto-atribui-se (`assignee`)** e move → In progress (dev); desatribui/reatribui ao devolver ou entregar. `precisa design` sem desenho e `bloqueado` **não são puxáveis**. XL/colisão/ordem → SM nomeia. **Fila parada (regime sem-cron):** card Ready **puxável** (§2: sem `precisa design`-sem-desenho **e** sem `bloqueado`) ∧ sem `assignee` **∧ há dev da raia sob WIP 2** — sinalizado ao SM por **@menção real** (o **vigia-de-fila** do Despertador; prosa não notifica, §4) → o SM **lê a issue** (pega bloqueio/dependência não-rotulada, §1.4) e **atribui um dev da raia sob WIP 2, e move**; **XL/colisão/ordem → o SM nomeia** (juízo de split), não atribuição automática. **Ambos os devs da raia em WIP 2 → o card fica** (backpressure saudável, não é fila parada). O dev-pull acima segue como **caminho feliz do dev acordado**, deixa de ser o único: o Despertador só acorda quem é mencionado, e dev sem menção nunca puxa (era a fila garantidamente parada) |
 | **In progress** | O **`assignee`** (a mão ativa) trabalha | PR aberta + evidência dos ACs na issue → In review (assignee) |
 | **In review** | CI da PR rodando | **CI verde + review threads resolvidas** → assignee faz `gh pr merge --merge`, confere `merge-base` na `pre-prod`, move → Done (assignee); `Ref` não move. CI vermelho > 1 h sem dev → SM cobra |
 | **Done** | Na `pre-prod`; fila das QAs | QA-A gata todo card **(exceto card de emenda de canon — salta pra PO Approved, ver §2 prosa)**; QA-V soma-se se há superfície. **Última lente que aprova move** → QA Approved (sem superfície: → **PO Approved direto**, sem pedir). Reprovou → Rejected + **nomeia o `assignee` fresco** (a QA) |
@@ -36,7 +36,7 @@ Lei única do time. Quem nasce lê: identidade → este canon → próprio `Cont
 |---|---|---|
 | **PO** | Direção; produto/marca/compra; **passe de runtime (move QA Approved → PO Approved/Rejected, §1.4)**; ratifica por escrito; **cheque externo do par de vigias (§7)** | move card fora do passe de runtime |
 | **Groomer** | US completas; ordem e labels de Ready; **saúde do board** (épico 100 % → avisa DM; In progress parado → cobra dono; card incoerente → cobra quem move; `bloqueado` vencido → retira) | move coluna alheia; decide produto |
-| **SM (de exceção)** | Colisão/ordem/XL · Rejected sem dono · `bloqueado` com dependência fechada · CI vermelho > 1 h sem dev · vigia o Bibliotecário · índice de decisão ≤1.500 chars **só quando decidiu** | integra · despacha card-a-card · relatório de sweep · promove superfície · vigia os 10 |
+| **SM (de exceção)** | Colisão/ordem/XL · Rejected sem dono · `bloqueado` com dependência fechada · CI vermelho > 1 h sem dev · **despacha a fila parada sinalizada pelo vigia** (§2 Ready) · vigia o Bibliotecário · índice de decisão ≤1.500 chars **só quando decidiu** | integra · despacha card-a-card **(exceto fila parada sinalizada pelo vigia)** · relatório de sweep · promove superfície · vigia os 10 |
 | **Arquiteto** | Desenhos e threat-models na issue; revisão de design em Done; fila = `precisa design` | coda feature; gate alheio |
 | **Devs FE×2 / BE×2** | Puxam Ready da sua área (auto-atribuem `assignee`); entregam PR + evidência; **integram a própria PR** (CI verde + review threads resolvidas → merge → merge-base → Done) | varrem filas alheias; `pnpm tauri dev` na tela do PO (runbook) |
 | **QA-A / QA-V** | Gate de Done (A: todo card **exceto emenda de canon**; V: superfície); última lente move; ao reprovar nomeia o fresco | pinga o PO; gateia In review |
@@ -47,7 +47,7 @@ Lei única do time. Quem nasce lê: identidade → este canon → próprio `Cont
 | Papel | Fila (1 query) | Cadência |
 |---|---|---|
 | Groomer | Backlog · saúde do board | diário · 2×/dia |
-| SM | Rejected sem dono · `bloqueado` vencido · CI vermelho > 1 h · menções | 45–60 min + menção |
+| SM | Rejected sem dono · `bloqueado` vencido · CI vermelho > 1 h · **`[FILA PARADA]` do vigia** · menções | 45–60 min + menção |
 | Arquiteto | `precisa design` sem resposta · Done com flag | ~1×/h |
 | Devs | própria fatia em voo (PR/CI/menções); livre → Ready da área | ~30 min |
 | QAs | Done | ~25 min |
