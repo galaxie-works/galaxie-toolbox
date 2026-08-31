@@ -67,7 +67,9 @@ def validar(obj):
     if not isinstance(sess, dict):
         raise RosterInvalido("sessao: obrigatorio, objeto {id,titulo}")
     if not isinstance(sess.get("id"), str) or not SESSAO_ID.match(sess["id"]):
-        raise RosterInvalido(f"sessao.id: esperava 'local_<uuid>', veio {sess.get('id')!r}")
+        raise RosterInvalido(
+            f"sessao.id: esperava 'local_<uuid>', veio {sess.get('id')!r} -- o formato do id de "
+            "sessao (vem do HARNESS, nao e nosso) mudou? Se sim, os 11 param ao mesmo tempo por aqui.")
     if not isinstance(sess.get("titulo"), str) or not sess["titulo"]:
         raise RosterInvalido("sessao.titulo: obrigatorio (e o que enderaca), string nao-vazia")
     if not isinstance(obj.get("nasceu"), str) or not ISO.match(obj["nasceu"]):
@@ -141,28 +143,37 @@ def _render_roster_md(papeis):
     return "\n".join(linhas) + "\n"
 
 
+def _checar_hand_edit(roster_dir):
+    """Levanta RosterInvalido se o ROSTER.md gerado foi editado a mao (hash do corpo != header).
+    Chamado ANTES de qualquer escrita, pra a operacao ser tudo-ou-nada."""
+    caminho_md = os.path.join(roster_dir, "ROSTER.md")
+    if not os.path.exists(caminho_md):
+        return
+    with open(caminho_md, encoding="utf-8") as f:
+        atual = f.read()
+    m = re.search(r"hash:([0-9a-f]{16})", atual.split("\n", 1)[0])
+    corpo_atual = atual.split("\n", 1)[1] if "\n" in atual else ""
+    if m and m.group(1) != _hash(corpo_atual):
+        raise RosterInvalido(
+            "ROSTER.md foi EDITADO A MAO desde a ultima geracao (hash do corpo != header). "
+            "Provavelmente NAO e culpa de quem apanha este erro: o ROSTER.md e PRODUTO DE BUILD e "
+            "outro papel editou-o a mao. A tua escrita foi BLOQUEADA ANTES de tocar o teu ficheiro "
+            "(tudo-ou-nada). Recuperar: relocar o texto metido a mao para o roster/<papel>.json certo, "
+            "depois `roster_guarda.py regenerar --force`."
+        )
+
+
 def regenerar(roster_dir, force=False):
     """Regenera ROSTER.md (com hash-guard) + sessoes.json a partir dos <papel>.json.
     RECUSA regenerar o ROSTER.md se ele foi editado a mao desde a ultima geracao — a
     recuperacao deliberada e `force=True` (relocar o que foi editado a mao PRIMEIRO, depois
     forcar). O `escrever` normal NAO forca: um hand-edit bloqueia (ruidoso) ate ser resolvido,
     que e o design -- recusar > apagar o trabalho de alguem em silencio."""
+    if not force:
+        _checar_hand_edit(roster_dir)
     papeis = _ler_papeis(roster_dir)
-
-    # ROSTER.md agregado, com header GERADO + hash do corpo (anti-edicao-a-mao).
     corpo = _render_roster_md(papeis)
     caminho_md = os.path.join(roster_dir, "ROSTER.md")
-    if os.path.exists(caminho_md) and not force:
-        with open(caminho_md, encoding="utf-8") as f:
-            atual = f.read()
-        m = re.search(r"hash:([0-9a-f]{16})", atual.split("\n", 1)[0])
-        corpo_atual = atual.split("\n", 1)[1] if "\n" in atual else ""
-        if m and m.group(1) != _hash(corpo_atual):
-            raise RosterInvalido(
-                "ROSTER.md foi EDITADO A MAO desde a ultima geracao (hash do corpo != header). "
-                "O ROSTER.md e produto de build -- edite os roster/<papel>.json. Recuso sobrescrever "
-                "em silencio; relocar o hand-edit e depois `regenerar --force`."
-            )
     header = f"{CABECALHO} · hash:{_hash(corpo)} -->\n"
     _atomico(caminho_md, header + corpo)
 
@@ -177,9 +188,13 @@ def regenerar(roster_dir, force=False):
 
 
 def escrever(roster_dir, obj):
-    """Valida + grava <papel>.json atomicamente + regenera os agregados."""
+    """Valida + grava <papel>.json atomicamente + regenera os agregados.
+    TUDO-OU-NADA: checa o hand-edit do ROSTER.md ANTES de tocar o <papel>.json — senao a
+    escrita passaria e a regeneracao falharia depois, deixando meia-operacao feita e a culpar
+    outra pessoa (achado do @galaxie-altair no #1688)."""
     papel = validar(obj)
     os.makedirs(roster_dir, exist_ok=True)
+    _checar_hand_edit(roster_dir)  # ANTES de escrever: hand-edit no ROSTER.md -> nada e gravado
     caminho = os.path.join(roster_dir, f"{papel}.json")
     _atomico(caminho, json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
     regenerar(roster_dir)

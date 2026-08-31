@@ -85,12 +85,16 @@ def main():
         raise AssertionError("hash-guard falhou: regenerou por cima de edicao-a-mao")
     except g.RosterInvalido:
         pass  # recusou, correto
-    # o escrever normal TAMBEM bloqueia enquanto ha hand-edit (recusar > apagar em silencio)
+    # o escrever TAMBEM bloqueia com hand-edit -- e e TUDO-OU-NADA: o <papel>.json NAO muda
+    # (achado do @galaxie-altair #1688: antes, o escrever gravava o json e SO DEPOIS falhava).
+    mizar_antes = open(os.path.join(d, "mizar.json"), encoding="utf-8").read()
     try:
-        g.escrever(d, base("mizar"))
+        g.escrever(d, base("mizar", encarnacao=9))  # valor DIFERENTE do que esta no disco
         raise AssertionError("hash-guard falhou: escrever regenerou por cima do hand-edit")
     except g.RosterInvalido:
         pass
+    mizar_depois = open(os.path.join(d, "mizar.json"), encoding="utf-8").read()
+    assert mizar_antes == mizar_depois, "escrever NAO foi tudo-ou-nada: gravou o <papel>.json e depois falhou"
 
     # recuperacao DELIBERADA: regenerar(force=True) sobrescreve e volta a bater o hash
     g.regenerar(d, force=True)
@@ -99,7 +103,7 @@ def main():
     h = _re.search(r"hash:([0-9a-f]{16})", conteudo2.split("\n", 1)[0]).group(1)
     assert h == g._hash(conteudo2.split("\n", 1)[1]), "hash do header nao bate o corpo apos force"
 
-    print("OK - guarda: 14 mutantes mordem + isolamento(AC1) + agregados(AC5) + hash-guard + force")
+    print("OK - guarda: 14 mutantes + isolamento(AC1) + agregados(AC5) + hash-guard tudo-ou-nada + force")
 
 
 if __name__ == "__main__":
