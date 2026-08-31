@@ -33,6 +33,7 @@ flowchart TB
     APP --> GD
     APP --> REM
     APP --> BRI
+    APP -.->|"planeado — 0 código"| AST
 
     subgraph rust_remote["services/remote-* — 8 crates"]
         RNET["remote-net<br/><i>fronteira congelada v2:<br/>enrolamento, auth, sessão</i>"]
