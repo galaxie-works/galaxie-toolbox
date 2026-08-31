@@ -17,14 +17,32 @@ export interface HorizonteTtl {
 /**
  * Horizonte de expiração dos ICE servers no instante em que chegam.
  *
- * 🔑 **Imunidade a skew:** guardamos o TTL como uma DURAÇÃO medida no relógio do
- * cliente (`expira − agora`, ambos os termos comparados AGORA) e o instante de
- * chegada (cliente). A decisão (`deveAvisarExpiracao`) usa só diferenças de
- * tempo do cliente — nunca compara um `expiresAt` cunhado pelo servidor com o
- * relógio do cliente. Um relógio de servidor adiantado/atrasado desloca `expira`
- * e `agora` por igual na subtração, então a duração sai correta e o gatilho de
- * 1/4 não escorrega. `null` quando nenhum server traz expiração > 0 (nada a
- * vigiar — ex.: só STUN, sem credencial temporária).
+ * 🔑 **A imunidade a skew é da CONTAGEM, não da MEDIÇÃO — e é importante não
+ * trocar as duas** (o comentário original prometia as duas; #1148, achado do
+ * @Altair na review da PR #1681):
+ *
+ * - **Imune:** a contagem depois da chegada. `deveAvisarExpiracao` usa só
+ *   `agora − medidoEm`, ambos do relógio do CLIENTE. O gatilho de 1/4 não
+ *   escorrega por skew nenhum.
+ * - **NÃO imune:** esta medição inicial. `expira` vem de `expiresAtUnixSeconds`,
+ *   cunhado pelo SERVIDOR; `agoraSeg` é do cliente. São **dois relógios**, e o
+ *   desvio **não se cancela** — entra inteiro no `ttlEfetivo`:
+ *   servidor adiantado em S ⇒ `+S` (avisa tarde); cliente adiantado em C ⇒ `−C`
+ *   (avisa cedo).
+ *
+ * ⚠️ **O caso silencioso:** cliente adiantado por ≥ TTL ⇒ `ttlEfetivo ≤ 0` ⇒
+ * `deveAvisarExpiracao` devolve `false` para sempre. A funcionalidade
+ * **desliga-se sem dizer nada e parece saudável**. Hoje é indistinguível de
+ * "não há expiração a vigiar", que é o outro caso que devolve `null`.
+ *
+ * **A cura de raiz é do servidor** e vale escrita porque o problema volta igual
+ * na fatia B (o Rust agenda pela mesma grandeza): se o `Registered` /
+ * `IceServersRenewed` trouxesse um **`ttl_seconds`** (duração) além do
+ * `expires_at`, a conta passava a ser toda no relógio do cliente e a imunidade
+ * seria real das duas pontas. Encosta no #1527.
+ *
+ * `null` quando nenhum server traz expiração > 0 (nada a vigiar — ex.: só STUN,
+ * sem credencial temporária).
  */
 export function horizonteTtl(
   iceServers: readonly IceServer[],
