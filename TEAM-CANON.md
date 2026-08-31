@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.20 · 2026-08-31 · card de emenda de canon vai a PO Approved direto, saltando a fila QA (o gate é a ratificação do PO na PR) · ratificação pendente (PR desta emenda) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.20 · 2026-08-31 · card de emenda de canon vai a PO Approved direto, saltando a fila QA (o gate é a ratificação do PO na PR) · ratificado pelo PO na PR #1676 · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
