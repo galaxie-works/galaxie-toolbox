@@ -35,23 +35,27 @@ test("#1148 deveAvisarExpiracao: horizonte ausente ou sem futuro NÃO avisa", ()
   assert.equal(deveAvisarExpiracao(semFuturo, 100), false);
 });
 
-test("#1148 imunidade a skew: mesmo TTL do cliente → mesmo gatilho, qualquer relógio de servidor", () => {
-  // A: servidor alinhado ao cliente. B: servidor ~1e6 s adiantado. Mesmo TTL
-  // efetivo (3600) porque a duração é medida no cliente na chegada. A decisão só
-  // olha o DECORRIDO no cliente — nunca o `expiresAt` absoluto do servidor.
-  const chegadaA = 0;
-  const chegadaB = 1_000_000;
-  const a = horizonteTtl([srv(chegadaA + 3600)], chegadaA)!;
-  const b = horizonteTtl([srv(chegadaB + 3600)], chegadaB)!;
+test("#1148 a decisão só depende do DECORRIDO no cliente (offset absoluto não muda nada)", () => {
+  // ⚠️ Correção do @Altair (#1682): isto prova a imunidade da CONTAGEM a um
+  // offset ABSOLUTO da linha do tempo (chegada e expira deslocadas JUNTAS) — NÃO
+  // imunidade a skew entre os relógios servidor↔cliente. Esse skew entra inteiro
+  // no `ttlEfetivo` na MEDIÇÃO inicial (`expira` do servidor − `agora` do
+  // cliente) e não é testável aqui; a cura de raiz é `ttl_seconds` do servidor
+  // (fatia B/#1527). O que se garante: `deveAvisar` olha só `agora − medidoEm`,
+  // então o epoch absoluto é irrelevante.
+  const baseA = 0;
+  const baseB = 1_000_000;
+  const a = horizonteTtl([srv(baseA + 3600)], baseA)!;
+  const b = horizonteTtl([srv(baseB + 3600)], baseB)!;
   assert.equal(a.ttlEfetivoSeg, b.ttlEfetivoSeg); // 3600 nos dois
 
   for (const decorrido of [0, 2699, 2700, 3599]) {
     assert.equal(
-      deveAvisarExpiracao(a, chegadaA + decorrido),
-      deveAvisarExpiracao(b, chegadaB + decorrido),
-      `o skew do servidor mudou a decisão em decorrido=${decorrido} — não devia`,
+      deveAvisarExpiracao(a, baseA + decorrido),
+      deveAvisarExpiracao(b, baseB + decorrido),
+      `o offset absoluto mudou a decisão em decorrido=${decorrido} — não devia`,
     );
   }
-  assert.equal(deveAvisarExpiracao(a, chegadaA + 2700), true);
-  assert.equal(deveAvisarExpiracao(b, chegadaB + 2700), true);
+  assert.equal(deveAvisarExpiracao(a, baseA + 2700), true);
+  assert.equal(deveAvisarExpiracao(b, baseB + 2700), true);
 });
