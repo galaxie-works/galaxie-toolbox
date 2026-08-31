@@ -1748,6 +1748,16 @@ fn gather_relay(
         "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
          (renovação do lifetime = fatia 3c; segredo NÃO logado)"
     );
+    // #1527 (review do Altair, ponto 2): dá VOZ ao desarme — sem `ttl_seconds` no fio o
+    // relógio de reemissão da CREDENCIAL fica None (esperado até a fatia B forwardar a
+    // duração). Anuncia-o para que "sessão cai aos ~30 min" não seja um mistério silencioso
+    // ("ausência lida como saúde"); some quando o FE passar a duração.
+    if ttl_seconds.is_none() {
+        log::info!(
+            "[remote] #1527: relay sem ttl_seconds — relógio de reemissão da credencial \
+             DESARMADO (o FE ainda não forwarda a duração; fatia B)"
+        );
+    }
     // Guarda a credencial pro data-path (Send indication + CreatePermission) e agenda
     // o 1º Refresh a 3/4 do lifetime (#1130 fatia 3c — "não cai").
     Some(RelayState {
