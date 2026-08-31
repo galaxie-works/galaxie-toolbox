@@ -68,6 +68,26 @@ try {
 }
 finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
 
+# 0b) #1642 -ReadyIncompletos — Definicao-de-Ready (Priority/Size/area), OFFLINE (fixture).
+#     AC1: flaga Ready sem prio/size/area. AC3: Ready completo NAO flaga; nao-Ready ignorado.
+$fixDor = @(
+  [pscustomobject]@{ Numero = 10; Coluna = 'Ready';   Prio = 'P1'; Size = 'M'; Labels = 'BE';              Titulo = 'completo — nao flaga (AC3)'; Url = 'u10' },
+  [pscustomobject]@{ Numero = 11; Coluna = 'Ready';   Prio = '';   Size = 'M'; Labels = 'BE';              Titulo = 'sem Priority';               Url = 'u11' },
+  [pscustomobject]@{ Numero = 12; Coluna = 'Ready';   Prio = 'P2'; Size = ''; Labels = 'FE';               Titulo = 'sem Size';                   Url = 'u12' },
+  [pscustomobject]@{ Numero = 13; Coluna = 'Ready';   Prio = 'P2'; Size = 'S'; Labels = 'bug,enhancement'; Titulo = 'sem label de area';          Url = 'u13' },
+  [pscustomobject]@{ Numero = 14; Coluna = 'Backlog'; Prio = '';   Size = ''; Labels = '';                 Titulo = 'nao-Ready — ignorado (AC3)';  Url = 'u14' }
+)
+$tmp2 = New-TemporaryFile
+try {
+  $fixDor | ConvertTo-Json | Set-Content -LiteralPath $tmp2 -Encoding UTF8
+  $rd = @(& pwsh -NoProfile -File $board -ReadyIncompletos -FixtureFile $tmp2 -Json | ConvertFrom-Json)
+  Assert-Igual @(11, 12, 13) (@($rd | ForEach-Object { $_.Numero } | Sort-Object)) "-ReadyIncompletos lista Ready sem prio/size/area (ign. completo #10 e nao-Ready #14) (AC1/AC3)"
+  Assert-Igual 'Priority'       (($rd | Where-Object { $_.Numero -eq 11 }).Faltam) "#11 falta Priority"
+  Assert-Igual 'Size'           (($rd | Where-Object { $_.Numero -eq 12 }).Faltam) "#12 falta Size"
+  Assert-Igual 'label de area'  (($rd | Where-Object { $_.Numero -eq 13 }).Faltam) "#13 falta label de area (allowlist FE/BE/processo/docs)"
+}
+finally { Remove-Item -LiteralPath $tmp2 -ErrorAction SilentlyContinue }
+
 if (-not (Test-GhPronto)) {
   Write-Host "  SKIP  integração (gh) não autenticado; unidade offline acima rodou." -ForegroundColor Yellow
   if ($fail -gt 0) { exit 1 }

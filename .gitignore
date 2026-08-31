@@ -60,4 +60,6 @@ __screenshots__/
 # Cofre de PATs por papel (#1641) - DPAPI, por-utilizador. NUNCA versionar.
 # O script vive em scripts/galaxie-pat.ps1; os SEGREDOS ficam so em %LOCALAPPDATA%.
 galaxie-pat/
+# Idem pro cofre dos client_secret do OAuth (scripts/galaxie-oauth.ps1, #1549).
+galaxie-oauth/
 *.dat
