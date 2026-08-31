@@ -5,7 +5,13 @@
 
 ## O que esta vista responde
 
+> ℹ️ **Porque são dois diagramas e não um.** A vista completa tem 28 nós e sai
+> **larga**: o GitHub encaixa-a na largura da coluna e o resultado fica pequeno
+> demais para se ler. Partida em duas, cada metade desenha à escala legível.
+
 Que peças existem, em que linguagem vivem, e **quem depende de quem**. Não mostra dados a correr — isso é o [diagrama 2](02-fluxo-de-dados.md).
+
+### 1a — A aplicação e os membros da suite
 
 ```mermaid
 flowchart TB
@@ -17,7 +23,7 @@ flowchart TB
         IPC --> APP
     end
 
-    subgraph membros["Membros da suite (dentro do desktop)"]
+    subgraph membros["Membros da suite"]
         NAV["Navigator<br/><i>browser.rs · bookmarks.rs · favicon.rs</i>"]
         FILES["Files<br/><i>fs_explorer.rs</i>"]
         OD["OneDrive / M365<br/><i>graph.rs</i>"]
@@ -34,6 +40,17 @@ flowchart TB
     APP --> REM
     APP --> BRI
     APP -.->|"planeado — 0 código"| AST
+```
+
+### 1b — Os crates de serviço
+
+O `Remote` e a `plataforma web` do diagrama anterior apoiam-se nestes 17 crates.
+
+```mermaid
+flowchart TB
+    APP["src-tauri (crate app)"]
+    REM["membro Remote"]
+    WEB["<b>web/</b> — front da plataforma"]
 
     subgraph rust_remote["services/remote-* — 8 crates"]
         RNET["remote-net<br/><i>fronteira congelada v2:<br/>enrolamento, auth, sessão</i>"]
@@ -46,10 +63,22 @@ flowchart TB
         RHELPER["remote-system-helper<br/><b>Delphi</b> — broker SCM/sessão"]
     end
 
+    REM --> RNET
+    REM --> RTRANS
+    REM --> RCAP
+    RNET -.->|concede ticket| RCAPS
+    RTRANS -.->|aplica| RCAPS
+    REM -.->|"feature remote (OFF por omissão)"| RTRANS
+    RSIG -.->|serve o endpoint| RNET
+    APP --> RBROKER
+    RBROKER -->|pipe v1 congelado| RHELPER
+    RHELPER --> RAGENT
+    WEB --> PHTTP
+
     subgraph rust_platform["services/platform-* — 9 crates, nascente"]
+        PHTTP["platform-http<br/><i>borda axum (Router)</i>"]
         PIDENT["platform-identity<br/><i>fundação: principal, tenancy,<br/>papel, default-deny</i>"]
         PCONC["platform-concessao<br/><i>2.º eixo: o que foi CONCEDIDO</i>"]
-        PHTTP["platform-http<br/><i>borda axum (Router)</i>"]
         POAUTH["platform-oauth<br/><i>decisão OAuth (sem I/O)</i>"]
         PWEB["platform-web<br/><i>SessaoId + cookie</i>"]
         PORG["platform-org-admin"]
@@ -58,35 +87,18 @@ flowchart TB
         PCFG["platform-config"]
     end
 
-    WEB["<b>web/</b> — front da plataforma<br/>workspace pnpm (1 membro)"]
-
-    REM --> RNET
-    REM --> RTRANS
-    REM --> RCAP
-    RNET -.->|concede ticket| RCAPS
-    RTRANS -.->|aplica| RCAPS
-    REM -.->|"feature remote (OFF por omissão)"| RTRANS
-    RBROKER -->|pipe v1 congelado| RHELPER
-    RHELPER --> RAGENT
-    APP --> RBROKER
-
-    WEB --> PHTTP
     PHTTP --> PIDENT
     PHTTP --> POAUTH
     PHTTP --> PWEB
     PHTTP --> PCONC
-    PORG --> PIDENT
-    PBO --> PIDENT
-    PCONTA --> PIDENT
-    PCFG --> PIDENT
     PHTTP --> PORG
     PHTTP --> PBO
     PHTTP --> PCONTA
     PHTTP --> PCFG
-    RSIG -.->|"serve o endpoint de sinalização"| RNET
-
-    classDef scaffold stroke-dasharray: 5 5;
-    class AST,PIDENT,PCONC,PHTTP,POAUTH,PWEB,PORG,PBO,PCONTA,PCFG scaffold;
+    PORG --> PIDENT
+    PBO --> PIDENT
+    PCONTA --> PIDENT
+    PCFG --> PIDENT
 ```
 
 ## O que o diagrama não diz, e é preciso saber
