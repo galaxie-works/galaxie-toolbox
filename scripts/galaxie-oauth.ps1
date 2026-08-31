@@ -11,6 +11,27 @@
 # Windows logado. Um .env e texto claro — quem ler o disco (backup, sync de
 # nuvem, outro utilizador da maquina) le o segredo. Com DPAPI, copiar o .dat
 # para outra conta NAO o torna legivel. Ver docs/runbooks/dr-maquina-nova.md.
+#
+# ⚠️⚠️ ESTE COFRE E DA MAQUINA DO PO — NAO E O CAMINHO DE PRODUCAO.
+# (caveat da @Mira no #1549; o furo era meu)
+#
+# O DPAPI e por-utilizador-e-por-maquina Windows. Os `client_secret` sao
+# consumidos pelo `platform-*`, que corre num container LINUX na VPS — o .dat
+# copiado para la e lixo. Este script resolve "onde o PO guarda os segredos com
+# seguranca" e o dev local; NAO resolve a entrega ao servidor.
+#
+# Em PRODUCAO segue-se o precedente que ja existe na nossa VPS (medido em
+# /docker/galaxie-remote/): segredo em ficheiro modo 0440 + docker `secrets:`,
+# e a app recebe o CAMINHO, nunca o valor:
+#
+#     secrets:
+#       oauth_microsoft: { file: ./secrets/oauth_microsoft }
+#     environment:
+#       GALAXIE_OAUTH_MICROSOFT_SECRET_FILE: /run/secrets/oauth_microsoft
+#
+# 🔑 O sufixo _FILE nao e cosmetica: o env carrega um CAMINHO, entao o segredo
+# NAO aparece num `docker inspect`, num dump de ambiente, nem no ambiente
+# herdado por um processo filho. Entrega ate a VPS = raia do Alcor/Atlas.
 param(
   [string]$Name,
   [switch]$Listar
@@ -69,4 +90,5 @@ foreach ($p in $Provedores) {
 
 Write-Host ''
 Write-Host 'Feito. Confere com:  .\scripts\galaxie-oauth.ps1 -Listar'
-Write-Host 'O servico le com:    $env:GALAXIE_OAUTH_MICROSOFT_SECRET = & .\scripts\galaxie-oauth.ps1 -Name microsoft'
+Write-Host 'Dev local le com:    $env:GALAXIE_OAUTH_MICROSOFT_SECRET = & .\scripts\galaxie-oauth.ps1 -Name microsoft'
+Write-Host 'Em PRODUCAO nao e assim: docker secrets + ..._SECRET_FILE (ver o cabecalho deste ficheiro).'
