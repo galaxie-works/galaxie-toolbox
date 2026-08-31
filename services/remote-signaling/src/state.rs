@@ -647,12 +647,14 @@ impl AppState {
     /// (`RenewIceServers`) — chamar de novo com o relógio adiantado devolve uma
     /// credencial com `expires_at` novo, sem refazer pareamento.
     pub fn ice_servers(&self, device_id: &str) -> Result<Vec<IceServer>, TurnCredentialError> {
-        let expires_at = unix_seconds()?.saturating_add(self.inner.turn_credential_ttl.as_secs());
+        let ttl_seconds = self.inner.turn_credential_ttl.as_secs();
+        let expires_at = unix_seconds()?.saturating_add(ttl_seconds);
         let ice = montar_ice_server(
             &self.inner.turn_urls,
             &self.inner.turn_secret,
             device_id,
             expires_at,
+            ttl_seconds,
         )?;
         Ok(vec![ice])
     }
@@ -808,6 +810,7 @@ fn montar_ice_server(
     turn_secret: &[u8],
     device_id: &str,
     expires_at: u64,
+    ttl_seconds: u64,
 ) -> Result<IceServer, TurnCredentialError> {
     // #1420: `Hmac::new_from_slice` aceita chave de QUALQUER tamanho, inclusive
     // vazia — e propriedade do HMAC, nao detalhe do crate. Sem esta guarda, um
@@ -828,6 +831,7 @@ fn montar_ice_server(
         username,
         credential,
         expires_at_unix_seconds: expires_at,
+        ttl_seconds,
     })
 }
 
@@ -848,7 +852,8 @@ mod tests {
 
         // `expect`/`unwrap` são deny no crate (clippy::expect_used); desembrulha via
         // match com panic explícito (montar_ice_server só erra com secret inválido).
-        let montar = |exp: u64| match montar_ice_server(&urls, secret, dev, exp) {
+        let ttl = 1800u64;
+        let montar = |exp: u64| match montar_ice_server(&urls, secret, dev, exp, ttl) {
             Ok(v) => v,
             Err(e) => panic!("montar_ice_server({exp}): {e:?}"),
         };
@@ -857,6 +862,11 @@ mod tests {
         let t2 = t1 + 1800; // relógio adiantado 30min (um TTL)
         let a = montar(t1);
         let b = montar(t2);
+
+        // #1527: o ttl (DURAÇÃO) viaja no fio — o cliente arma a reemissão por ele,
+        // não pelo `expires_at` absoluto (imune ao skew do relógio do servidor).
+        assert_eq!(a.ttl_seconds, ttl);
+        assert_eq!(b.ttl_seconds, ttl);
 
         // expiração renovada pra frente.
         assert_eq!(a.expires_at_unix_seconds, t1);

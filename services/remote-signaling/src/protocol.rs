@@ -105,6 +105,12 @@ pub struct IceServer {
     pub username: String,
     pub credential: String,
     pub expires_at_unix_seconds: u64,
+    /// #1527: TTL da credencial em segundos (DURAÇÃO, não instante). O cliente arma
+    /// a reemissão com `agora_cliente + ttl*3/4` — tudo no relógio dele, imune ao
+    /// skew que o `expires_at_unix_seconds` (relógio do servidor) carregaria. É o
+    /// mesmo `turn_credential_ttl` que gerou o `expires_at`, exposto como duração
+    /// pra fechar o follow-up do #1148. O FE forwarda ao transport na fatia B.
+    pub ttl_seconds: u64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

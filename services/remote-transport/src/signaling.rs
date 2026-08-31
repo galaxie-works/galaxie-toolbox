@@ -11,6 +11,14 @@ pub struct IceServer {
     pub urls: Vec<String>,
     pub username: String,
     pub credential: String,
+    /// #1527: TTL da credencial em segundos (DURAÇÃO). O relógio de reemissão conta
+    /// `agora_cliente + ttl*3/4` — TUDO no relógio do cliente, imune ao skew que um
+    /// `expires_at` absoluto do servidor carregaria (um cliente atrasado agendaria a
+    /// reemissão DEPOIS de a credencial morrer). `None` (via `#[serde(default)]`) = o FE
+    /// ainda não forwarda a duração (fatia B) ⇒ relógio DESARMADO, que é seguro; um
+    /// relógio com skew que dispara tarde é pior que nenhum.
+    #[serde(default)]
+    pub ttl_seconds: Option<u64>,
 }
 
 impl IceServer {
@@ -104,6 +112,7 @@ mod tests {
             urls: vec!["stun:turn.thegalaxie.cloud:3478".into()],
             username: String::new(),
             credential: String::new(),
+            ttl_seconds: None,
         };
         assert!(stun.eh_stun_puro() && !stun.tem_turn());
 
@@ -111,6 +120,7 @@ mod tests {
             urls: vec!["turn:turn.thegalaxie.cloud:3478".into()],
             username: "u".into(),
             credential: "c".into(),
+            ttl_seconds: None,
         };
         assert!(turn.tem_turn() && !turn.eh_stun_puro());
     }
@@ -125,6 +135,7 @@ mod tests {
             ],
             username: "u".into(),
             credential: "segredo".into(),
+            ttl_seconds: None,
         };
         assert_eq!(
             s.turn_udp_endpoints(),
@@ -147,6 +158,7 @@ mod tests {
             ],
             username: "u".into(),
             credential: "segredo".into(),
+            ttl_seconds: None,
         };
         assert!(
             s.turn_udp_endpoints().is_empty(),
