@@ -12,7 +12,7 @@ O estado do time vive em **três** lugares, e **nenhum** está versionado hoje:
 
 | lugar | o quê | medido em 2026-08-27 |
 |---|---|---|
-| `%USERPROFILE%\.claude\projects\G--galaxie-development-galaxie-toolbox\memory\` | ROSTER + Contexts + memórias + (futuro) `galaxie.db` | 67 ficheiros, 1,5 MB |
+| `%USERPROFILE%\.claude\projects\G--galaxie-development-galaxie-toolbox\memory\` | ROSTER + Contexts + memórias + `galaxie.db` (histórico/métricas, #1655) | 67 ficheiros, 1,5 MB |
 | `%LOCALAPPDATA%\galaxie-pat\` | cofre: 11 PATs cifrados DPAPI | 11 × `.dat`, ~620 B cada |
 | repo (`galaxie-toolbox`) | código, canon, scripts, este runbook | GitHub — **já sobrevive** |
 
@@ -83,8 +83,11 @@ gh api user --jq .login          # tem de dizer: galaxie-altair
 
 🔴 **E se o `gh api user` FALHAR (`Bad credentials`), pára — não é o mesmo que devolver o nome errado.** Um token inválido cega REST *e* GraphQL, e o erro é **indistinguível de "não encontrei nada"**. Três desfechos, não dois: nome certo → segue · nome errado → pára · **chamada falhou → pára, e investiga o token**.
 
-**5. `galaxie.db`** — vem dentro da `memory/` restaurada (passo 2). Se não existir, é porque ainda não foi criada; a impl é o **#1655**.
-✔️ `Test-Path "$destino\galaxie.db"`
+**5. `galaxie.db`** (#1655 — histórico/métricas) — vem dentro da `memory/` restaurada (passo 2). Se **não** existir no backup (máquina que nunca o gerou), re-cria-se **vazio** — nasce sem migração:
+```powershell
+.\scripts\galaxie-db.ps1 init      # cria o schema em <memory>\galaxie.db (idempotente)
+```
+✔️ `Test-Path "$destino\galaxie.db"` → `True`; e `.\scripts\galaxie-db.ps1 consultar recibo-semanal` responde (base viva).
 
 **6. Despertador/Porteiro** — **não está aqui de propósito.** Kit de recriação no **#1650**.
 
