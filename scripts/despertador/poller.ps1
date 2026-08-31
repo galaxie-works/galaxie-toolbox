@@ -74,7 +74,12 @@ foreach ($papel in $papeis) {
 # (assign no card notifica o dev nativamente e o circuito renasce). Dedup por card em _fila.
 try {
   $agora = (Get-Date).ToUniversalTime()
-  $ultimo = if ($state._filaCheckedAt) { [datetime]::Parse($state._filaCheckedAt).ToUniversalTime() } else { [datetime]::MinValue }
+  # ConvertFrom-Json ja devolve DateTime pra string ISO; re-Parse em culture pt-BR quebra (dia/mes trocados)
+  $ultimo = [datetime]::MinValue
+  if ($state._filaCheckedAt) {
+    if ($state._filaCheckedAt -is [datetime]) { $ultimo = $state._filaCheckedAt.ToUniversalTime() }
+    else { $ultimo = [datetime]::Parse([string]$state._filaCheckedAt, [Globalization.CultureInfo]::InvariantCulture, 'AdjustToUniversal') }
+  }
   if (($agora - $ultimo).TotalMinutes -ge 25) {
     $tokP = & $patScript -Name polaris 2>$null
     if ($tokP) {
