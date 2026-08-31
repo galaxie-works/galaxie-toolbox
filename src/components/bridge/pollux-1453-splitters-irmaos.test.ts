@@ -90,7 +90,11 @@ test("#1453/#1279: o handle dá sinal de que é arrastável (hover) — agora do
   // que centralizou o hover). Se algum uso VOLTAR a trazer o hover no className,
   // o gate do #1279 (`resizable-ponto-unico.test.ts`) reprova.
   const dono = readFileSync("src/components/ui/resizable.tsx", "utf8");
-  const m = dono.match(/data-slot="resizable-handle"[\s\S]*?cn\(\s*"([^"]*)"/);
+  // #1667: o default passou a ser o 2º argumento do `cn` (a ordem inverteu para
+  // o padrão VENCER o conflito de className — ver resizable.tsx). Procuramos o
+  // literal do default pelo seu início (`relative …`), agnóstico à posição no
+  // `cn`, em vez de assumir que é o 1º argumento.
+  const m = dono.match(/data-slot="resizable-handle"[\s\S]*?cn\([\s\S]*?"(relative[^"]*)"/);
   const classesDefault = (m?.[1] ?? "").split(/\s+/);
   assert.ok(
     classesDefault.some((c) => c.startsWith("hover:")),
