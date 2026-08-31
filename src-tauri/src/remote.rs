@@ -63,6 +63,36 @@ fn intervalo_refresh(lifetime_s: u32) -> Duration {
     Duration::from_secs(tres_quartos).max(Duration::from_secs(60))
 }
 
+/// #1527: o `expires_at` da CREDENCIAL (distinto do lifetime da alocação) vem EMBUTIDO no
+/// `username` — o coturn `use-auth-secret` exige `username = "{expires_at}:{device_id}"`
+/// (o `montar_ice_server` do signaling minta exatamente isso). Parseia-se dele, sem campo
+/// novo no fio. `None` = username sem `expires_at` parseável (ex.: formato do harness/id
+/// mudou) → não agendamos reemissão de credencial (o lifetime da alocação segue no Refresh).
+fn expira_credencial_unix(username: &str) -> Option<u64> {
+    username.split_once(':')?.0.parse::<u64>().ok()
+}
+
+/// #1527: a antecedência da reemissão da CREDENCIAL a partir de AGORA — 3/4 do que RESTA
+/// até o `expires_at` (`expira_unix - agora_unix`); `ZERO` se já expirou (reemitir já).
+/// Espelha a doutrina 3/4 do `intervalo_refresh`, mas sobre a credencial, não a alocação.
+///
+/// ⚠️ SKEW (nota do #1681): `expira_unix` é do SERVIDOR e `agora_unix` do CLIENTE — o desvio
+/// entre relógios entra INTEIRO no `resta`. A margem de 3/4 absorve skew pequeno; se o
+/// `IceServersRenewed` da fatia B trouxer `ttl_seconds` (duração), a conta passa a ser toda
+/// no relógio do cliente (imune) — follow-up, fora deste card.
+fn antecedencia_reemissao(expira_unix: u64, agora_unix: u64) -> Duration {
+    let resta = expira_unix.saturating_sub(agora_unix);
+    Duration::from_secs(resta.saturating_mul(3) / 4)
+}
+
+/// AGORA em segundos UNIX (relógio do cliente). Usado só pro relógio da credencial.
+fn agora_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[derive(Default)]
 pub struct RemoteRuntime {
     active: Mutex<Option<ActiveSession>>,
@@ -290,6 +320,11 @@ struct RelayState {
     /// Quando reenviar o Refresh da alocação (antes do lifetime expirar) — senão o
     /// coturn libera o relay e a sessão CAI.
     refresh_em: Instant,
+    /// #1527: quando REEMITIR a CREDENCIAL (Allocate novo sobrepondo), a 3/4 do
+    /// `expires_at` da credencial. DISTINTO do `refresh_em` (que renova o LIFETIME da
+    /// alocação; a credencial morrer é outro furo — o `Refresh` não a salva, porque a
+    /// alocação é amarrada ao username que a criou). `None` = username sem `expires_at`.
+    reemitir_em: Option<Instant>,
     /// Peers com CreatePermission instalada → quando REEMITIR (a permissão do coturn
     /// expira em ~300s; sem reemitir, o relay dropa o peer no meio da sessão). Chave =
     /// IP do peer (a permissão é por IP, RFC 5766 §9).
@@ -1062,6 +1097,18 @@ impl RuntimeSession {
             return Ok(());
         };
         let agora = Instant::now();
+        // #1527: relógio da CREDENCIAL (distinto do Refresh do lifetime). Dispara a 3/4 do
+        // `expires_at` da credencial e sinaliza que precisa de credencial NOVA — o `Refresh`
+        // não a salva (a alocação é amarrada ao username que a criou, AC3). Limpa pra
+        // sinalizar UMA vez; quando a credencial nova chega (fatia B → comando), a fatia 2
+        // faz o Allocate NOVO sobrepondo + troca o data-path + libera o antigo.
+        if relay.reemitir_em.is_some_and(|t| agora >= t) {
+            relay.reemitir_em = None;
+            log::warn!(
+                "[remote] #1527: credencial TURN a 3/4 do expires_at — reemissao necessaria \
+                 (sinal p/ a fatia B: RenewIceServers; o Refresh nao salva credencial expirada)"
+            );
+        }
         // 1. Refresh da alocação antes do lifetime expirar.
         if agora >= relay.refresh_em {
             let mut txid = [0u8; 12];
@@ -1727,6 +1774,10 @@ fn gather_relay(
         key,
         lifetime_s: lifetime,
         refresh_em: Instant::now() + intervalo_refresh(lifetime),
+        // #1527: relógio da credencial (3/4 do expires_at embutido no username). None se o
+        // username não traz expires_at parseável — aí só o lifetime da alocação é renovado.
+        reemitir_em: expira_credencial_unix(username)
+            .map(|expira| Instant::now() + antecedencia_reemissao(expira, agora_unix())),
         permitidos: HashMap::new(),
         ultimo_txid: [0u8; 12],
     })
@@ -1775,6 +1826,28 @@ mod tests {
     use super::*;
     use galaxie_remote_transport::{BotaoMouse, CodedFrame, Tecla};
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    // ---- #1527: relógio da CREDENCIAL (parse do expires_at embutido + antecedência 3/4) ----
+    #[test]
+    fn expira_credencial_parseia_do_username() {
+        // username = "{expires_at}:{device_id}" (use-auth-secret do coturn)
+        assert_eq!(expira_credencial_unix("1788140729:prova-1666"), Some(1788140729));
+        assert_eq!(expira_credencial_unix("42:mizar:extra"), Some(42)); // só o 1º campo
+        assert_eq!(expira_credencial_unix("sem-dois-pontos"), None);
+        assert_eq!(expira_credencial_unix("naonumero:x"), None);
+        assert_eq!(expira_credencial_unix(""), None);
+    }
+
+    #[test]
+    fn antecedencia_reemissao_e_tres_quartos_do_restante() {
+        // resta 1000s -> reemite a 3/4 (750s a partir de agora = 250s antes de expirar)
+        assert_eq!(antecedencia_reemissao(1000, 0), Duration::from_secs(750));
+        // credencial ja expirada (ou no limite) -> reemitir JA
+        assert_eq!(antecedencia_reemissao(100, 100), Duration::ZERO);
+        assert_eq!(antecedencia_reemissao(50, 100), Duration::ZERO); // agora > expira (skew/atraso)
+        // resta 80s -> 3/4 = 60s (20s de margem antes de expirar)
+        assert_eq!(antecedencia_reemissao(80, 0), Duration::from_secs(60));
+    }
 
     // ---- #1000 (AC1/AC3): autorização por-frame do host -----------------------
     // A matriz do design do `altair` (canon v1.1 §2), exercitada pela fn PURA
