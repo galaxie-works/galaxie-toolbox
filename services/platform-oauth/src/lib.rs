@@ -72,6 +72,37 @@ impl Provedor {
             Provedor::MicrosoftPersonal => false,
         }
     }
+
+    /// A **authority** do endpoint Microsoft — o eixo de segurança do #1683/#1549 (desenho do
+    /// @Altair). A rota `microsoft` SÓ aceita conta de organização (`/organizations`); a
+    /// `microsoft-personal` só pessoal (`/consumers`). **NUNCA `/common`**: `/common` aceita as
+    /// duas, e uma conta pessoal a entrar pela rota `microsoft` seria tratada como e-mail forte
+    /// (elegível a ligar convite, ver [`Provedor::elegivel_para_ligar_convite`]) quando NÃO é — a
+    /// garantia passaria a ser falsa sem nada falhar. Google não usa este eixo (`None`). A regra
+    /// vive NO TIPO, não num `if` esquecível.
+    #[must_use]
+    pub fn authority_microsoft(&self) -> Option<&'static str> {
+        match self {
+            Provedor::Microsoft => Some("organizations"),
+            Provedor::MicrosoftPersonal => Some("consumers"),
+            Provedor::Google => None,
+        }
+    }
+
+    /// O endpoint de autorização do provedor (base, sem query). Microsoft embute a authority
+    /// SEGURA (nunca `/common`); Google tem endpoint único.
+    #[must_use]
+    pub fn endpoint_autorizacao(&self) -> String {
+        match self {
+            Provedor::Microsoft | Provedor::MicrosoftPersonal => {
+                let authority = self
+                    .authority_microsoft()
+                    .expect("provedor Microsoft tem authority");
+                format!("https://login.microsoftonline.com/{authority}/oauth2/v2.0/authorize")
+            }
+            Provedor::Google => "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+        }
+    }
 }
 
 /// PKCE — **só `S256`** (o `plain` é recusado por TIPO: não existe construtor que o produza). O
@@ -87,7 +118,10 @@ impl Pkce {
     pub fn gerar() -> Pkce {
         let verifier = segredo_url_safe();
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        Pkce { verifier, challenge }
+        Pkce {
+            verifier,
+            challenge,
+        }
     }
 
     /// O `code_verifier` (segredo do servidor; vai no fluxo pendente, nunca pro cliente).
@@ -242,19 +276,174 @@ impl RedirectAllowlist {
     }
 }
 
+/// Erro ao montar a URL de autorização (fatia B/AC1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErroAutorizacao {
+    /// O `redirect_uri` pedido NÃO está na allowlist EXATA (invariante 3) — nunca redirecionar.
+    RedirectNaoPermitido,
+}
+
+/// Escopos OIDC: identidade, NÃO recurso. `openid` (traz o id_token) + `email` + `profile`.
+const ESCOPOS_OIDC: &str = "openid email profile";
+
+/// Percent-encode de UM valor de query pela regra ESTRITA do RFC 3986: mantém os `unreserved`
+/// (`A-Z a-z 0-9 - . _ ~`) e encoda todo o resto (`%XX`). Sem dep — o crate é puro; e ser estrito
+/// (encodar tudo o que não é unreserved) nunca sub-encoda um separador (`&`, `=`, `:`, `/`).
+fn encode_query(valor: &str) -> String {
+    let mut out = String::with_capacity(valor.len());
+    for b in valor.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Monta a URL de autorização — o destino do redirect de `GET /auth/{provedor}` (AC1). Amarra:
+/// authority SEGURA (nunca `/common`, via [`Provedor::endpoint_autorizacao`]), `code_challenge`
+/// (S256) que prova a posse do verifier no callback, `state` que amarra o fluxo ao browser, e
+/// `redirect_uri` **conferido byte-a-byte** na allowlist (senão o `code` desviava pra um host do
+/// atacante). NUNCA embute segredo — o `client_secret` só entra na troca do `code`, server-side
+/// (fatia C). `client_id` é público (Actions variable), entra por parâmetro (não hardcode).
+pub fn montar_url_autorizacao(
+    provedor: Provedor,
+    client_id: &str,
+    redirect_uri: &str,
+    allowlist: &RedirectAllowlist,
+    challenge: &str,
+    state: &str,
+) -> Result<String, ErroAutorizacao> {
+    if !allowlist.permite(redirect_uri) {
+        return Err(ErroAutorizacao::RedirectNaoPermitido);
+    }
+    let base = provedor.endpoint_autorizacao();
+    let params = [
+        ("client_id", client_id),
+        ("response_type", "code"),
+        ("redirect_uri", redirect_uri),
+        ("response_mode", "query"),
+        ("scope", ESCOPOS_OIDC),
+        ("state", state),
+        ("code_challenge", challenge),
+        ("code_challenge_method", "S256"),
+    ];
+    let query = params
+        .iter()
+        .map(|(k, v)| format!("{k}={}", encode_query(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    Ok(format!("{base}?{query}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- #1695 fatia B (AC1): authority segura + authorize-URL builder ---------
+
+    #[test]
+    fn authority_microsoft_nunca_common() {
+        // Eixo de segurança do #1683/#1549: microsoft→organizations, personal→consumers, e
+        // NUNCA /common (que deixaria conta pessoal passar por e-mail forte na rota microsoft).
+        assert_eq!(
+            Provedor::Microsoft.authority_microsoft(),
+            Some("organizations")
+        );
+        assert_eq!(
+            Provedor::MicrosoftPersonal.authority_microsoft(),
+            Some("consumers")
+        );
+        assert_eq!(Provedor::Google.authority_microsoft(), None);
+        for p in [
+            Provedor::Microsoft,
+            Provedor::MicrosoftPersonal,
+            Provedor::Google,
+        ] {
+            assert!(
+                !p.endpoint_autorizacao().contains("/common"),
+                "{p:?} nunca usa /common"
+            );
+        }
+    }
+
+    #[test]
+    fn authorize_url_recusa_redirect_fora_da_allowlist() {
+        let allow = RedirectAllowlist::nova(vec![
+            "https://platform.thegalaxie.cloud/api/v1/auth/microsoft/callback".to_string(),
+        ]);
+        // redirect alheio ⇒ recusa (invariante 3: nunca desviar o `code`).
+        let r = montar_url_autorizacao(
+            Provedor::Microsoft,
+            "cid",
+            "https://evil.example/callback",
+            &allow,
+            "chal",
+            "st",
+        );
+        assert_eq!(r, Err(ErroAutorizacao::RedirectNaoPermitido));
+    }
+
+    #[test]
+    fn authorize_url_monta_com_authority_pkce_state_e_redirect_encodado() {
+        let redir = "http://localhost:8080/api/v1/auth/microsoft/callback";
+        let allow = RedirectAllowlist::nova(vec![redir.to_string()]);
+        let url = montar_url_autorizacao(
+            Provedor::Microsoft,
+            "cid-123",
+            redir,
+            &allow,
+            "CHAL",
+            "STATE",
+        )
+        .expect("redirect permitido monta");
+        assert!(
+            url.starts_with(
+                "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?"
+            ),
+            "authority organizations no path: {url}"
+        );
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("code_challenge=CHAL"));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("state=STATE"));
+        assert!(url.contains("client_id=cid-123"));
+        // redirect_uri percent-encodado (os `:` e `/` viram %3A/%2F — nunca sub-encodar).
+        assert!(
+            url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080"),
+            "redirect encodado: {url}"
+        );
+        // scope com espaço encodado.
+        assert!(url.contains("scope=openid%20email%20profile"));
+        // personal usa /consumers.
+        let allow2 = RedirectAllowlist::nova(vec![redir.to_string()]);
+        let url2 =
+            montar_url_autorizacao(Provedor::MicrosoftPersonal, "c", redir, &allow2, "c", "s")
+                .unwrap();
+        assert!(
+            url2.contains("/consumers/oauth2/"),
+            "personal usa consumers: {url2}"
+        );
+    }
 
     #[test]
     fn allowlist_de_provedor_recusa_desconhecido() {
         assert_eq!(Provedor::da_rota("microsoft"), Some(Provedor::Microsoft));
         assert_eq!(Provedor::da_rota("google"), Some(Provedor::Google));
-        assert_eq!(Provedor::da_rota("microsoft-personal"), Some(Provedor::MicrosoftPersonal));
+        assert_eq!(
+            Provedor::da_rota("microsoft-personal"),
+            Some(Provedor::MicrosoftPersonal)
+        );
         // Desconhecido ⇒ None (o handler vira falha uniforme, não confirma quais existem).
         assert_eq!(Provedor::da_rota("facebook"), None);
         assert_eq!(Provedor::da_rota(""), None);
-        assert_eq!(Provedor::da_rota("MICROSOFT"), None, "case-sensitive: só o slug exato");
+        assert_eq!(
+            Provedor::da_rota("MICROSOFT"),
+            None,
+            "case-sensitive: só o slug exato"
+        );
     }
 
     #[test]
@@ -298,7 +487,10 @@ mod tests {
         assert!(a.consumir(&state, &amarra, 500).unwrap().is_some());
         // 2º consumo do MESMO state ⇒ Ok(None): já foi queimado (uso único). `.unwrap()` prova `Ok`
         // (não `Err` de infra) e `.is_none()` que não achou — "não achei" é falha de AUTH, não de infra.
-        assert!(a.consumir(&state, &amarra, 500).unwrap().is_none(), "state não completa duas vezes");
+        assert!(
+            a.consumir(&state, &amarra, 500).unwrap().is_none(),
+            "state não completa duas vezes"
+        );
     }
 
     #[test]
@@ -310,15 +502,24 @@ mod tests {
         let mut a = ArmazemMemoria::novo();
         let s1 = Estado::gerar();
         a.iniciar(s1.clone(), fluxo(&amarra, 1000)).unwrap();
-        assert!(a.consumir(&s1, &amarra, 1000).unwrap().is_none(), "vencido recusa");
+        assert!(
+            a.consumir(&s1, &amarra, 1000).unwrap().is_none(),
+            "vencido recusa"
+        );
 
         // Amarra errada (outro browser) ⇒ Ok(None), mesmo dentro do prazo.
         let mut b = ArmazemMemoria::novo();
         let s2 = Estado::gerar();
         b.iniciar(s2.clone(), fluxo(&amarra, 1000)).unwrap();
-        assert!(b.consumir(&s2, &outra, 500).unwrap().is_none(), "browser errado recusa");
+        assert!(
+            b.consumir(&s2, &outra, 500).unwrap().is_none(),
+            "browser errado recusa"
+        );
         // E queimou (uso único ao tocar): nem o browser certo completa depois.
-        assert!(b.consumir(&s2, &amarra, 500).unwrap().is_none(), "tocar queima o state");
+        assert!(
+            b.consumir(&s2, &amarra, 500).unwrap().is_none(),
+            "tocar queima o state"
+        );
     }
 
     #[test]
@@ -329,7 +530,9 @@ mod tests {
         assert!(a.permite("https://platform.thegalaxie.cloud/api/v1/auth/google/callback"));
         // prefixo/sufixo NÃO passam (o furo clássico de desvio do code).
         assert!(!a.permite("https://platform.thegalaxie.cloud/api/v1/auth/google/callback/../evil"));
-        assert!(!a.permite("https://evil.com/https://platform.thegalaxie.cloud/api/v1/auth/google/callback"));
+        assert!(!a.permite(
+            "https://evil.com/https://platform.thegalaxie.cloud/api/v1/auth/google/callback"
+        ));
         assert!(!a.permite("https://platform.thegalaxie.cloud/api/v1/auth/google/callback?x=1"));
     }
 }
