@@ -29,7 +29,8 @@ use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
 use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave, RegistroFormasMemoria};
 use galaxie_platform_identity::{Escopo, Org, OrgId, Papel, Principal, Sessao, UserId};
 use galaxie_platform_http::servidor::{agora_de_producao, servir, Config};
-use galaxie_platform_http::Borda;
+use galaxie_platform_http::{Borda, ConfigProvedor, EstadoOAuth};
+use galaxie_platform_oauth::{ArmazemMemoria as ArmazemOAuthMemoria, Provedor, TTL_FLUXO_OAUTH_SEG};
 use galaxie_platform_web::emitir_sessao;
 
 /// Auditor no-op: dev não precisa de auditoria real (o destino OpenObserve é fatia própria). A
@@ -154,7 +155,42 @@ async fn main() -> Result<()> {
     );
     registro_formas.semear("app.notificacoes", FormaDaChave::Booleano);
 
-    let borda = Borda::nova(
+    // OAuth de DEV (#1695 fatia B): liga `/auth/{provedor}` pro @Pollux ver o 302 pro provedor + o
+    // cookie de amarra, antes do login federado real. ⚠️ `client_id`s são PLACEHOLDERS — bastam pro
+    // redirect/cookie/gravação do fluxo (o que a fatia B entrega); completar o login no provedor exige
+    // um app real (fatia 5, secret do cofre). 🪦 Morre com este bin quando a fatia 3 landar. O
+    // `redirect_uri` casa a porta do dev-server pra ficar consistente byte-a-byte na allowlist.
+    let porta = Config::from_env()?.porta;
+    let redir = |slug: &str| format!("http://localhost:{porta}/api/v1/auth/{slug}/callback");
+    let oauth = EstadoOAuth::nova(
+        Box::new(ArmazemOAuthMemoria::novo()),
+        vec![
+            (
+                Provedor::Microsoft,
+                ConfigProvedor {
+                    client_id: "dev-placeholder-microsoft".into(),
+                    redirect_uri: redir("microsoft"),
+                },
+            ),
+            (
+                Provedor::MicrosoftPersonal,
+                ConfigProvedor {
+                    client_id: "dev-placeholder-microsoft-personal".into(),
+                    redirect_uri: redir("microsoft-personal"),
+                },
+            ),
+            (
+                Provedor::Google,
+                ConfigProvedor {
+                    client_id: "dev-placeholder-google".into(),
+                    redirect_uri: redir("google"),
+                },
+            ),
+        ],
+        TTL_FLUXO_OAUTH_SEG,
+    );
+
+    let borda = Borda::nova_com_oauth(
         armazem,
         agora_de_producao,
         Arc::new(AuditorDev),
@@ -164,6 +200,7 @@ async fn main() -> Result<()> {
         Arc::new(perfis),
         Arc::new(prefs),
         Arc::new(registro_formas),
+        oauth,
     );
 
     // Imprime o cookie pronto pro dev/@Pollux injetar. `__Host-` exige `Secure`; em http://localhost
@@ -185,6 +222,6 @@ async fn main() -> Result<()> {
     // IMPRIME o cookie — em `0.0.0.0` qualquer um no mesmo segmento de rede alcançaria as rotas. O
     // `127.0.0.1` é hardcoded, NÃO `from_env`: expor tem de ser um ato deliberado e visível, nunca
     // o default herdado da produção. A porta segue configurável (o Pollux precisa saber qual é).
-    let addr = SocketAddr::from(([127, 0, 0, 1], Config::from_env()?.porta));
+    let addr = SocketAddr::from(([127, 0, 0, 1], porta));
     servir(borda, addr).await
 }

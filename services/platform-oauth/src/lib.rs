@@ -338,6 +338,72 @@ pub fn montar_url_autorizacao(
     Ok(format!("{base}?{query}"))
 }
 
+/// Prazo CURTO default de um fluxo OAuth em curso (#1695 fatia B): 10 min. Um login federado é de
+/// segundos a poucos minutos; além disto o `state` (um CSRF de login) não pode ficar aberto. Vale
+/// pro `FluxoPendente::expira_unix` E pro `Max-Age` do cookie de amarra — os dois pela MESMA grandeza
+/// (duração), nunca por um instante absoluto (a lição do #1681/#1527: medir por duração é imune a skew).
+pub const TTL_FLUXO_OAUTH_SEG: u64 = 10 * 60;
+
+/// O que iniciar um fluxo produz — tudo o que a borda (`/auth/{provedor}`) precisa: o que GRAVAR
+/// (o `state` como chave + o `fluxo`), a `amarra` a SETAR no cookie curto do browser, e o destino
+/// do 302 (`url_autorizacao`). A DECISÃO (gerar segredos, montar a URL segura, prazo do fluxo) vive
+/// AQUI; a borda só grava, seta o cookie e redireciona — não escolhe nada de segurança.
+pub struct InicioFluxo {
+    /// Chave do fluxo no armazém (== `state` OAuth; vai também na query da URL de autorização).
+    pub state: Estado,
+    /// O fluxo pendente a gravar sob `state` (PKCE verifier + amarra + prazo curto).
+    pub fluxo: FluxoPendente,
+    /// A amarra a SETAR no cookie curto do browser — o callback confere que foi ESTE browser.
+    pub amarra: AmarraNavegador,
+    /// O destino do redirect (302) pro provedor.
+    pub url_autorizacao: String,
+}
+
+/// Inicia um fluxo OAuth (fatia B do #1695): gera PKCE(S256) + `state` + `amarra` (todos CSPRNG),
+/// monta a URL de autorização (authority SEGURA, `redirect_uri` conferido byte-a-byte na allowlist) e
+/// prepara o [`FluxoPendente`] com prazo CURTO (`agora + ttl_seg`). **Puro** — nenhum I/O, nenhum
+/// segredo do cofre (o `client_secret` só entra na troca do `code`, fatia C).
+///
+/// `Err(RedirectNaoPermitido)` só se o `redirect_uri` configurado não estiver na allowlist — é uma
+/// misconfig NOSSA (a borda a trata como falha de infra e NUNCA redireciona), não uma falha de auth.
+///
+/// 🔑 **`saturating_add`**: se `agora_unix` vier saturado (`u64::MAX` — o fallback fail-closed do
+/// relógio morto, ver `servidor.rs`), `expira` fica em `MAX` e o `consumir` do callback recusa na hora
+/// (`agora >= expira`). Um relógio quebrado torna o fluxo inutilizável — fail-CLOSED, nunca imortal.
+pub fn iniciar_fluxo(
+    provedor: Provedor,
+    client_id: &str,
+    redirect_uri: &str,
+    allowlist: &RedirectAllowlist,
+    agora_unix: u64,
+    ttl_seg: u64,
+) -> Result<InicioFluxo, ErroAutorizacao> {
+    let pkce = Pkce::gerar();
+    let state = Estado::gerar();
+    let amarra = AmarraNavegador::gerar();
+    // Monta a URL ANTES de gravar: se o redirect não passar a allowlist, falha sem deixar fluxo órfão.
+    let url_autorizacao = montar_url_autorizacao(
+        provedor,
+        client_id,
+        redirect_uri,
+        allowlist,
+        pkce.challenge(),
+        &state.0,
+    )?;
+    let fluxo = FluxoPendente {
+        provedor,
+        verificador_pkce: pkce.verifier().to_string(),
+        amarra: amarra.clone(),
+        expira_unix: agora_unix.saturating_add(ttl_seg),
+    };
+    Ok(InicioFluxo {
+        state,
+        fluxo,
+        amarra,
+        url_autorizacao,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,5 +600,74 @@ mod tests {
             "https://evil.com/https://platform.thegalaxie.cloud/api/v1/auth/google/callback"
         ));
         assert!(!a.permite("https://platform.thegalaxie.cloud/api/v1/auth/google/callback?x=1"));
+    }
+
+    // --- #1695 fatia B: iniciar_fluxo (orquestração pura do início) ------------
+
+    #[test]
+    fn iniciar_fluxo_amarra_pkce_state_amarra_e_url() {
+        let redir = "https://platform.thegalaxie.cloud/api/v1/auth/microsoft/callback";
+        let allow = RedirectAllowlist::nova(vec![redir.to_string()]);
+        let inicio = iniciar_fluxo(Provedor::Microsoft, "cid-1", redir, &allow, 1_000, 600)
+            .expect("redirect permitido inicia");
+
+        // Prazo = agora + ttl (duração, não instante — imune a skew, #1681/#1527).
+        assert_eq!(inicio.fluxo.expira_unix, 1_600);
+        // O provedor do fluxo é o pedido.
+        assert_eq!(inicio.fluxo.provedor, Provedor::Microsoft);
+        // A amarra devolvida (pro cookie) é a MESMA gravada no fluxo (pro callback conferir).
+        assert_eq!(inicio.fluxo.amarra, inicio.amarra);
+        // A URL leva o `state` devolvido (base64url = unreserved, não é reencodado) e a authority segura.
+        assert!(inicio.url_autorizacao.contains(&format!("state={}", inicio.state.0)));
+        assert!(inicio
+            .url_autorizacao
+            .starts_with("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?"));
+        // 🔑 PKCE fim-a-fim: o `code_challenge` da URL == base64url(sha256(verificador GRAVADO)).
+        let esperado =
+            URL_SAFE_NO_PAD.encode(Sha256::digest(inicio.fluxo.verificador_pkce.as_bytes()));
+        assert!(
+            inicio.url_autorizacao.contains(&format!("code_challenge={esperado}")),
+            "challenge da URL prova posse do verifier gravado: {}",
+            inicio.url_autorizacao
+        );
+        assert!(inicio.url_autorizacao.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn iniciar_fluxo_recusa_redirect_fora_da_allowlist_sem_deixar_orfao() {
+        // redirect NÃO listado ⇒ Err, e nada a gravar (a borda nunca redireciona nem cria fluxo).
+        let allow = RedirectAllowlist::nova(vec!["https://ok.example/cb".to_string()]);
+        let r = iniciar_fluxo(Provedor::Google, "cid", "https://evil.example/cb", &allow, 0, 600);
+        assert_eq!(r.err(), Some(ErroAutorizacao::RedirectNaoPermitido));
+    }
+
+    #[test]
+    fn iniciar_fluxo_gera_segredos_distintos_a_cada_chamada() {
+        let redir = "https://ok.example/cb";
+        let allow = RedirectAllowlist::nova(vec![redir.to_string()]);
+        let a = iniciar_fluxo(Provedor::Google, "c", redir, &allow, 0, 600).unwrap();
+        let b = iniciar_fluxo(Provedor::Google, "c", redir, &allow, 0, 600).unwrap();
+        assert_ne!(a.state.0, b.state.0, "state CSPRNG por fluxo");
+        assert_ne!(a.amarra.0, b.amarra.0, "amarra CSPRNG por fluxo");
+        assert_ne!(
+            a.fluxo.verificador_pkce, b.fluxo.verificador_pkce,
+            "verifier CSPRNG por fluxo"
+        );
+    }
+
+    #[test]
+    fn iniciar_fluxo_relogio_saturado_nasce_vencido() {
+        // Relógio morto (u64::MAX, fail-closed): saturating_add mantém MAX ⇒ o fluxo já nasce no teto,
+        // e um consumir com o mesmo MAX recusa (agora >= expira). Nunca imortal.
+        let redir = "https://ok.example/cb";
+        let allow = RedirectAllowlist::nova(vec![redir.to_string()]);
+        let inicio = iniciar_fluxo(Provedor::Google, "c", redir, &allow, u64::MAX, 600).unwrap();
+        assert_eq!(inicio.fluxo.expira_unix, u64::MAX, "saturou, não deu wrap pra baixo");
+        let mut arm = ArmazemMemoria::novo();
+        arm.iniciar(inicio.state.clone(), inicio.fluxo.clone()).unwrap();
+        assert!(
+            arm.consumir(&inicio.state, &inicio.amarra, u64::MAX).unwrap().is_none(),
+            "relógio saturado ⇒ fluxo inutilizável (fail-closed)"
+        );
     }
 }

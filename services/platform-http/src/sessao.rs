@@ -20,7 +20,129 @@ use galaxie_platform_identity::Sessao;
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::tocar_sessao_do_cookie;
 
+use galaxie_platform_oauth::{ArmazemEstadoOAuth, Provedor, RedirectAllowlist};
+
 use crate::erro::resposta_de_erro;
+
+/// Config de UM provedor federado ligado (fatia B do #1695). O `client_id` é PÚBLICO (Actions
+/// variable), entra por config — não hardcode. O `redirect_uri` é o NOSSO callback, conferido
+/// byte-a-byte na allowlist. ⚠️ **O `client_secret` NÃO mora aqui** — só entra na troca do `code`
+/// (fatia C), server-side, lido do cofre (fatia 5). Um provedor SEM entrada aqui é indistinguível de
+/// slug desconhecido (falha uniforme — invariante 6).
+pub struct ConfigProvedor {
+    pub client_id: String,
+    pub redirect_uri: String,
+}
+
+/// Estado do fluxo OAuth injetado na borda: o armazém dos fluxos EM CURSO (atrás de `Mutex` como o de
+/// sessão — `iniciar`/`consumir` pedem `&mut`), a config por provedor (só os LIGADOS), a allowlist
+/// EXATA de redirects (derivada dos redirects configurados, nunca desalinhada deles) e o prazo CURTO
+/// do fluxo.
+///
+/// Na [`Borda`] é `Option`: **produção sem OAuth configurado ⇒ `/auth/{provedor}` é 404 pra todo
+/// provedor** (a rota "não existe" pra quem não a ligou — o binário serve o que EXISTE, como os stores
+/// vazios da fatia 1). O `dev-server` injeta `Some`; a prod real liga na fatia 5 (secret do cofre).
+pub struct EstadoOAuth {
+    armazem: Mutex<Box<dyn ArmazemEstadoOAuth + Send + Sync>>,
+    microsoft: Option<ConfigProvedor>,
+    microsoft_personal: Option<ConfigProvedor>,
+    google: Option<ConfigProvedor>,
+    allowlist: RedirectAllowlist,
+    ttl_fluxo_seg: u64,
+}
+
+impl EstadoOAuth {
+    /// Monta o estado a partir dos provedores LIGADOS. A allowlist nasce dos `redirect_uri`
+    /// configurados — não há como listar um redirect que não seja o de um provedor ligado (a
+    /// invariante fica no construtor, não na disciplina de quem chama).
+    pub fn nova(
+        armazem: Box<dyn ArmazemEstadoOAuth + Send + Sync>,
+        provedores: Vec<(Provedor, ConfigProvedor)>,
+        ttl_fluxo_seg: u64,
+    ) -> Self {
+        let allowlist =
+            RedirectAllowlist::nova(provedores.iter().map(|(_, c)| c.redirect_uri.clone()).collect());
+        let (mut microsoft, mut microsoft_personal, mut google) = (None, None, None);
+        for (p, c) in provedores {
+            match p {
+                Provedor::Microsoft => microsoft = Some(c),
+                Provedor::MicrosoftPersonal => microsoft_personal = Some(c),
+                Provedor::Google => google = Some(c),
+            }
+        }
+        EstadoOAuth {
+            armazem: Mutex::new(armazem),
+            microsoft,
+            microsoft_personal,
+            google,
+            allowlist,
+            ttl_fluxo_seg,
+        }
+    }
+
+    /// A config do provedor, se ele estiver LIGADO. `None` ⇒ o handler devolve o 404 uniforme (não
+    /// revela se o slug é desconhecido ou só não-configurado). `match` EXAUSTIVO: provedor novo OBRIGA
+    /// a mapear o seu campo — não herda um default.
+    pub fn config_de(&self, provedor: Provedor) -> Option<&ConfigProvedor> {
+        match provedor {
+            Provedor::Microsoft => self.microsoft.as_ref(),
+            Provedor::MicrosoftPersonal => self.microsoft_personal.as_ref(),
+            Provedor::Google => self.google.as_ref(),
+        }
+    }
+
+    /// A allowlist EXATA de redirects (leitura pro handler passar ao `iniciar_fluxo`).
+    pub fn allowlist(&self) -> &RedirectAllowlist {
+        &self.allowlist
+    }
+
+    /// O prazo curto do fluxo (segundos) — vale pro `expira_unix` do fluxo E pro `Max-Age` do cookie.
+    pub fn ttl_fluxo_seg(&self) -> u64 {
+        self.ttl_fluxo_seg
+    }
+
+    /// Grava um fluxo pendente sob o seu `state` (chamado por `/auth`). Encapsula o `lock` — o handler
+    /// não toca no `Mutex`. `Err` = armazém indisponível (a borda vira falha de infra, distinta do 404).
+    pub fn iniciar(
+        &self,
+        state: galaxie_platform_oauth::Estado,
+        fluxo: galaxie_platform_oauth::FluxoPendente,
+    ) -> Result<(), galaxie_platform_oauth::ErroArmazem> {
+        self.armazem
+            .lock()
+            .expect("armazém OAuth não deve estar envenenado")
+            .iniciar(state, fluxo)
+    }
+
+    /// Consome o `state` (chamado pelo callback, fatia C): uso único atômico + prazo + amarra. Exposto
+    /// já aqui para o callback não tocar no `Mutex`; a fatia B não o usa (só `iniciar`).
+    pub fn consumir(
+        &self,
+        state: &galaxie_platform_oauth::Estado,
+        amarra: &galaxie_platform_oauth::AmarraNavegador,
+        agora_unix: u64,
+    ) -> Result<Option<galaxie_platform_oauth::FluxoPendente>, galaxie_platform_oauth::ErroArmazem> {
+        self.armazem
+            .lock()
+            .expect("armazém OAuth não deve estar envenenado")
+            .consumir(state, amarra, agora_unix)
+    }
+}
+
+/// Nome do cookie de AMARRA do fluxo OAuth (#1695 fatia B). `__Host-` pela MESMA imposição do
+/// navegador que o de sessão (só aceito se `Secure` + `Path=/` + sem `Domain`): um subdomínio não
+/// planta uma amarra que sombreie a nossa. Curto e específico do fluxo.
+pub const NOME_COOKIE_AMARRA_OAUTH: &str = "__Host-gx_oauth";
+
+/// Valor do `Set-Cookie` da amarra: `HttpOnly` (o callback lê server-side; script nunca precisa) +
+/// `Secure` + `SameSite=Lax` + `Path=/` + `Max-Age` = o prazo do fluxo (some sozinho quando vence).
+///
+/// 🔑 **`Lax`, NÃO `Strict`:** o callback volta por uma NAVEGAÇÃO top-level vinda do provedor
+/// (cross-site) — e só `Lax` manda o cookie numa navegação top-level cross-site. `Strict` mataria a
+/// amarra exatamente no retorno e o fluxo nunca fecharia. Mesma política do cookie de sessão.
+pub fn montar_cookie_amarra_oauth(amarra: &str, max_age_seg: u64) -> String {
+    format!("{NOME_COOKIE_AMARRA_OAUTH}={amarra}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={max_age_seg}")
+}
 
 /// Estado compartilhado da borda.
 ///
@@ -53,6 +175,10 @@ pub struct Borda {
     /// `ConfigItem` pela forma que o SERVIDOR conhece, nunca por um `tipo` do cliente (senão forjaria
     /// `Opcao→Texto` e furaria as opções). A impl real virá da config do PO; hoje o dev-server semeia.
     pub registro_formas: Arc<dyn RegistroFormas + Send + Sync>,
+    /// Fluxo OAuth federado (#1695 fatia B). `Option`: a maioria das costuras (e a prod da fatia 1)
+    /// não configura OAuth ⇒ `None` ⇒ `/auth/{provedor}` é 404. Injetado (`Some`) só onde há login
+    /// federado a exercer (o `dev-server`; a prod real na fatia 5). Ver [`EstadoOAuth`].
+    pub oauth: Option<EstadoOAuth>,
 }
 
 impl Borda {
@@ -76,6 +202,58 @@ impl Borda {
         prefs: Arc<dyn ArmazemPref + Send + Sync>,
         registro_formas: Arc<dyn RegistroFormas + Send + Sync>,
     ) -> Arc<Self> {
+        Self::montar(
+            armazem, agora, auditor, orgs, membros, dominios, perfis, prefs, registro_formas, None,
+        )
+    }
+
+    /// Como [`Borda::nova`], mas COM o fluxo OAuth ligado (`/auth/{provedor}` funciona). Construtor
+    /// SEPARADO em vez de um 10º parâmetro em `nova` de propósito: só o `dev-server` (e, na fatia 5, a
+    /// prod) liga OAuth; forçar os >20 call sites que NÃO fazem OAuth a passar `None` seria ruído, não
+    /// sinal. Quem liga OAuth diz `nova_com_oauth`; quem não liga usa `nova` (OAuth = `None` implícito).
+    /// Ambos convergem em [`Borda::montar`] — o struct literal vive num lugar só.
+    #[allow(clippy::too_many_arguments)]
+    pub fn nova_com_oauth(
+        armazem: ArmazemMemoria,
+        agora: fn() -> u64,
+        auditor: Arc<dyn Auditor + Send + Sync>,
+        orgs: Arc<dyn ArmazemOrg + Send + Sync>,
+        membros: Arc<dyn ArmazemMembro + Send + Sync>,
+        dominios: Arc<dyn ArmazemDominio + Send + Sync>,
+        perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
+        prefs: Arc<dyn ArmazemPref + Send + Sync>,
+        registro_formas: Arc<dyn RegistroFormas + Send + Sync>,
+        oauth: EstadoOAuth,
+    ) -> Arc<Self> {
+        Self::montar(
+            armazem,
+            agora,
+            auditor,
+            orgs,
+            membros,
+            dominios,
+            perfis,
+            prefs,
+            registro_formas,
+            Some(oauth),
+        )
+    }
+
+    /// O ÚNICO ponto onde o struct da borda é montado (os dois construtores públicos convergem aqui).
+    /// Um campo novo entra em UM lugar, não em cada construtor.
+    #[allow(clippy::too_many_arguments)]
+    fn montar(
+        armazem: ArmazemMemoria,
+        agora: fn() -> u64,
+        auditor: Arc<dyn Auditor + Send + Sync>,
+        orgs: Arc<dyn ArmazemOrg + Send + Sync>,
+        membros: Arc<dyn ArmazemMembro + Send + Sync>,
+        dominios: Arc<dyn ArmazemDominio + Send + Sync>,
+        perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
+        prefs: Arc<dyn ArmazemPref + Send + Sync>,
+        registro_formas: Arc<dyn RegistroFormas + Send + Sync>,
+        oauth: Option<EstadoOAuth>,
+    ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
             agora,
@@ -86,6 +264,7 @@ impl Borda {
             perfis,
             prefs,
             registro_formas,
+            oauth,
         })
     }
 }
