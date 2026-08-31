@@ -15,8 +15,12 @@ pub struct IceServer {
     /// `agora_cliente + ttl*3/4` — TUDO no relógio do cliente, imune ao skew que um
     /// `expires_at` absoluto do servidor carregaria (um cliente atrasado agendaria a
     /// reemissão DEPOIS de a credencial morrer). `None` (via `#[serde(default)]`) = o FE
-    /// ainda não forwarda a duração (fatia B) ⇒ relógio DESARMADO, que é seguro; um
-    /// relógio com skew que dispara tarde é pior que nenhum.
+    /// ainda não forwarda a duração (fatia B) ⇒ relógio DESARMADO. NÃO é "mais seguro"
+    /// que um relógio com skew (Altair corrigiu): o desarmado falha SEMPRE (a sessão cai
+    /// no TTL, sem reemissão); o com-skew falha só quando o cliente atrasa > 1/3 do
+    /// restante. Escolhe-se o desarme por ser HONESTO — falha previsível descobre-se na
+    /// 1ª sessão longa; falha intermitente vira "às vezes a sessão cai" meses depois. Por
+    /// isso o braço `None` do `gather_relay` GRITA (warn), não silencia.
     #[serde(default)]
     pub ttl_seconds: Option<u64>,
 }

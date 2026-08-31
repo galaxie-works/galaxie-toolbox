@@ -1748,14 +1748,14 @@ fn gather_relay(
         "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
          (renovação do lifetime = fatia 3c; segredo NÃO logado)"
     );
-    // #1527 (review do Altair, ponto 2): dá VOZ ao desarme — sem `ttl_seconds` no fio o
-    // relógio de reemissão da CREDENCIAL fica None (esperado até a fatia B forwardar a
-    // duração). Anuncia-o para que "sessão cai aos ~30 min" não seja um mistério silencioso
-    // ("ausência lida como saúde"); some quando o FE passar a duração.
+    // #1527 (review do Altair, ponto 2): dá VOZ ao desarme. `warn`, não `info` — o desarme
+    // não é benigno: sem reemissão a sessão CAI no TTL. Anunciá-lo com a consequência torna
+    // "sessão cai aos ~30 min" encontrável em vez de um mistério silencioso ("ausência lida
+    // como saúde"). Some quando o FE forwardar a duração (fatia B).
     if ttl_seconds.is_none() {
-        log::info!(
-            "[remote] #1527: relay sem ttl_seconds — relógio de reemissão da credencial \
-             DESARMADO (o FE ainda não forwarda a duração; fatia B)"
+        log::warn!(
+            "[remote] #1527: IceServer sem ttl_seconds — relógio da credencial DESARMADO \
+             (o FE ainda não forwarda o campo). A sessão vai cair no TTL."
         );
     }
     // Guarda a credencial pro data-path (Send indication + CreatePermission) e agenda
@@ -1771,7 +1771,8 @@ fn gather_relay(
         refresh_em: Instant::now() + intervalo_refresh(lifetime),
         // #1527: relógio da credencial — 3/4 do `ttl_seconds` (DURAÇÃO, do fio), TUDO no
         // relógio do cliente (imune a skew). `None` = o FE ainda não forwarda a duração
-        // (fatia B) ⇒ relógio DESARMADO (um relógio com skew que dispara tarde seria pior).
+        // (fatia B) ⇒ relógio DESARMADO — escolhido por HONESTIDADE, não por segurança
+        // (o desarmado falha sempre; o `warn` abaixo torna o estado encontrável).
         reemitir_em: ttl_seconds.map(|ttl| Instant::now() + antecedencia_reemissao(ttl)),
         permitidos: HashMap::new(),
         ultimo_txid: [0u8; 12],
