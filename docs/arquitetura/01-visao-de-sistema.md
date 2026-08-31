@@ -8,7 +8,7 @@
 Que peças existem, em que linguagem vivem, e **quem depende de quem**. Não mostra dados a correr — isso é o [diagrama 2](02-fluxo-de-dados.md).
 
 ```mermaid
-graph TB
+flowchart TB
     subgraph desktop["Aplicação desktop (Tauri 2)"]
         direction TB
         UI["<b>src/</b> — React + TypeScript<br/>telas, componentes, store"]
@@ -68,7 +68,7 @@ graph TB
     WEB --> PHTTP
     PHTTP --> PIDENT & POAUTH & PWEB & PORG & PBO & PCONTA & PCFG & PCONC
     PORG & PBO & PCONTA & PCFG --> PIDENT
-    RSIG -. "serve o endpoint de sinalização" .-> RNET
+    RSIG -.->|"serve o endpoint de sinalização"| RNET
 
     classDef scaffold stroke-dasharray: 5 5;
     class AST,PIDENT,PCONC,PHTTP,POAUTH,PWEB,PORG,PBO,PCONTA,PCFG scaffold;
