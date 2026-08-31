@@ -7,7 +7,8 @@
 
 > ℹ️ **Porque são dois diagramas e não um.** A vista completa tem 28 nós e sai
 > **larga**: o GitHub encaixa-a na largura da coluna e o resultado fica pequeno
-> demais para se ler. Partida em duas, cada metade desenha à escala legível.
+> demais para se ler. Partida em três — app · crates do Remote · crates da
+> plataforma — cada uma desenha à escala legível.
 
 Que peças existem, em que linguagem vivem, e **quem depende de quem**. Não mostra dados a correr — isso é o [diagrama 2](02-fluxo-de-dados.md).
 
@@ -42,15 +43,14 @@ flowchart TB
     APP -.->|"planeado — 0 código"| AST
 ```
 
-### 1b — Os crates de serviço
+### 1b — Os crates do Remote
 
-O `Remote` e a `plataforma web` do diagrama anterior apoiam-se nestes 17 crates.
+O membro `Remote` de 1a apoia-se nestes 8 crates.
 
 ```mermaid
 flowchart TB
     APP["src-tauri (crate app)"]
     REM["membro Remote"]
-    WEB["<b>web/</b> — front da plataforma"]
 
     subgraph rust_remote["services/remote-* — 8 crates"]
         RNET["remote-net<br/><i>fronteira congelada v2:<br/>enrolamento, auth, sessão</i>"]
@@ -73,6 +73,15 @@ flowchart TB
     APP --> RBROKER
     RBROKER -->|pipe v1 congelado| RHELPER
     RHELPER --> RAGENT
+```
+
+### 1c — Os crates da plataforma web
+
+Nascente: o domínio está escrito e testado; a borda HTTP entrou em fatias.
+
+```mermaid
+flowchart TB
+    WEB["<b>web/</b> — front da plataforma"]
     WEB --> PHTTP
 
     subgraph rust_platform["services/platform-* — 9 crates, nascente"]
