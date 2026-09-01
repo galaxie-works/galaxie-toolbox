@@ -2,7 +2,7 @@
 name = "galaxie-remote-transport"
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 
 # Transporte WebRTC (S2, épico #682): str0m sans-I/O — ICE via nosso coturn,
