@@ -213,6 +213,11 @@ pub enum RemoteSessionEvent {
         bitrate_bps: f64,
         frames: u64,
     },
+    /// #1527 fatia B (seam com o #1148-B do Pollux): o relogio da credencial disparou (3/4
+    /// do TTL) — o FE deve buscar credencial nova (`renovarIceServers`) e devolve-la via o
+    /// comando `remote_session_renew_ice`. Serializa `{"type":"renew_ice_needed"}`; sem
+    /// payload porque o `Channel<RemoteSessionEvent>` ja e por-sessao.
+    RenewIceNeeded {},
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,6 +240,17 @@ pub struct RemoteSessionEndRequest {
     pub session_id: String,
     #[serde(default = "default_end_reason")]
     pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSessionRenewIceRequest {
+    pub session_id: String,
+    /// #1527 fatia B (seam com o #1148-B): os IceServers com a credencial TURN nova, na shape
+    /// do `transport::IceServer` (com `ttl_seconds` — a MESMA do start da sessao). O apply (A-2)
+    /// reusa o `resolver_turn_alvos`. O FE TEM de forwardar o `ttl_seconds` (o A-2 rearma o
+    /// `reemitir_em` com ele; sem, a 2a reemissao nunca dispara).
+    pub ice_servers: Vec<IceServer>,
 }
 
 fn default_end_reason() -> String {
@@ -497,6 +513,35 @@ pub fn remote_session_signal(
         &request.session_id,
         RuntimeCommand::Signal(signal),
     )
+}
+
+/// #1527 fatia B (seam com o #1148-B do Pollux): o FE devolve aqui a credencial TURN nova
+/// (depois de a buscar no signaling, disparado pelo evento `RenewIceNeeded`).
+///
+/// STUB por ora: valida a sessao e RECEBE, mas o APPLY completo (Allocate NOVO sobrepondo +
+/// troca do data-path + rearme do `reemitir_em`) e a fatia A-2 (str0m). Registrar o comando
+/// fecha o contrato-tauri (#1033) e destrava o #1704 do Pollux; o loop so COMPLETA com o A-2.
+/// Aceita (Ok) pra o FE nao ver erro, e loga que o apply esta pendente — nao finge renovar.
+#[tauri::command]
+pub fn remote_session_renew_ice(
+    request: RemoteSessionRenewIceRequest,
+    runtime: tauri::State<'_, RemoteRuntime>,
+) -> Result<(), RemoteError> {
+    let active = runtime
+        .active
+        .lock()
+        .map_err(|_| RemoteError::ChannelClosed)?;
+    let session = active.as_ref().ok_or(RemoteError::SessionNotFound)?;
+    if session.session_id != request.session_id {
+        return Err(RemoteError::SessionNotFound);
+    }
+    log::warn!(
+        "[remote] #1527: remote_session_renew_ice recebido ({} IceServer(s)) — APPLY PENDENTE \
+         (fatia A-2: Allocate sobrepondo + rearme do reemitir_em). Credencial NAO reaplicada \
+         ainda; segredo NAO logado.",
+        request.ice_servers.len()
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -1076,9 +1121,6 @@ impl RuntimeSession {
     /// vencida), pra que um `438 Stale Nonce` sempre case com o `ultimo_txid`. No-op se
     /// a sessão é host/srflx puro.
     fn manutencao_relay(&mut self) -> Result<(), RemoteError> {
-        let Some(relay) = self.relay.as_mut() else {
-            return Ok(());
-        };
         let agora = Instant::now();
         // #1527: relógio da CREDENCIAL (distinto do Refresh do lifetime). Dispara a 3/4 do
         // `ttl_seconds` (duração, imune a skew) e sinaliza que precisa de credencial NOVA — o
@@ -1093,13 +1135,28 @@ impl RuntimeSession {
         // funcionalidade a PARECER entregue (a família "auto-desligar silencioso", no futuro).
         // E quando o FE passar a forwardar `ttl_seconds`, o braço `None`/`warn` do `gather_relay`
         // deixa de ser estado desenhado e vira ANOMALIA real (o FE devia forwardar e não o fez).
-        if relay.reemitir_em.is_some_and(|t| agora >= t) {
-            relay.reemitir_em = None;
+        //
+        // O disparo emite o `RenewIceNeeded` (seam com o #1148-B do Pollux) ANTES do refresh
+        // (que pode `return` cedo neste tick). O `match` solta o borrow de `relay` para o
+        // `self.send_event` (que toma `&self`) poder correr sem conflito.
+        let reemissao = match self.relay.as_mut() {
+            Some(relay) if relay.reemitir_em.is_some_and(|t| agora >= t) => {
+                relay.reemitir_em = None;
+                true
+            }
+            _ => false,
+        };
+        if reemissao {
             log::warn!(
-                "[remote] #1527: credencial TURN a 3/4 do TTL — reemissao necessaria \
-                 (sinal p/ a fatia B: RenewIceServers; o Refresh nao salva credencial expirada)"
+                "[remote] #1527: credencial TURN a 3/4 do TTL — emito RenewIceNeeded (o FE \
+                 busca credencial nova e devolve via remote_session_renew_ice; o Refresh nao \
+                 salva credencial expirada)"
             );
+            self.send_event(RemoteSessionEvent::RenewIceNeeded {})?;
         }
+        let Some(relay) = self.relay.as_mut() else {
+            return Ok(());
+        };
         // 1. Refresh da alocação antes do lifetime expirar.
         if agora >= relay.refresh_em {
             let mut txid = [0u8; 12];
@@ -2290,6 +2347,16 @@ mod tests {
         assert_eq!(json["kind"], "ice_candidate");
         assert_eq!(json["payload"], "candidate:1");
         assert_eq!(json.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn renew_ice_needed_congela_a_shape_do_seam() {
+        // #1527 fatia B: o contrato com o listener do #1148-B (Pollux) e o tag exato
+        // `{"type":"renew_ice_needed"}` — sem payload (o Channel ja e por-sessao). Mudar
+        // isto quebraria o `aoEvento` do FE em silencio; o teste congela a shape.
+        let json = serde_json::to_value(RemoteSessionEvent::RenewIceNeeded {}).unwrap();
+        assert_eq!(json["type"], "renew_ice_needed");
+        assert_eq!(json.as_object().unwrap().len(), 1, "RenewIceNeeded nao deve ter payload");
     }
 
     // ── #1130: o AC "o segredo TURN nunca aparece em log" ganha guarda ───────
