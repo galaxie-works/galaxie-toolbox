@@ -103,6 +103,23 @@ impl Provedor {
             Provedor::Google => "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
         }
     }
+
+    /// O endpoint de TOKEN do provedor (troca `code`→token, fatia C). Microsoft embute a MESMA
+    /// authority SEGURA do autorizar (nunca `/common`) — a troca tem de bater com a authority que
+    /// iniciou o fluxo, senão uma conta pessoal poderia trocar um `code` emitido pela rota de
+    /// organização. Google tem endpoint único.
+    #[must_use]
+    pub fn endpoint_token(&self) -> String {
+        match self {
+            Provedor::Microsoft | Provedor::MicrosoftPersonal => {
+                let authority = self
+                    .authority_microsoft()
+                    .expect("provedor Microsoft tem authority");
+                format!("https://login.microsoftonline.com/{authority}/oauth2/v2.0/token")
+            }
+            Provedor::Google => "https://oauth2.googleapis.com/token".to_string(),
+        }
+    }
 }
 
 /// PKCE — **só `S256`** (o `plain` é recusado por TIPO: não existe construtor que o produza). O
@@ -404,6 +421,72 @@ pub fn iniciar_fluxo(
     })
 }
 
+/// Erro da troca `code`→token (fatia C). Distingue "o provedor RECUSOU" (erro OAuth legítimo, ex.
+/// `invalid_grant` — `code` vencido/reusado/amarrado a outro verifier) de "resposta que não se pode
+/// confiar" (não-JSON, sem `id_token`). As duas ABORTAM o login; a distinção alimenta o log sem
+/// confiar em bytes inválidos (a mesma família do `Err`-infra ≠ `Ok(None)`-auth do armazém).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErroTroca {
+    /// O token-endpoint respondeu um erro OAuth (`{"error": ...}`). Carrega o código do `error`.
+    ProvedorRecusou(String),
+    /// Resposta não-JSON, ou JSON sem `id_token` string não-vazia. Não confiar — abortar (nunca
+    /// "meio-login"): um `id_token` ausente/vazio NUNCA vira sessão.
+    RespostaInvalida,
+}
+
+/// Monta o CORPO `application/x-www-form-urlencoded` da troca `code`→token — a DECISÃO de o que se
+/// envia: `grant_type=authorization_code`, o `code`, o `redirect_uri` (tem de bater byte-a-byte o do
+/// autorizar, senão o provedor recusa), o `client_id`, e o `code_verifier` que PROVA a posse do PKCE
+/// (fecha o par com o `code_challenge` da fatia B).
+///
+/// ⚠️ **O `client_secret` entra por PARÂMETRO** — este crate PURO não o lê do cofre nem o guarda
+/// (isso é a borda, fatia 5); só o formata. **O resultado contém o segredo e o `code`**: a borda
+/// POSTa sobre TLS e **nunca o loga**. (Fronteira de segurança FLAGADA ao @Altair: se preferires o
+/// segredo inteiramente fora do crate puro, movo o append do `client_secret` pra `platform-http`.)
+#[must_use]
+pub fn montar_corpo_troca(
+    code: &str,
+    redirect_uri: &str,
+    client_id: &str,
+    client_secret: &str,
+    code_verifier: &str,
+) -> String {
+    let params = [
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("code_verifier", code_verifier),
+    ];
+    params
+        .iter()
+        .map(|(k, v)| format!("{k}={}", encode_query(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Extrai o `id_token` (a asserção de identidade OIDC) do CORPO da resposta do token-endpoint —
+/// **só** daqui, NUNCA do front-channel/redirect (invariante do @Altair: o token de identidade vem
+/// da resposta direta sobre TLS, não de algo que passou pelo browser). Um `{"error":...}` vira
+/// `ProvedorRecusou` (erro do provedor); sem `id_token` string não-vazia, ou não-JSON, vira
+/// `RespostaInvalida`. Só o `id_token` importa — o `access_token` é pra chamar APIs, que não fazemos.
+///
+/// ⚠️ Devolve o JWT **CRU, ainda NÃO verificado** — a validação da assinatura (JWKS/RS256) + claims
+/// é a próxima fatia; nada que saia daqui vira sessão antes disso.
+pub fn extrair_id_token(resposta: &str) -> Result<String, ErroTroca> {
+    let v: serde_json::Value =
+        serde_json::from_str(resposta).map_err(|_| ErroTroca::RespostaInvalida)?;
+    // `error` ANTES de `id_token`: uma resposta de erro é recusa do provedor, não "inválida nossa".
+    if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        return Err(ErroTroca::ProvedorRecusou(err.to_string()));
+    }
+    match v.get("id_token").and_then(|t| t.as_str()) {
+        Some(tok) if !tok.is_empty() => Ok(tok.to_string()),
+        _ => Err(ErroTroca::RespostaInvalida),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,5 +752,59 @@ mod tests {
             arm.consumir(&inicio.state, &inicio.amarra, u64::MAX).unwrap().is_none(),
             "relógio saturado ⇒ fluxo inutilizável (fail-closed)"
         );
+    }
+
+    // --- #1695 fatia C: troca code→token (decisões puras) ----------------------
+
+    #[test]
+    fn endpoint_token_usa_authority_segura_nunca_common() {
+        assert_eq!(
+            Provedor::Microsoft.endpoint_token(),
+            "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+        );
+        assert_eq!(
+            Provedor::MicrosoftPersonal.endpoint_token(),
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+        );
+        assert_eq!(Provedor::Google.endpoint_token(), "https://oauth2.googleapis.com/token");
+        for p in [Provedor::Microsoft, Provedor::MicrosoftPersonal, Provedor::Google] {
+            assert!(!p.endpoint_token().contains("/common"), "{p:?} nunca /common no token");
+        }
+    }
+
+    #[test]
+    fn corpo_troca_leva_os_campos_e_encoda_o_segredo() {
+        let corpo = montar_corpo_troca("cod3", "https://p.example/cb", "cid", "s3cr+t/=", "verif");
+        assert!(corpo.contains("grant_type=authorization_code"));
+        assert!(corpo.contains("code=cod3"));
+        assert!(corpo.contains("client_id=cid"));
+        assert!(corpo.contains("code_verifier=verif"));
+        // redirect_uri percent-encodado (`:`/`/` -> %3A/%2F).
+        assert!(corpo.contains("redirect_uri=https%3A%2F%2Fp.example%2Fcb"), "{corpo}");
+        // ⚠️ o segredo com `+ / =` (chars reservados) tem de ir ESCAPADO, senão parte o form-body.
+        assert!(corpo.contains("client_secret=s3cr%2Bt%2F%3D"), "segredo escapado: {corpo}");
+    }
+
+    #[test]
+    fn extrai_id_token_do_corpo_e_so_do_corpo() {
+        // Sucesso: pega o id_token (ignora o access_token, que e pra API, nao identidade).
+        assert_eq!(
+            extrair_id_token(r#"{"access_token":"AT","id_token":"eyJ.JWT.crua","token_type":"Bearer"}"#),
+            Ok("eyJ.JWT.crua".to_string())
+        );
+        // Erro OAuth do provedor -> ProvedorRecusou(code), distinto de "inválida nossa".
+        assert_eq!(
+            extrair_id_token(r#"{"error":"invalid_grant","error_description":"code expired"}"#),
+            Err(ErroTroca::ProvedorRecusou("invalid_grant".to_string()))
+        );
+        // `error` VENCE `id_token` se ambos vierem (nao confiar num token servido junto a um erro).
+        assert_eq!(
+            extrair_id_token(r#"{"error":"invalid_client","id_token":"x"}"#),
+            Err(ErroTroca::ProvedorRecusou("invalid_client".to_string()))
+        );
+        // Sem id_token / vazio / nao-JSON -> RespostaInvalida (nunca vira sessao).
+        assert_eq!(extrair_id_token(r#"{"access_token":"AT"}"#), Err(ErroTroca::RespostaInvalida));
+        assert_eq!(extrair_id_token(r#"{"id_token":""}"#), Err(ErroTroca::RespostaInvalida));
+        assert_eq!(extrair_id_token("nao sou json"), Err(ErroTroca::RespostaInvalida));
     }
 }
