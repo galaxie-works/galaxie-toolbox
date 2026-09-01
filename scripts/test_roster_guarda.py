@@ -103,7 +103,54 @@ def main():
     h = _re.search(r"hash:([0-9a-f]{16})", conteudo2.split("\n", 1)[0]).group(1)
     assert h == g._hash(conteudo2.split("\n", 1)[1]), "hash do header nao bate o corpo apos force"
 
-    print("OK - guarda: 14 mutantes + isolamento(AC1) + agregados(AC5) + hash-guard tudo-ou-nada + force")
+    # --- Q3 (#1654 cutover): paths de saida configuraveis (sessoes->despertador, ROSTER->memory) ---
+    d3 = tempfile.mkdtemp()
+    g.escrever(d3, base("mizar"))
+    sess_out = os.path.join(d3, "despertador", "sessoes.json")
+    md_out = os.path.join(d3, "memory", "ROSTER.md")
+    os.makedirs(os.path.dirname(sess_out)); os.makedirs(os.path.dirname(md_out))
+    g.regenerar(d3, sessoes_out=sess_out, roster_md_out=md_out)
+    assert os.path.exists(sess_out), "Q3: sessoes.json nao aterrou no --sessoes-out"
+    assert os.path.exists(md_out), "Q3: ROSTER.md nao aterrou no --roster-md-out"
+    with open(sess_out, encoding="utf-8") as f:
+        assert json.load(f)["mizar"].startswith("local_"), "Q3: sessoes_out sem o mapa papel->id"
+
+    # --- Q2 (#1654 cutover): preserva os meta `_*` (ex. _porteiro) do sessoes.json existente ---
+    # simula o despertador\sessoes.json com o id do Porteiro (INFRA, fora dos 11) + instrucoes.
+    porteiro_id = "local_" + "f" * 8 + "-" + "0" * 4 + "-" + "0" * 4 + "-" + "0" * 4 + "-" + "0" * 12
+    with open(sess_out, "w", encoding="utf-8") as f:
+        json.dump({"_instrucoes": "nota humana", "_porteiro": porteiro_id, "mizar": "local_velho"}, f)
+    g.regenerar(d3, sessoes_out=sess_out, roster_md_out=md_out)
+    with open(sess_out, encoding="utf-8") as f:
+        m = json.load(f)
+    assert m.get("_porteiro") == porteiro_id, "Q2: _porteiro (id do Porteiro) foi DROPADO no flip"
+    assert m.get("_instrucoes") == "nota humana", "Q2: _instrucoes nao preservado"
+    assert m["mizar"].startswith("local_") and m["mizar"] != "local_velho", "Q2: o papel->id GERADO deve vencer o velho"
+    assert "_gerado" in m, "Q2: o gerador ainda carimba o _gerado"
+
+    # --- Q1 (#1654 cutover): semear o sessao.id do mapa autoritativo (despertador), SO o id ---
+    d1 = tempfile.mkdtemp()
+    g.escrever(d1, base("alcor", titulo="Dev BE"))
+    id_fresco = "local_" + "1" * 8 + "-" + "2" * 4 + "-" + "3" * 4 + "-" + "4" * 4 + "-" + "5" * 12
+    with open(os.path.join(d1, "alcor.json"), encoding="utf-8") as f:
+        titulo_antes = json.load(f)["sessao"]["titulo"]
+    assert g.semear_ids(d1, {"alcor": id_fresco}) == ["alcor"], "Q1: alcor devia ser semeado"
+    with open(os.path.join(d1, "alcor.json"), encoding="utf-8") as f:
+        obj = json.load(f)
+    assert obj["sessao"]["id"] == id_fresco, "Q1: sessao.id nao foi semeado do mapa"
+    assert obj["sessao"]["titulo"] == titulo_antes, "Q1: semear tocou a titulo (devia so o id)"
+    assert g.semear_ids(d1, {"alcor": id_fresco}) == [], "Q1: semear o MESMO id devia ser no-op (idempotente)"
+    # um id malformado no mapa e RECUSADO (nao grava lixo por cima do valido)
+    try:
+        g.semear_ids(d1, {"alcor": "id_invalido"})
+        raise AssertionError("Q1: semear id malformado devia RECUSAR (schema)")
+    except g.RosterInvalido:
+        pass
+    with open(os.path.join(d1, "alcor.json"), encoding="utf-8") as f:
+        assert json.load(f)["sessao"]["id"] == id_fresco, "Q1: a recusa deixou lixo no <papel>.json"
+
+    print("OK - guarda: 14 mutantes + isolamento(AC1) + agregados(AC5) + hash-guard tudo-ou-nada + force "
+          "+ cutover Q1(seed)/Q2(preserva _*)/Q3(paths configuraveis)")
 
 
 if __name__ == "__main__":
