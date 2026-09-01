@@ -143,10 +143,10 @@ def _render_roster_md(papeis):
     return "\n".join(linhas) + "\n"
 
 
-def _checar_hand_edit(roster_dir):
+def _checar_hand_edit(caminho_md):
     """Levanta RosterInvalido se o ROSTER.md gerado foi editado a mao (hash do corpo != header).
-    Chamado ANTES de qualquer escrita, pra a operacao ser tudo-ou-nada."""
-    caminho_md = os.path.join(roster_dir, "ROSTER.md")
+    Chamado ANTES de qualquer escrita, pra a operacao ser tudo-ou-nada. Recebe o PATH real do
+    ROSTER.md (nao o roster_dir) -- #1654 cutover permite aterra-lo fora do roster_dir."""
     if not os.path.exists(caminho_md):
         return
     with open(caminho_md, encoding="utf-8") as f:
@@ -163,28 +163,73 @@ def _checar_hand_edit(roster_dir):
         )
 
 
-def regenerar(roster_dir, force=False):
+def regenerar(roster_dir, force=False, sessoes_out=None, roster_md_out=None):
     """Regenera ROSTER.md (com hash-guard) + sessoes.json a partir dos <papel>.json.
     RECUSA regenerar o ROSTER.md se ele foi editado a mao desde a ultima geracao — a
     recuperacao deliberada e `force=True` (relocar o que foi editado a mao PRIMEIRO, depois
     forcar). O `escrever` normal NAO forca: um hand-edit bloqueia (ruidoso) ate ser resolvido,
-    que e o design -- recusar > apagar o trabalho de alguem em silencio."""
+    que e o design -- recusar > apagar o trabalho de alguem em silencio.
+
+    #1654 cutover:
+      * Q3: `sessoes_out`/`roster_md_out` aterram os agregados no path que cada LEITOR le
+        (sessoes.json -> despertador dir, ROSTER.md -> memory dir); default = roster_dir (compat).
+      * Q2: preserva os meta `_*` (menos `_gerado`) do sessoes.json existente no destino -- o
+        `_porteiro` (id do Porteiro, INFRA fora dos 11) e o `_instrucoes` sobrevivem quando o
+        gerado aterra por cima do sessoes.json do despertador."""
+    caminho_md = roster_md_out or os.path.join(roster_dir, "ROSTER.md")
+    caminho_sessoes = sessoes_out or os.path.join(roster_dir, "sessoes.json")
     if not force:
-        _checar_hand_edit(roster_dir)
+        _checar_hand_edit(caminho_md)
     papeis = _ler_papeis(roster_dir)
     corpo = _render_roster_md(papeis)
-    caminho_md = os.path.join(roster_dir, "ROSTER.md")
     header = f"{CABECALHO} · hash:{_hash(corpo)} -->\n"
     _atomico(caminho_md, header + corpo)
 
     # sessoes.json: mapa papel->sessao.id, FONTE UNICA (mata o duplicado do Despertador).
-    mapa = {"_gerado": f"por scripts/roster_guarda.py de roster/<papel>.json -- NAO editar a mao"}
+    # Q2: preserva os `_*` (menos `_gerado`) do ficheiro existente no destino -- o id do
+    # Porteiro (`_porteiro`, INFRA fora dos 11) e o `_instrucoes` nao se perdem no flip.
+    preservados = {}
+    if os.path.exists(caminho_sessoes):
+        with open(caminho_sessoes, encoding="utf-8") as f:
+            try:
+                antigo = json.load(f)
+            except json.JSONDecodeError:
+                antigo = {}
+        if isinstance(antigo, dict):
+            preservados = {k: v for k, v in antigo.items()
+                           if k.startswith("_") and k != "_gerado"}
+    mapa = {"_gerado": "por scripts/roster_guarda.py de roster/<papel>.json -- NAO editar a mao"}
+    mapa.update(preservados)
     for p in PAPEIS:
         if p in papeis:
             mapa[p] = papeis[p]["sessao"]["id"]
-    _atomico(os.path.join(roster_dir, "sessoes.json"),
-             json.dumps(mapa, ensure_ascii=False, indent=2) + "\n")
-    return {"papeis": sorted(papeis), "roster_md": caminho_md}
+    _atomico(caminho_sessoes, json.dumps(mapa, ensure_ascii=False, indent=2) + "\n")
+    return {"papeis": sorted(papeis), "roster_md": caminho_md, "sessoes": caminho_sessoes}
+
+
+def semear_ids(roster_dir, mapa):
+    """#1654 cutover Q1: semeia o `sessao.id` de cada <papel>.json a partir de um mapa
+    papel->id AUTORITATIVO (o `despertador\\sessoes.json` vivo -- o id que ENTREGA, nao o do
+    ROSTER stale). So toca o `id` (a `sessao.titulo` e o resto ficam); re-valida antes de
+    gravar (o id novo tem de bater o formato `local_<uuid>` do schema). Devolve os papeis
+    tocados. A autoridade indo-em-frente e o self-heal `get_session(self)` no re-boot -- isto
+    e so o seed de bootstrap do flip, pros papeis cuja linha do ROSTER estava velha."""
+    tocados = []
+    for p in PAPEIS:
+        caminho = os.path.join(roster_dir, f"{p}.json")
+        if not os.path.exists(caminho) or p not in mapa:
+            continue
+        with open(caminho, encoding="utf-8") as f:
+            obj = json.load(f)
+        if not isinstance(obj.get("sessao"), dict):
+            raise RosterInvalido(f"{p}.json: sessao ausente/invalida -- nao ha onde semear o id")
+        if obj["sessao"].get("id") == mapa[p]:
+            continue  # ja fresco
+        obj["sessao"]["id"] = mapa[p]
+        validar(obj)  # o id semeado tem de passar o schema fechado
+        _atomico(caminho, json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
+        tocados.append(p)
+    return tocados
 
 
 def escrever(roster_dir, obj):
@@ -194,7 +239,8 @@ def escrever(roster_dir, obj):
     outra pessoa (achado do @galaxie-altair no #1688)."""
     papel = validar(obj)
     os.makedirs(roster_dir, exist_ok=True)
-    _checar_hand_edit(roster_dir)  # ANTES de escrever: hand-edit no ROSTER.md -> nada e gravado
+    # ANTES de escrever: hand-edit no ROSTER.md (no roster_dir, o path default) -> nada e gravado.
+    _checar_hand_edit(os.path.join(roster_dir, "ROSTER.md"))
     caminho = os.path.join(roster_dir, f"{papel}.json")
     _atomico(caminho, json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
     regenerar(roster_dir)
@@ -222,6 +268,13 @@ def main(argv=None):
     sr = sub.add_parser("regenerar")
     sr.add_argument("--force", action="store_true",
                     help="regenera por cima de um ROSTER.md editado a mao (recuperacao deliberada)")
+    sr.add_argument("--sessoes-out", help="path do sessoes.json (default: <roster-dir>/sessoes.json; "
+                    "#1654 cutover aterra em despertador\\sessoes.json)")
+    sr.add_argument("--roster-md-out", help="path do ROSTER.md (default: <roster-dir>/ROSTER.md)")
+    ss = sub.add_parser("semear-ids")
+    ss.add_argument("--from", dest="fonte", required=True,
+                    help="sessoes.json autoritativo (papel->id vivo, ex. despertador\\sessoes.json) "
+                    "de onde semear o sessao.id de cada <papel>.json (#1654 cutover Q1)")
     a = p.parse_args(argv)
     try:
         if a.verbo == "validar":
@@ -230,7 +283,14 @@ def main(argv=None):
         elif a.verbo == "escrever":
             print(json.dumps(escrever(a.roster_dir, _carregar(a)), ensure_ascii=False))
         elif a.verbo == "regenerar":
-            print(json.dumps(regenerar(a.roster_dir, force=a.force), ensure_ascii=False))
+            print(json.dumps(regenerar(a.roster_dir, force=a.force, sessoes_out=a.sessoes_out,
+                                       roster_md_out=a.roster_md_out), ensure_ascii=False))
+        elif a.verbo == "semear-ids":
+            with open(a.fonte, encoding="utf-8") as f:
+                bruto = json.load(f)
+            mapa = {k: v for k, v in bruto.items() if not k.startswith("_")}
+            tocados = semear_ids(a.roster_dir, mapa)
+            print(json.dumps({"semeados": tocados}, ensure_ascii=False))
     except RosterInvalido as e:
         print(f"RECUSADO -- {e}", file=sys.stderr)
         sys.exit(2)
