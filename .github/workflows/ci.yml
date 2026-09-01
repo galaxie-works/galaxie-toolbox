@@ -92,6 +92,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Guarda do roster (#1654) -- os mutantes tem de morder
         run: python3 scripts/test_roster_guarda.py
+      - name: Migrador do roster (#1654 2a) -- 3 desfechos + `|`-na-prosa + round-trip pela guarda
+        run: python3 scripts/test_roster_migrar.py
       - name: galaxie.db (#1655) -- 4 ACs + rollup + CHECK
         run: python3 scripts/test_galaxie_db.py
 
