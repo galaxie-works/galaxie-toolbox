@@ -40,6 +40,7 @@ import {
   encerrarSessao,
   enviarInput,
   iniciarSessaoRemota,
+  renovarIceServersSessao,
   sinalizarSessao,
   type RemoteSessionEvent,
   type RemoteSessionState,
@@ -57,6 +58,7 @@ import {
   horizonteTtl,
   type HorizonteTtl,
 } from "@/lib/remote-ttl";
+import { iceServersParaTransporte } from "@/lib/remote-renew";
 import { useIdioma } from "@/lib/idioma";
 
 type Modo = "escolha" | "host" | "controller";
@@ -184,7 +186,26 @@ export function RemoteScreen() {
       case "stats":
         // TODO(#687): HUD de rtt/bitrate/frames (ev.rttMs/bitrateBps/frames).
         break;
+      case "renew_ice_needed":
+        // #1148 (fatia B): o Rust (RelayState) detectou a credencial TURN perto
+        // de expirar e pede credencial fresca. O FE detém o socket de signaling —
+        // busca-a; a resposta chega em `onIceServersRenovados`, que a forwarda de
+        // volta ao Rust pelo comando `remote_session_renew_ice`.
+        sinalizadorRef.current?.renovarIceServers();
+        break;
     }
+  }
+
+  // #1148 (fatia B): chegou credencial TURN fresca do signaling (resposta ao
+  // `renovarIceServers`). Dois efeitos: (1) atualiza o relógio do FE — o aviso de
+  // expiração some; (2) FORWARDA ao Rust pelo comando Tauri, pra ele rearmar a
+  // reemissão e sobrepor a alocação (str0m, fatia A-2). O `ttlSeconds` é
+  // load-bearing no (2): sem ele o Rust desarma e a 2ª reemissão não acontece.
+  function aoRenovarIceServers(novos: IceServer[]): void {
+    iceServersRef.current = novos;
+    registrarExpiracao(novos);
+    const id = sessionIdRef.current;
+    if (id) void renovarIceServersSessao(id, iceServersParaTransporte(novos));
   }
 
   /** Inicia o wiring da sessão de transporte (host ou controller). */
@@ -258,12 +279,7 @@ export function RemoteScreen() {
           // WS caiu: só reflete se a sessão de transporte ainda não assumiu.
           if (!sessionIdRef.current) setErro(t.remote.erroConexao);
         },
-        onIceServersRenovados: (novos) => {
-          // #1148: chegou credencial fresca — atualiza o relógio do FE (o aviso
-          // some). Re-aplicar no transporte vivo é a fatia B (seam Rust/str0m).
-          iceServersRef.current = novos;
-          registrarExpiracao(novos);
-        },
+        onIceServersRenovados: aoRenovarIceServers,
       });
       iceServersRef.current = iceServers;
       registrarExpiracao(iceServers);
@@ -313,12 +329,7 @@ export function RemoteScreen() {
         onFechado: () => {
           if (!sessionIdRef.current) setErro(t.remote.erroConexao);
         },
-        onIceServersRenovados: (novos) => {
-          // #1148: credencial fresca → relógio do FE atualizado (aviso some). A
-          // re-aplicação no transporte vivo é a fatia B (seam Rust/str0m).
-          iceServersRef.current = novos;
-          registrarExpiracao(novos);
-        },
+        onIceServersRenovados: aoRenovarIceServers,
       });
       iceServersRef.current = iceServers;
       registrarExpiracao(iceServers);
