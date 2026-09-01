@@ -68,6 +68,28 @@ foreach ($papel in $papeis) {
   $entry = [pscustomobject]@{ lastModified = $lm; seenIds = $newSeen }
   if ($state.PSObject.Properties[$papel]) { $state.$papel = $entry } else { $state | Add-Member -NotePropertyName $papel -NotePropertyValue $entry }
 }
+# --- WATCHDOG DO PORTEIRO: lote na inbox ha >45 min = o Porteiro esta morto (o ScheduleWakeup
+# dele morre com restart do app, e ninguem ve — medido 01/09: 4h mudo, 16 lotes represados).
+# Alarme = comentario no #1606 mencionando o PO (notificacao nativa no celular dele), 1x por incidente:
+# a chave do dedup e o NOME do lote mais velho (some da inbox = incidente encerrado, flag limpa).
+try {
+  $velho = Get-ChildItem $inbox -File -EA SilentlyContinue | Sort-Object LastWriteTime | Select-Object -First 1
+  if ($velho -and ((Get-Date) - $velho.LastWriteTime).TotalMinutes -gt 45) {
+    if ($state._alarmePorteiro -ne $velho.Name) {
+      $tokA = & $patScript -Name polaris 2>$null
+      if ($tokA) {
+        $nLotes = (Get-ChildItem $inbox -File).Count
+        $idadeMin = [int]((Get-Date) - $velho.LastWriteTime).TotalMinutes
+        $corpo = "⏰ **[Despertador/watchdog] PORTEIRO MUDO** — lote mais velho na inbox há ${idadeMin} min ($nLotes lote(s) represados). @galaxie-works: cutuca a sessão do Porteiro (Acorda, não dorme em serviço) ou recicla-a. Alarme automático do poller; 1x por incidente."
+        $hA = @{ Authorization = "Bearer $tokA"; Accept = "application/vnd.github+json" }
+        Invoke-WebRequest -Method Post -Uri "https://api.github.com/repos/galaxie-works/galaxie-toolbox/issues/1606/comments" -Headers $hA -Body (@{ body = $corpo } | ConvertTo-Json) -ContentType "application/json" -UseBasicParsing | Out-Null
+        Log "WATCHDOG: porteiro mudo ($idadeMin min, $nLotes lotes) — PO alertado no #1606"
+      } else { Log "WATCHDOG: porteiro mudo mas sem PAT do polaris pra alertar" }
+      if ($state.PSObject.Properties["_alarmePorteiro"]) { $state._alarmePorteiro = $velho.Name } else { $state | Add-Member -NotePropertyName _alarmePorteiro -NotePropertyValue $velho.Name }
+    }
+  } elseif (-not $velho -and $state.PSObject.Properties["_alarmePorteiro"]) { $state._alarmePorteiro = $null }
+} catch { Log "AVISO watchdog: $($_.Exception.Message)" }
+
 # --- VIGIA DE FILA (a cada ~30 min): card Ready ABERTO sem assignee = fila parada.
 # A reforma aboliu o "pull" dos devs (crons); notificacao nativa so cobre trabalho ENDERECADO.
 # Este bloco fabrica a notificacao que falta: card orfao novo -> lote pro SM (polaris) despachar
