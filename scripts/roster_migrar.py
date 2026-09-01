@@ -9,9 +9,11 @@ Fronteira (contrato do split, @galaxie-polaris):
   * **Zero mutacao de memoria viva.** Escreve so no `--out-dir` (staging); NAO toca o ROSTER.md/
     sessoes.json vivos. O cutover (fatia 2b, Mizar+Hiparco) e outra raia.
   * **A narrativa da coluna Estado NAO entra no schema.** O `**...**` inicial da vira o `estado`
-    (enum); todo o resto da coluna (+ cron + tick-log) e PROSA -> vai pro historico (#1653), nunca
-    pro `titulo` nem pra campo nenhum. O migrador PRESERVA essa prosa num sidecar pra ela nao se
-    perder -- destilar nao e deitar fora.
+    (enum); todo o resto da coluna (+ cron + tick-log) e PROSA LIVRE -> destino = o `Context.md`/
+    `*-historico-*.md` do papel (markdown), NUNCA o `titulo`/campo nenhum. ⚠️ NAO e o #1653: esse e o
+    `galaxie.db`/telemetria ESTRUTURADA (turnos/ctx/consumo), armazem diferente (correcao do
+    @galaxie-hiparco/@galaxie-polaris, 3 armazens sem sobreposicao). O migrador PRESERVA essa prosa
+    num sidecar markdown pra ela nao se perder no cutover -- destilar nao e deitar fora.
   * **O JSON bate o schema da fatia 1 por CONSTRUCAO** -- cada objeto passa por `roster_guarda.validar`
     antes de contar como MIGRADO; falhar a validacao e RECUSADO (com o campo+porque da guarda).
 
@@ -190,11 +192,13 @@ def migrar_texto(texto):
 
 
 def escrever_saidas(resultados, out_dir):
-    """Escreve os `<papel>.json` MIGRADOS + um sidecar com a narrativa preservada (pro #1653).
+    """Escreve os `<papel>.json` MIGRADOS + um sidecar markdown com a narrativa preservada.
     NAO toca memoria viva -- tudo em `out_dir` (staging)."""
     os.makedirs(out_dir, exist_ok=True)
     hist = ["# Narrativa da coluna Estado do ROSTER.md velho -- preservada na migracao (#1654 2a).",
-            "# Destilada FORA do schema (nao entra no titulo nem em campo nenhum); alvo = #1653.", ""]
+            "# FORA do schema (nao entra no titulo/campo nenhum). Destino no cutover = o Context.md/",
+            "# *-historico-*.md do papel (markdown). NAO e o #1653 (esse e telemetria estruturada no db).",
+            ""]
     escritos = []
     for papel, status, payload, narrativa in resultados:
         if status != MIGRADO:
