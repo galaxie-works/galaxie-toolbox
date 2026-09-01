@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -394,15 +395,16 @@ export function RemoteScreen() {
 
       {/* #1148 (fatia C): aviso de expiração da credencial TURN — surfa a queda
           antes de ela acontecer em silêncio no TTL. Só informa; a renovação viva
-          é a fatia B. Tokens `warning` do tema (padrão do badge.tsx). */}
+          é a fatia B. Componente `Alert` do registry (variant `warning`), NÃO
+          hand-rolled — achado da @Íris no gate do #1681 (linhagem #1557/#1614: não
+          inventar UI quando o componente existe). O `role="status"` (polite)
+          sobrepõe o `role="alert"` do componente DE PROPÓSITO: é aviso de
+          antecedência, não interrupção assertiva (a @Íris nomeou o status certo). */}
       {avisoExpiracao && (
-        <div
-          role="status"
-          className="flex shrink-0 flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground dark:bg-warning/15 dark:text-warning"
-        >
-          <span className="font-medium">{t.remote.avisoExpiracaoTitulo}</span>
-          <span className="opacity-90">{t.remote.avisoExpiracaoDetalhe}</span>
-        </div>
+        <Alert variant="warning" role="status" className="shrink-0">
+          <AlertTitle>{t.remote.avisoExpiracaoTitulo}</AlertTitle>
+          <AlertDescription>{t.remote.avisoExpiracaoDetalhe}</AlertDescription>
+        </Alert>
       )}
 
       <div className="min-h-0 flex-1">
