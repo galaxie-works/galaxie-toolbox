@@ -13,3 +13,6 @@ publish = false
 rand = "0.8"
 base64 = "0.22"
 sha2 = "0.10"
+# Parse da resposta JSON do token-endpoint (fatia C: `id_token`/`error`). Parsear, não interpolar —
+# a resposta vem de FORA; extrair campos com um parser robusto, nunca com regex/split à mão.
+serde_json = "1.0"
