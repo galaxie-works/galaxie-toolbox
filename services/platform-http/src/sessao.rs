@@ -20,7 +20,7 @@ use galaxie_platform_identity::Sessao;
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::tocar_sessao_do_cookie;
 
-use galaxie_platform_oauth::{ArmazemEstadoOAuth, Provedor, RedirectAllowlist};
+use galaxie_platform_oauth::{montar_corpo_troca, ArmazemEstadoOAuth, Provedor, RedirectAllowlist};
 
 use crate::erro::resposta_de_erro;
 
@@ -32,6 +32,9 @@ use crate::erro::resposta_de_erro;
 pub struct ConfigProvedor {
     pub client_id: String,
     pub redirect_uri: String,
+    /// O `client_secret` da troca `code`→token (fatia C). Entra na config e é lido do cofre na fatia 5
+    /// (o dev-server usa placeholder). Só sai daqui pro `montar_corpo_troca` → `CorpoTroca` não-logável.
+    pub client_secret: String,
 }
 
 /// Estado do fluxo OAuth injetado na borda: o armazém dos fluxos EM CURSO (atrás de `Mutex` como o de
@@ -49,6 +52,9 @@ pub struct EstadoOAuth {
     google: Option<ConfigProvedor>,
     allowlist: RedirectAllowlist,
     ttl_fluxo_seg: u64,
+    /// O cliente reqwest DISCIPLINADO da troca (rustls, timeout, redirect DESLIGADO), construído uma
+    /// vez e reusado. A única chamada de SAÍDA do fluxo (fatia C). Ver [`crate::oauth_troca`].
+    cliente: reqwest::Client,
 }
 
 impl EstadoOAuth {
@@ -77,7 +83,34 @@ impl EstadoOAuth {
             google,
             allowlist,
             ttl_fluxo_seg,
+            cliente: crate::oauth_troca::cliente_troca(),
         }
+    }
+
+    /// Troca o `code` por um `id_token` **cru, ainda NÃO verificado** (a validação JWKS/RS256 é a
+    /// próxima fatia) — chamado pelo `/callback` (fatia 4). Monta o corpo (com o `client_secret` da
+    /// config), e POSTa pelo cliente disciplinado no token-endpoint do provedor. Encapsula o cliente:
+    /// o handler não toca no reqwest.
+    ///
+    /// `Provedor` não-configurado ⇒ `ErroExchange::Rede` — não deveria ocorrer (o callback só chega
+    /// aqui com um fluxo válido, iniciado por um provedor configurado), mas fail-closed defensivo.
+    pub async fn trocar_codigo(
+        &self,
+        provedor: Provedor,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<String, crate::oauth_troca::ErroExchange> {
+        let Some(cfg) = self.config_de(provedor) else {
+            return Err(crate::oauth_troca::ErroExchange::Rede);
+        };
+        let corpo = montar_corpo_troca(
+            code,
+            &cfg.redirect_uri,
+            &cfg.client_id,
+            &cfg.client_secret,
+            code_verifier,
+        );
+        crate::oauth_troca::postar_troca(&self.cliente, &provedor.endpoint_token(), corpo).await
     }
 
     /// A config do provedor, se ele estiver LIGADO. `None` ⇒ o handler devolve o 404 uniforme (não

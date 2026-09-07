@@ -41,6 +41,11 @@ galaxie-platform-web = { path = "../platform-web" }
 # Domínio OAuth (#1695): a DECISÃO do fluxo (PKCE/state/amarra, authority segura, allowlist). Puro —
 # a borda BUSCA bytes e seta cookie; este crate decide. Sem HTTP nem segredo, como o próprio doc diz.
 galaxie-platform-oauth = { path = "../platform-oauth" }
+# Cliente HTTP de SAÍDA da troca code→token (#1695 fatia C, decisão do @Altair): `rustls`, NUNCA
+# `native-tls` (senão o OpenSSL volta de carona) — por isso `default-features=false`. É o único ponto
+# onde a borda faz uma chamada de SAÍDA; a config disciplinada (timeout, redirect DESLIGADO) mora
+# no `oauth_troca::cliente_troca`, não espalhada.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 galaxie-platform-conta = { path = "../platform-conta" }
 galaxie-platform-org-admin = { path = "../platform-org-admin" }
 galaxie-platform-config = { path = "../platform-config" }

@@ -1242,6 +1242,7 @@ mod tests {
         ConfigProvedor {
             client_id: format!("cid-{slug}"),
             redirect_uri: format!("https://plat.example/api/v1/auth/{slug}/callback"),
+            client_secret: format!("secret-{slug}"),
         }
     }
 
