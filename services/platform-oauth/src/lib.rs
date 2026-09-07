@@ -434,15 +434,31 @@ pub enum ErroTroca {
     RespostaInvalida,
 }
 
-/// Monta o CORPO `application/x-www-form-urlencoded` da troca `code`→token — a DECISÃO de o que se
-/// envia: `grant_type=authorization_code`, o `code`, o `redirect_uri` (tem de bater byte-a-byte o do
+/// O corpo `application/x-www-form-urlencoded` da troca — um NEWTYPE que **NÃO é logável** (sem
+/// `Debug`/`Display`/`Clone`) porque CONTÉM o `client_secret` e o `code`. Um `log::debug!("{corpo}")`
+/// ou `{corpo:?}` acidental na borda **não compila** — o guard é ESTRUTURAL, não disciplina de "não
+/// logar" que alguém esquece (achado do @Altair na review da C-1). A borda lê o valor por
+/// [`CorpoTroca::expor`] **só no ato de POSTar sobre TLS**. (Upgrade documentado: `secrecy::SecretString`
+/// se quisermos zeroização no drop — para o corpo transitório, o não-logável já fecha o vazamento por log.)
+pub struct CorpoTroca(String);
+
+impl CorpoTroca {
+    /// Expõe o corpo para o POST — a borda chama isto SÓ ao enviar sobre TLS, nunca para logar.
+    #[must_use]
+    pub fn expor(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Monta o [`CorpoTroca`] da troca `code`→token — a DECISÃO de o que se envia:
+/// `grant_type=authorization_code`, o `code`, o `redirect_uri` (tem de bater byte-a-byte o do
 /// autorizar, senão o provedor recusa), o `client_id`, e o `code_verifier` que PROVA a posse do PKCE
 /// (fecha o par com o `code_challenge` da fatia B).
 ///
-/// ⚠️ **O `client_secret` entra por PARÂMETRO** — este crate PURO não o lê do cofre nem o guarda
-/// (isso é a borda, fatia 5); só o formata. **O resultado contém o segredo e o `code`**: a borda
-/// POSTa sobre TLS e **nunca o loga**. (Fronteira de segurança FLAGADA ao @Altair: se preferires o
-/// segredo inteiramente fora do crate puro, movo o append do `client_secret` pra `platform-http`.)
+/// ⚠️ **O `client_secret` entra por PARÂMETRO** (decisão ratificada pelo @Altair: o escape RFC3986 do
+/// segredo mora num sítio só e testado — um 2º sítio de encoding na borda dessincronizaria). Este
+/// crate PURO não lê o cofre nem guarda o segredo; só o formata. O retorno é o [`CorpoTroca`]
+/// não-logável para o segredo não vazar por log acidental.
 #[must_use]
 pub fn montar_corpo_troca(
     code: &str,
@@ -450,7 +466,7 @@ pub fn montar_corpo_troca(
     client_id: &str,
     client_secret: &str,
     code_verifier: &str,
-) -> String {
+) -> CorpoTroca {
     let params = [
         ("grant_type", "authorization_code"),
         ("code", code),
@@ -459,11 +475,13 @@ pub fn montar_corpo_troca(
         ("client_secret", client_secret),
         ("code_verifier", code_verifier),
     ];
-    params
-        .iter()
-        .map(|(k, v)| format!("{k}={}", encode_query(v)))
-        .collect::<Vec<_>>()
-        .join("&")
+    CorpoTroca(
+        params
+            .iter()
+            .map(|(k, v)| format!("{k}={}", encode_query(v)))
+            .collect::<Vec<_>>()
+            .join("&"),
+    )
 }
 
 /// Extrai o `id_token` (a asserção de identidade OIDC) do CORPO da resposta do token-endpoint —
@@ -775,14 +793,15 @@ mod tests {
     #[test]
     fn corpo_troca_leva_os_campos_e_encoda_o_segredo() {
         let corpo = montar_corpo_troca("cod3", "https://p.example/cb", "cid", "s3cr+t/=", "verif");
-        assert!(corpo.contains("grant_type=authorization_code"));
-        assert!(corpo.contains("code=cod3"));
-        assert!(corpo.contains("client_id=cid"));
-        assert!(corpo.contains("code_verifier=verif"));
+        let s = corpo.expor(); // a borda só lê por `expor` (o newtype não é logável por acidente)
+        assert!(s.contains("grant_type=authorization_code"));
+        assert!(s.contains("code=cod3"));
+        assert!(s.contains("client_id=cid"));
+        assert!(s.contains("code_verifier=verif"));
         // redirect_uri percent-encodado (`:`/`/` -> %3A/%2F).
-        assert!(corpo.contains("redirect_uri=https%3A%2F%2Fp.example%2Fcb"), "{corpo}");
+        assert!(s.contains("redirect_uri=https%3A%2F%2Fp.example%2Fcb"), "{s}");
         // ⚠️ o segredo com `+ / =` (chars reservados) tem de ir ESCAPADO, senão parte o form-body.
-        assert!(corpo.contains("client_secret=s3cr%2Bt%2F%3D"), "segredo escapado: {corpo}");
+        assert!(s.contains("client_secret=s3cr%2Bt%2F%3D"), "segredo escapado: {s}");
     }
 
     #[test]
