@@ -32,3 +32,8 @@ pub async fn remote_session_input() -> Result<(), String> {
 pub async fn remote_session_end() -> Result<(), String> {
     Err(REMOTE_OFF.to_owned())
 }
+
+#[tauri::command]
+pub async fn remote_session_renew_ice() -> Result<(), String> {
+    Err(REMOTE_OFF.to_owned())
+}
