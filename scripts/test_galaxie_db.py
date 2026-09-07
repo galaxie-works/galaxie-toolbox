@@ -59,6 +59,14 @@ def main():
     linha = next(r for r in recibo["por_papel"] if r["papel"] == "mizar")
     assert linha["chamadas"] == 15 and linha["output"] == 7000, f"rollup errado: {linha}"
 
+    # --substituir: SET (nao soma) -> idempotente pro produtor de re-scan (#1663)
+    corre(db, "registrar-consumo", "--substituir", "--dia", "2026-08-31", "--papel", "mizar", "--chamadas", "3", "--output", "999")
+    r2 = next(x for x in corre(db, "consultar", "recibo-semanal")["por_papel"] if x["papel"] == "mizar")
+    assert r2["chamadas"] == 3 and r2["output"] == 999, f"substituir nao fez SET (somou?): {r2}"
+    corre(db, "registrar-consumo", "--substituir", "--dia", "2026-08-31", "--papel", "mizar", "--chamadas", "3", "--output", "999")
+    r3 = next(x for x in corre(db, "consultar", "recibo-semanal")["por_papel"] if x["papel"] == "mizar")
+    assert r3["chamadas"] == 3 and r3["output"] == 999, f"substituir nao foi idempotente: {r3}"
+
     # AC2 — consulta em 1 comando (média de contexto)
     corre(db, "registrar-auto-reporte", "--papel", "mizar", "--contexto-kb", "100")
     corre(db, "registrar-auto-reporte", "--papel", "mizar", "--contexto-kb", "200")

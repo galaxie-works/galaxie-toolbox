@@ -2086,6 +2086,8 @@ pub fn run() {
             remote::remote_session_signal,
             remote::remote_session_input,
             remote::remote_session_end,
+            // #1527 fatia B (seam #1148-B): handback da credencial TURN nova do FE.
+            remote::remote_session_renew_ice,
             // #1104: endpoint do signaling (config, não constante) — sempre compilado.
             remote_signaling_endpoint,
             // #1129 A1: endpoint v2 (derivado do v1) + ponte de log INFO do Remote.
