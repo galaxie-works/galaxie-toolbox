@@ -13,6 +13,9 @@
 #![forbid(unsafe_code)]
 
 pub mod erro;
+/// Cliente HTTP de saída da troca `code`→token (#1695 fatia C): reqwest disciplinado (rustls,
+/// timeout, redirect DESLIGADO). A única chamada de SAÍDA do fluxo.
+pub mod oauth_troca;
 pub mod router;
 pub mod sessao;
 /// Binário de produção (fatia 1 do #1505): `serve(config)` sobe o axum sobre o [`router`]. Sem auth.
