@@ -32,6 +32,14 @@ export interface IceServer {
   username: string;
   credential: string;
   expiresAtUnixSeconds: number;
+  /**
+   * #1148 (fatia B): TTL da credencial em SEGUNDOS (duração, não instante). O fio
+   * (`protocol.rs::IceServer`) traz os dois; a duração é **imune ao skew** que o
+   * `expiresAtUnixSeconds` (relógio do servidor) carregaria, e é ela que o handback
+   * `remote_session_renew_ice` forwarda ao `transport::IceServer` do Rust pra armar
+   * a reemissão (`agora_cliente + ttl*3/4`). `0` quando o fio não a trouxe.
+   */
+  ttlSeconds: number;
 }
 
 /** Assinatura do server sobre a pubkey do device (anti-spoof). */
@@ -215,6 +223,7 @@ interface IceServerBruto {
   username?: string;
   credential?: string;
   expires_at_unix_seconds?: number;
+  ttl_seconds?: number;
 }
 
 /** Mapeia o ICE server do fio (snake_case) pro tipo camelCase do front. */
@@ -225,6 +234,8 @@ function mapearIceServers(brutos: IceServerBruto[] | undefined): IceServer[] {
     username: s.username ?? "",
     credential: s.credential ?? "",
     expiresAtUnixSeconds: s.expires_at_unix_seconds ?? 0,
+    // #1148 (fatia B): a duração skew-imune, forwardada ao Rust no handback.
+    ttlSeconds: s.ttl_seconds ?? 0,
   }));
 }
 

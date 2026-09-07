@@ -7,7 +7,8 @@ import { horizonteTtl, deveAvisarExpiracao } from "./remote-ttl.ts";
 import type { IceServer } from "./remote-signaling";
 
 function srv(expiresAtUnixSeconds: number): IceServer {
-  return { urls: ["turn:x"], username: "u", credential: "c", expiresAtUnixSeconds };
+  // ttlSeconds (#1148 fatia B) não entra na lógica de aviso — só no handback.
+  return { urls: ["turn:x"], username: "u", credential: "c", expiresAtUnixSeconds, ttlSeconds: 0 };
 }
 
 test("#1148 horizonteTtl: pega o PRIMEIRO a morrer e mede o TTL no relógio do cliente", () => {

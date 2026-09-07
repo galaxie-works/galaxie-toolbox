@@ -11,6 +11,7 @@
 //  - InputEvent normalizado 0..1 (só controller, capability input).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./tauri.ts";
+import type { IceServerTransporte } from "./remote-renew.ts";
 
 // #1033: ponto único em `./tauri.ts`; constante no import, como era.
 const TAURI = inTauri();
@@ -75,7 +76,12 @@ export type RemoteSessionEvent =
   | { type: "state"; state: RemoteSessionState; code?: string; message?: string }
   | { type: "signal"; signal: RemoteSignal }
   | { type: "screen"; info: ScreenInfo }
-  | { type: "stats"; rttMs?: number | null; bitrateBps: number; frames: number };
+  | { type: "stats"; rttMs?: number | null; bitrateBps: number; frames: number }
+  // #1148 (fatia B): o Rust (RelayState) detectou a credencial TURN perto de
+  // expirar (gatilho 3/4) e pede ao FE — que detém o socket de signaling — pra
+  // buscar credencial fresca. Sem campos: o `Channel` é por-sessão. O FE responde
+  // chamando `renovarIceServers()` no sinalizador. (Rust: `RenewIceNeeded {}`.)
+  | { type: "renew_ice_needed" };
 
 // --- Input (remote-transport::InputEvent) — controller → host ---------------
 
@@ -189,6 +195,28 @@ export async function enviarInput(
   if (!TAURI) return;
   // #1071 (RB2): payload aninhado em `request` (ver sinalizarSessao).
   return invoke<void>("remote_session_input", { request: { sessionId, event } });
+}
+
+/**
+ * #1148 (fatia B): entrega ao Rust a credencial TURN FRESCA (resposta ao
+ * `renew_ice_servers` do signaling) — o Rust rearma a reemissão e sobrepõe a
+ * alocação (str0m, fatia A-2).
+ *
+ * ⚠️ O `ttl_seconds` é **load-bearing**: sem ele o `reemitir_em` do Rust cai em
+ * `None` (via `#[serde(default)]`) e a 2ª reemissão NUNCA acontece — a sessão
+ * auto-desliga em silêncio no 2º TTL. Por isso a shape exige a duração, e o
+ * `mapearIceServers` já a captura do fio.
+ */
+export async function renovarIceServersSessao(
+  sessionId: string,
+  iceServers: IceServerTransporte[],
+): Promise<void> {
+  if (!TAURI) return;
+  // #1071 (RB2): payload aninhado em `request` (ver sinalizarSessao) — flat
+  // falha a desserialização no Tauri v2.
+  return invoke<void>("remote_session_renew_ice", {
+    request: { sessionId, iceServers },
+  });
 }
 
 /** Encerra a sessão (idempotente): fecha transporte/canais e solta input preso. */
