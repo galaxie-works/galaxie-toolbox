@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.22 · 2026-09-01 · §7 roster-JSON: estado dos papéis = 1 `roster/<papel>.json` por papel (schema fechado); `ROSTER.md`+`sessoes.json` = build-products GERADOS; escrita 1-dono-por-ficheiro substitui o Edit/CAS; reciclagem grava o id AUTO-MEDIDO (`get_session self`) · PENDENTE ratificação do PO na PR (§8) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `roster/<papel>.json` (memória; `ROSTER.md` = build-product gerado)
+**v1.22 · 2026-09-01 · §7 roster-JSON: estado dos papéis = 1 `roster/<papel>.json` por papel (schema fechado); `ROSTER.md`+`sessoes.json` = build-products GERADOS; escrita 1-dono-por-ficheiro substitui o Edit/CAS; reciclagem grava o id AUTO-MEDIDO (`get_session self`) · ratificado pelo PO na PR #1705 (2026-09-01) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `roster/<papel>.json` (memória; `ROSTER.md` = build-product gerado)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
