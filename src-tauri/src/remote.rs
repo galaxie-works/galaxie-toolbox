@@ -522,8 +522,13 @@ pub fn remote_session_signal(
 /// troca do data-path + rearme do `reemitir_em`) e a fatia A-2 (str0m). Registrar o comando
 /// fecha o contrato-tauri (#1033) e destrava o #1704 do Pollux; o loop so COMPLETA com o A-2.
 /// Aceita (Ok) pra o FE nao ver erro, e loga que o apply esta pendente — nao finge renovar.
+///
+/// `async` (guard #1070: comando Tauri e async, salvo ALLOW-list — e a lista so encolhe). O
+/// corpo e trivial (lock + log, SEM await), entao o `MutexGuard` nao cruza ponto de suspensao
+/// (a future fica Send); quando o A-2 trouxer o Allocate/apply, o trabalho pesado sai por
+/// `spawn_blocking` como no `remote_session_end`.
 #[tauri::command]
-pub fn remote_session_renew_ice(
+pub async fn remote_session_renew_ice(
     request: RemoteSessionRenewIceRequest,
     runtime: tauri::State<'_, RemoteRuntime>,
 ) -> Result<(), RemoteError> {
