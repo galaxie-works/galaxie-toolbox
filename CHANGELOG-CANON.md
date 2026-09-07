@@ -1,6 +1,13 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.22 · 2026-09-01 — §7 roster-JSON: 1 ficheiro por papel, agregados gerados
+**Emenda (§7) — integridade da memória por CONSTRUÇÃO.** O estado dos papéis passa de 1 `ROSTER.md`-log partilhado (11 escritores, clobber silencioso — truncou/erodiu 2× em 24 h) para **1 `roster/<papel>.json` por papel** (schema fechado, `scripts/roster_guarda.py`, fatia 1 #1688). Um dono por ficheiro mata a corrida sem depender de disciplina (o Edit-targeted/CAS fica DEPRECADO). O **`ROSTER.md` e o `sessoes.json` são build-products GERADOS** (hand-edit recusado pela guarda); a **LEITURA é preservada** (boot `cat ROSTER.md`, Porteiro, §7-vigia leem os mesmos ficheiros, agora gerados) — compat-check medido: 11/11 migram limpo, os leitores acham a linha+campos.
+
+**Reciclagem grava o id do VIVO.** O `ROSTER.md` provou-se fonte NÃO-fiável do id de sessão (stale para alcor+pollux, na direção perigosa: regrediria o Porteiro a sessões mortas). A §7 passa a mandar a reciclagem gravar o id **auto-medido** (`get_session(self)`) no `<papel>.json` — a autoridade é a auto-medição, que auto-cura no re-boot; o `sessoes.json` deriva.
+
+**Mecanismo-primeiro (§1.10):** redigido contra o schema BUILT (`roster_guarda.py` em pre-prod, #1688) + compat-check rodado em staging ANTES de canonizar. Landa COM o cutover (fatia 2b/2c #1654). Impl: #1654 (2a #1702 · 2b/2c cutover Mizar+Hiparco).
+
 ## v1.21 · 2026-08-31 — exceção de despacho do SM (fila parada) + decreto verificável
 **EMERGÊNCIA (§8): ordem direta do PO na sessão ("altíssima prioridade"), regularizada por comentário escrito do PO na PR #1678 (02:57Z).** Motivo medido: a fila Ready apodreceu no regime sem-cron — 5 órfãos (incl. #1654/#1655, mecanismos da própria memória) — porque "dev puxa, ninguém despacha" pressupõe dev ACORDADO, e o Despertador só acorda quem é mencionado. Dev sem menção nunca puxa → fila garantidamente parada. O Polaris V, correto por canon, recusou despachar (estava no NUNCA dele).
 
