@@ -6,7 +6,7 @@
 name = "galaxie-platform-http"
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 
 # O binário de PRODUÇÃO (`src/main.rs`) sai por padrão. O `dev-server` (porta de sessão sintética,
