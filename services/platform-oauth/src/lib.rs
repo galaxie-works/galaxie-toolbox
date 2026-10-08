@@ -505,6 +505,136 @@ pub fn extrair_id_token(resposta: &str) -> Result<String, ErroTroca> {
     }
 }
 
+/// O `sub` (subject) VERIFICADO do id_token — o id ESTÁVEL do humano no provedor. A ligação da
+/// identidade é por `(Provedor, Subject)`, **NUNCA por string de e-mail** (invariante do @Altair):
+/// o e-mail só liga CONVITE, e só se o provedor o verifica ([`Provedor::elegivel_para_ligar_convite`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subject(pub String);
+
+/// Uma chave pública RSA do JWKS do provedor, indexada por `kid`. `n`/`e` são base64url (o formato
+/// que o `jsonwebtoken::DecodingKey::from_rsa_components` consome direto).
+struct ChaveRsa {
+    kid: String,
+    n: String,
+    e: String,
+}
+
+/// O conjunto de chaves JWKS que a BORDA buscou do provedor (a borda faz o GET; este crate só decide).
+/// Guarda só as RSA (fazemos RS256); a chave certa escolhe-se pelo `kid` do header do token.
+pub struct Jwks {
+    chaves: Vec<ChaveRsa>,
+}
+
+impl Jwks {
+    /// Parseia o JSON `{"keys":[{kid,kty,n,e,...}]}` do endpoint JWKS. Fica só com as RSA completas.
+    /// `Err(JwksInvalido)` se o JSON não parsear — a borda trata como falha de infra (não vira login).
+    pub fn do_json(json: &str) -> Result<Jwks, ErroVerificacao> {
+        #[derive(serde::Deserialize)]
+        struct JwkBruto {
+            kid: Option<String>,
+            kty: Option<String>,
+            n: Option<String>,
+            e: Option<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct JwksBruto {
+            keys: Vec<JwkBruto>,
+        }
+        let bruto: JwksBruto =
+            serde_json::from_str(json).map_err(|_| ErroVerificacao::JwksInvalido)?;
+        let chaves = bruto
+            .keys
+            .into_iter()
+            .filter(|k| k.kty.as_deref() == Some("RSA"))
+            .filter_map(|k| match (k.kid, k.n, k.e) {
+                (Some(kid), Some(n), Some(e)) => Some(ChaveRsa { kid, n, e }),
+                _ => None,
+            })
+            .collect();
+        Ok(Jwks { chaves })
+    }
+
+    fn por_kid(&self, kid: &str) -> Option<&ChaveRsa> {
+        self.chaves.iter().find(|c| c.kid == kid)
+    }
+}
+
+/// Folga de skew de relógio na validação de `exp` (segundos). Pequena — o id_token é fresco.
+const SKEW_ID_TOKEN_SEG: u64 = 60;
+
+/// Erro da verificação do id_token (fatia C-3). A distinção é **só pro LOG**: a borda (fatia 4)
+/// colapsa TUDO numa falha de login uniforme no fio (anti-oráculo). Nada daqui verificado ⇒ nada
+/// vira sessão.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErroVerificacao {
+    /// Assinatura RS256 inválida, `kid` desconhecido/ausente, ou JWT malformado — não confiar.
+    AssinaturaInvalida,
+    /// Um claim não bate: `iss` ≠ esperado, `aud` ≠ client_id, `exp` vencido, ou `nonce` errado.
+    ClaimInvalido,
+    /// O JWKS (buscado pela borda) não parseou ou não tinha a chave — falha de infra, não de auth.
+    JwksInvalido,
+}
+
+/// Verifica o `id_token` OIDC e extrai a identidade VERIFICADA `(Provedor, Subject)` — o coração da
+/// segurança do fluxo (o @Altair: "a validação do token vive AQUI"). Dado o JWKS que a borda buscou:
+///
+///  1. **Assinatura RS256** contra a chave do `kid` do header — e o algoritmo é FORÇADO a RS256 na
+///     validação (nunca se confia no `alg` do header: mata *algorithm-confusion*, incl. `alg:none`).
+///  2. **Claims não-negociáveis:** `iss` EXATO (o chamador passa o esperado — para Microsoft é
+///     tenant-specific, e é a fatia 4 que o computa; nunca `/common`), `aud == client_id`, `exp` com
+///     folga pequena de skew, e `nonce` (se foi enviado) — este último à mão (o `jsonwebtoken` não o vê).
+///
+/// ⚠️ O `exp` é validado contra o relógio do SISTEMA (padrão do `jsonwebtoken`, correto para frescura
+/// de token — distinto do relógio injetável das sessões). O `id_token` chega SÓ do corpo do
+/// token-endpoint sobre TLS ([`extrair_id_token`]), nunca do front-channel.
+pub fn verificar_id_token(
+    id_token: &str,
+    jwks: &Jwks,
+    provedor: Provedor,
+    iss_esperado: &str,
+    client_id: &str,
+    nonce_esperado: Option<&str>,
+) -> Result<(Provedor, Subject), ErroVerificacao> {
+    use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+
+    #[derive(serde::Deserialize)]
+    struct Claims {
+        sub: String,
+        #[serde(default)]
+        nonce: Option<String>,
+    }
+
+    // O `kid` do header escolhe a chave; o `alg` do header é IGNORADO (a Validation força RS256).
+    let header = decode_header(id_token).map_err(|_| ErroVerificacao::AssinaturaInvalida)?;
+    let kid = header.kid.ok_or(ErroVerificacao::AssinaturaInvalida)?;
+    let chave = jwks.por_kid(&kid).ok_or(ErroVerificacao::AssinaturaInvalida)?;
+    let key = DecodingKey::from_rsa_components(&chave.n, &chave.e)
+        .map_err(|_| ErroVerificacao::JwksInvalido)?;
+
+    let mut v = Validation::new(Algorithm::RS256); // SÓ RS256 — nunca o alg do header
+    v.set_issuer(&[iss_esperado]); // exato
+    v.set_audience(&[client_id]); // aud == client_id
+    v.leeway = SKEW_ID_TOKEN_SEG;
+    v.validate_exp = true;
+
+    let dados = decode::<Claims>(id_token, &key, &v).map_err(|e| match e.kind() {
+        jsonwebtoken::errors::ErrorKind::InvalidIssuer
+        | jsonwebtoken::errors::ErrorKind::InvalidAudience
+        | jsonwebtoken::errors::ErrorKind::ExpiredSignature
+        | jsonwebtoken::errors::ErrorKind::ImmatureSignature => ErroVerificacao::ClaimInvalido,
+        _ => ErroVerificacao::AssinaturaInvalida, // assinatura, alg, base64, JSON malformado...
+    })?;
+
+    // Nonce à mão (o jsonwebtoken não o valida): se ENVIÁMOS um, o token TEM de o devolver igual.
+    if let Some(esperado) = nonce_esperado {
+        if dados.claims.nonce.as_deref() != Some(esperado) {
+            return Err(ErroVerificacao::ClaimInvalido);
+        }
+    }
+
+    Ok((provedor, Subject(dados.claims.sub)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,5 +955,116 @@ mod tests {
         assert_eq!(extrair_id_token(r#"{"access_token":"AT"}"#), Err(ErroTroca::RespostaInvalida));
         assert_eq!(extrair_id_token(r#"{"id_token":""}"#), Err(ErroTroca::RespostaInvalida));
         assert_eq!(extrair_id_token("nao sou json"), Err(ErroTroca::RespostaInvalida));
+    }
+
+    // --- #1695 fatia C-3: verificação JWKS/RS256 do id_token -------------------
+
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+    use rsa::traits::PublicKeyParts;
+    use rsa::RsaPrivateKey;
+
+    const KID: &str = "test-kid-1";
+    const ISS: &str = "https://login.microsoftonline.com/tenant-abc/v2.0";
+    const AUD: &str = "cid-123";
+
+    /// Componentes de um par RSA de teste (pem PKCS#8, n, e) — gerado UMA vez (o keygen 2048 é caro).
+    fn componentes() -> &'static (String, String, String) {
+        static C: std::sync::OnceLock<(String, String, String)> = std::sync::OnceLock::new();
+        C.get_or_init(|| {
+            let mut rng = rand::thread_rng();
+            let k = RsaPrivateKey::new(&mut rng, 2048).expect("gera RSA");
+            let pk = k.to_public_key();
+            let n = URL_SAFE_NO_PAD.encode(pk.n().to_bytes_be());
+            let e = URL_SAFE_NO_PAD.encode(pk.e().to_bytes_be());
+            let pem = k.to_pkcs8_pem(LineEnding::LF).expect("pkcs8 pem").to_string();
+            (pem, n, e)
+        })
+    }
+
+    fn enc() -> EncodingKey {
+        EncodingKey::from_rsa_pem(componentes().0.as_bytes()).expect("encoding key")
+    }
+
+    /// JWKS com a pública do par de teste, sob o `KID`.
+    fn jwks() -> Jwks {
+        let (_, n, e) = componentes();
+        Jwks::do_json(&format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"{KID}","n":"{n}","e":"{e}","use":"sig","alg":"RS256"}}]}}"#
+        ))
+        .expect("jwks")
+    }
+
+    fn agora() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    /// Assina um id_token de teste (kid = `KID`, RS256). `exp` é epoch absoluto.
+    fn assinar(chave: &EncodingKey, sub: &str, iss: &str, aud: &str, exp: u64, nonce: Option<&str>) -> String {
+        let mut claims = serde_json::json!({ "sub": sub, "iss": iss, "aud": aud, "exp": exp });
+        if let Some(n) = nonce {
+            claims["nonce"] = serde_json::json!(n);
+        }
+        let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some(KID.to_string());
+        encode(&header, &claims, chave).expect("assina")
+    }
+
+    #[test]
+    fn verifica_id_token_valido_extrai_provedor_e_subject() {
+        let token = assinar(&enc(), "sub-123", ISS, AUD, agora() + 3600, Some("nonce-x"));
+        assert_eq!(
+            verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, Some("nonce-x")),
+            Ok((Provedor::Microsoft, Subject("sub-123".into())))
+        );
+    }
+
+    #[test]
+    fn verifica_recusa_assinatura_de_outra_chave() {
+        // Token assinado por chave DIFERENTE, mas com o mesmo `kid` do JWKS → a assinatura não bate.
+        let mut rng = rand::thread_rng();
+        let outra = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let enc_outra =
+            EncodingKey::from_rsa_pem(outra.to_pkcs8_pem(LineEnding::LF).unwrap().as_bytes()).unwrap();
+        let token = assinar(&enc_outra, "s", ISS, AUD, agora() + 3600, None);
+        assert_eq!(
+            verificar_id_token(&token, &jwks(), Provedor::Google, ISS, AUD, None),
+            Err(ErroVerificacao::AssinaturaInvalida)
+        );
+    }
+
+    #[test]
+    fn verifica_recusa_iss_aud_exp_e_nonce_errados() {
+        let j = jwks();
+        // iss errado
+        let t = assinar(&enc(), "s", "https://evil.example/v2.0", AUD, agora() + 3600, None);
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        // aud (client_id) errado
+        let t = assinar(&enc(), "s", ISS, "outro-client", agora() + 3600, None);
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        // exp no passado (além da folga de skew)
+        let t = assinar(&enc(), "s", ISS, AUD, agora() - 3600, None);
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        // nonce presente mas ≠ o esperado
+        let t = assinar(&enc(), "s", ISS, AUD, agora() + 3600, Some("real"));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, Some("esperado")), Err(ErroVerificacao::ClaimInvalido));
+    }
+
+    #[test]
+    fn verifica_recusa_kid_desconhecido() {
+        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600, None);
+        let jwks_vazio = Jwks::do_json(r#"{"keys":[]}"#).unwrap();
+        assert_eq!(
+            verificar_id_token(&token, &jwks_vazio, Provedor::Microsoft, ISS, AUD, None),
+            Err(ErroVerificacao::AssinaturaInvalida)
+        );
+    }
+
+    #[test]
+    fn jwks_nao_json_e_infra_nao_auth() {
+        assert_eq!(Jwks::do_json("não é json").err(), Some(ErroVerificacao::JwksInvalido));
     }
 }

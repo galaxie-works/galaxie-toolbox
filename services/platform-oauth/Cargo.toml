@@ -16,3 +16,13 @@ sha2 = "0.10"
 # Parse da resposta JSON do token-endpoint (fatia C: `id_token`/`error`). Parsear, não interpolar —
 # a resposta vem de FORA; extrair campos com um parser robusto, nunca com regex/split à mão.
 serde_json = "1.0"
+# Desserializa struct dos claims (serde) + verificação do id_token (jsonwebtoken/RS256, fatia C-3).
+serde = { version = "1.0", features = ["derive"] }
+# Verificação do id_token: assinatura RS256 via JWKS + claims (iss/aud/exp). Usa `ring` (não OpenSSL) —
+# CRYPTO é decisão pura (computação, não I/O), cabe neste crate. Produção usa `from_rsa_components(n,e)`
+# (formato JWKS); os testes assinam via `from_rsa_pem` (feature `use_pem`, nas default-features).
+jsonwebtoken = "9"
+
+[dev-dependencies]
+# Gera um par RSA de teste (extrai n/e pro JWKS + assina JWTs) — prova o sign→verify e as adulterações.
+rsa = "0.9"
