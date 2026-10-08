@@ -144,16 +144,18 @@ impl EstadoOAuth {
     }
 
     /// Grava um fluxo pendente sob o seu `state` (chamado por `/auth`). Encapsula o `lock` — o handler
-    /// não toca no `Mutex`. `Err` = armazém indisponível (a borda vira falha de infra, distinta do 404).
+    /// não toca no `Mutex`. `agora_unix` alimenta a evicção oportunística + o gate de capacidade do
+    /// armazém (fatia 5). `Err(Cheio)` = teto atingido (fail-closed); `Err(Indisponivel)` = infra fora.
     pub fn iniciar(
         &self,
         state: galaxie_platform_oauth::Estado,
         fluxo: galaxie_platform_oauth::FluxoPendente,
+        agora_unix: u64,
     ) -> Result<(), galaxie_platform_oauth::ErroArmazem> {
         self.armazem
             .lock()
             .expect("armazém OAuth não deve estar envenenado")
-            .iniciar(state, fluxo)
+            .iniciar(state, fluxo, agora_unix)
     }
 
     /// Consome o `state` (chamado pelo callback, fatia C): uso único atômico + prazo + amarra. Exposto

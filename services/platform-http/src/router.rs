@@ -33,6 +33,9 @@ use galaxie_platform_oauth::{
     iniciar_fluxo, uid_deterministico, verificar_id_token, AmarraNavegador, ErroAutorizacao, Estado,
     ErroVerificacao, InicioFluxo, Provedor,
 };
+// `ErroArmazem` nu (acima, linha 24) é o do PERFIL/org (platform-identity); o do fluxo OAuth é outro
+// enum (tem `Cheio`), por isso entra ALIASED pra não colidir nem confundir os dois domínios.
+use galaxie_platform_oauth::ErroArmazem as ErroArmazemOAuth;
 
 use crate::erro::{resposta_de_erro, resposta_de_falha, Visibilidade};
 use crate::oauth_troca::ErroExchange;
@@ -135,12 +138,13 @@ async fn iniciar_auth(State(estado): State<EstadoBorda>, Path(provedor): Path<St
     };
     // A DECISÃO (pura): PKCE+state+amarra + URL de autorização segura. `Err` = redirect NOSSO fora da
     // NOSSA allowlist = bug de config ⇒ 500 (nunca redireciona), não um 404 de auth.
+    let agora = (estado.agora)();
     let InicioFluxo { state, fluxo, amarra, url_autorizacao } = match iniciar_fluxo(
         provedor,
         &cfg.client_id,
         &cfg.redirect_uri,
         oauth.allowlist(),
-        (estado.agora)(),
+        agora,
         oauth.ttl_fluxo_seg(),
     ) {
         Ok(inicio) => inicio,
@@ -148,9 +152,20 @@ async fn iniciar_auth(State(estado): State<EstadoBorda>, Path(provedor): Path<St
             return resposta_de_falha(Visibilidade::Visivel)
         }
     };
-    // GRAVA o fluxo (uso único no callback). Queda de infra ⇒ 500 visível, distinta do 404 de auth.
-    if oauth.iniciar(state, fluxo).is_err() {
-        return resposta_de_falha(Visibilidade::Visivel);
+    // GRAVA o fluxo (uso único no callback), passando `agora` pra evicção + gate de capacidade (fatia
+    // 5). Os dois Err viram a MESMA falha visível 5xx (ambos são "o login não começou, culpa nossa" —
+    // não se distingue no fio), mas o LOG separa: `Cheio` = transbordo (fail-closed), `Indisponivel` =
+    // infra fora. Assim o descarte por limite é OBSERVÁVEL sem alargar a superfície HTTP.
+    match oauth.iniciar(state, fluxo, agora) {
+        Ok(()) => {}
+        Err(ErroArmazemOAuth::Cheio) => {
+            tracing::warn!("[oauth /auth] teto de fluxos em curso atingido — recusando iniciar (fail-closed)");
+            return resposta_de_falha(Visibilidade::Visivel);
+        }
+        Err(ErroArmazemOAuth::Indisponivel) => {
+            tracing::warn!("[oauth /auth] armazém de fluxo indisponível");
+            return resposta_de_falha(Visibilidade::Visivel);
+        }
     }
     // Cookie curto de amarra (o callback confere que foi ESTE browser) + 302 pro provedor.
     let cookie = montar_cookie_amarra_oauth(&amarra.0, oauth.ttl_fluxo_seg());
@@ -1547,7 +1562,7 @@ mod tests {
         use galaxie_platform_oauth::{AmarraNavegador, ArmazemEstadoOAuth, ErroArmazem, Estado, FluxoPendente};
         struct ArmazemQuebrado;
         impl ArmazemEstadoOAuth for ArmazemQuebrado {
-            fn iniciar(&mut self, _s: Estado, _f: FluxoPendente) -> Result<(), ErroArmazem> {
+            fn iniciar(&mut self, _s: Estado, _f: FluxoPendente, _agora: u64) -> Result<(), ErroArmazem> {
                 Err(ErroArmazem::Indisponivel)
             }
             fn consumir(
