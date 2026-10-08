@@ -296,6 +296,10 @@ enum RuntimeCommand {
     Signal(SignalMessage),
     Input(InputEvent),
     End { reason: String },
+    /// #1527 A-2: credencial TURN nova (do `remote_session_renew_ice`, disparado pelo
+    /// evento `RenewIceNeeded`). O loop da sessao faz o Allocate NOVO sobrepondo + troca
+    /// o data-path — precisa correr na thread do loop (que detem o `socket`).
+    RenewIce { ice_servers: Vec<IceServer> },
 }
 
 /// #1130 fatia 3: estado do relay TURN alocado, pra servir o data-path. Só existe se
@@ -518,35 +522,26 @@ pub fn remote_session_signal(
 /// #1527 fatia B (seam com o #1148-B do Pollux): o FE devolve aqui a credencial TURN nova
 /// (depois de a buscar no signaling, disparado pelo evento `RenewIceNeeded`).
 ///
-/// STUB por ora: valida a sessao e RECEBE, mas o APPLY completo (Allocate NOVO sobrepondo +
-/// troca do data-path + rearme do `reemitir_em`) e a fatia A-2 (str0m). Registrar o comando
-/// fecha o contrato-tauri (#1033) e destrava o #1704 do Pollux; o loop so COMPLETA com o A-2.
-/// Aceita (Ok) pra o FE nao ver erro, e loga que o apply esta pendente — nao finge renovar.
+/// A-2 (str0m apply): ROTEIA a credencial nova pro loop da sessao via `RuntimeCommand::RenewIce`
+/// — o apply real (Allocate NOVO sobrepondo + troca do data-path + rearme do `reemitir_em`) corre
+/// na thread do loop, que detem o `socket`. O `iceServers` segue na shape do `transport::IceServer`
+/// (com `ttl_seconds`), a MESMA do start.
 ///
-/// `async` (guard #1070: comando Tauri e async, salvo ALLOW-list — e a lista so encolhe). O
-/// corpo e trivial (lock + log, SEM await), entao o `MutexGuard` nao cruza ponto de suspensao
-/// (a future fica Send); quando o A-2 trouxer o Allocate/apply, o trabalho pesado sai por
-/// `spawn_blocking` como no `remote_session_end`.
+/// `async` (guard #1070: comando Tauri e async, salvo ALLOW-list). O corpo e trivial (um
+/// `try_send` sincrono, SEM await), entao a future fica Send; o trabalho pesado (Allocate) corre
+/// no loop, nao na thread do IPC.
 #[tauri::command]
 pub async fn remote_session_renew_ice(
     request: RemoteSessionRenewIceRequest,
     runtime: tauri::State<'_, RemoteRuntime>,
 ) -> Result<(), RemoteError> {
-    let active = runtime
-        .active
-        .lock()
-        .map_err(|_| RemoteError::ChannelClosed)?;
-    let session = active.as_ref().ok_or(RemoteError::SessionNotFound)?;
-    if session.session_id != request.session_id {
-        return Err(RemoteError::SessionNotFound);
-    }
-    log::warn!(
-        "[remote] #1527: remote_session_renew_ice recebido ({} IceServer(s)) — APPLY PENDENTE \
-         (fatia A-2: Allocate sobrepondo + rearme do reemitir_em). Credencial NAO reaplicada \
-         ainda; segredo NAO logado.",
-        request.ice_servers.len()
-    );
-    Ok(())
+    send_to_session(
+        &runtime,
+        &request.session_id,
+        RuntimeCommand::RenewIce {
+            ice_servers: request.ice_servers,
+        },
+    )
 }
 
 #[tauri::command]
@@ -913,6 +908,9 @@ impl RuntimeSession {
             match self.commands.recv_timeout(NETWORK_TICK) {
                 Ok(RuntimeCommand::Signal(signal)) => self.apply_signal(signal)?,
                 Ok(RuntimeCommand::Input(event)) => self.send_input(event)?,
+                Ok(RuntimeCommand::RenewIce { ice_servers }) => {
+                    self.aplicar_renew_ice(&ice_servers)?
+                }
                 Ok(RuntimeCommand::End { reason }) => {
                     self.emit_terminal(None, Some(sanitize_reason(reason)));
                     return Ok(());
@@ -928,6 +926,9 @@ impl RuntimeSession {
                 match command {
                     RuntimeCommand::Signal(signal) => self.apply_signal(signal)?,
                     RuntimeCommand::Input(event) => self.send_input(event)?,
+                    RuntimeCommand::RenewIce { ice_servers } => {
+                        self.aplicar_renew_ice(&ice_servers)?
+                    }
                     RuntimeCommand::End { reason } => {
                         self.emit_terminal(None, Some(sanitize_reason(reason)));
                         return Ok(());
@@ -1119,6 +1120,58 @@ impl RuntimeSession {
             relay.lifetime_s = lifetime;
             relay.refresh_em = Instant::now() + intervalo_refresh(lifetime);
         }
+    }
+
+    /// #1527 A-2: aplica a credencial TURN NOVA (roteada do `remote_session_renew_ice` via
+    /// `RuntimeCommand::RenewIce`). Faz o Allocate NOVO SOBREPONDO (mesmo socket, credencial
+    /// fresca), anuncia o candidato relay novo (trickle → ICE restart: o peer migra) e TROCA
+    /// o data-path (`self.relay`) pra a alocação nova.
+    ///
+    /// Invariantes:
+    /// - **rearme** do `reemitir_em`: o `gather_relay` recomputa-o do `ttl_seconds` novo —
+    ///   sem rearme, a 2ª reemissão nunca dispararia (o requisito do Altair, review do #1700).
+    /// - **overlap (AC1/AC2 "dados continuam passando")**: anuncia o relay novo ANTES da troca
+    ///   e NÃO libera a alocação antiga explícito — paramos de a refrescar e ela expira no
+    ///   lifetime dela, então o caminho antigo sobrevive na coturn enquanto o ICE valida o novo.
+    /// - **permissões**: o relay novo nasce com `permitidos` vazio; re-instalam LAZY no 1º
+    ///   envio a cada peer (`enviar_datagrama`), sem migração manual.
+    ///
+    /// Falha de alocação NÃO é fatal: mantém o relay antigo (ainda serve até o TTL) e GRITA —
+    /// sem reaplicar, a sessão cai quando a credencial antiga morrer.
+    fn aplicar_renew_ice(&mut self, ice_servers: &[IceServer]) -> Result<(), RemoteError> {
+        for (turn_server, username, credential, ttl_seconds) in &resolver_turn_alvos(ice_servers) {
+            let Some(novo) =
+                gather_relay(&self.socket, *turn_server, username, credential, *ttl_seconds)
+            else {
+                continue;
+            };
+            let relayed_novo = novo.relayed;
+            // Anuncia o candidato relay novo ANTES da troca (overlap: o antigo ainda serve).
+            self.transport
+                .candidato_relay(relayed_novo)
+                .map_err(transport_error)?;
+            self.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_relay_sdp(relayed_novo)
+                        .map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+            // Troca o data-path: a partir daqui `enviar_datagrama`/`receive_udp` usam o relay
+            // NOVO; o antigo (dropado) para de ser refrescado e expira no lifetime (overlap).
+            self.relay = Some(novo);
+            log::info!(
+                "[remote] #1527 A-2: credencial TURN REAPLICADA — relay novo alocado \
+                 (relayed={relayed_novo}), data-path trocado, reemitir_em rearmado; a alocacao \
+                 antiga expira no lifetime (overlap). segredo NAO logado."
+            );
+            return Ok(());
+        }
+        log::warn!(
+            "[remote] #1527 A-2: renovacao da credencial TURN FALHOU (nenhum IceServer alocou) \
+             — relay antigo mantido; a sessao vai cair quando a credencial expirar. segredo NAO logado."
+        );
+        Ok(())
     }
 
     /// #1130 fatia 3c: mantém a alocação e as permissões do relay VIVAS ("não cai").
