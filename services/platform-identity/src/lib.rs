@@ -264,6 +264,22 @@ pub enum Operacao {
     ConfigurarAppDaOrg { alvo: OrgId },
     /// Back-office: provisionar/suspender orgs (só staff — fora de banda).
     ProvisionarOrg,
+
+    // --- #1683: contrato de config do Remote. TRÊS superfícies, donos DIFERENTES (o perigo aponta em
+    // direções opostas — ver o design do @Altair). `device` = do UTILIZADOR (`/me`); `access` e
+    // `session-policy` = da ORG (`OrgAdmin`). NÃO conflar num eixo só. ---
+    /// Configurar o PRÓPRIO device do Remote (matrícula/capabilities da máquina do utilizador).
+    /// **Self-scoped (`/me`)** — o escopo vem da SESSÃO, nunca de um id no payload; qualquer principal
+    /// autenticado o faz sobre o SEU device (org ou não). ⚠️ NÃO derivar de `org()`: um `SemVinculo`
+    /// (federado sem org) perderia o próprio device em silêncio.
+    ConfigurarProprioDispositivo,
+    /// Gerir o acesso remoto DA ORG — quem controla quem (org-scoped, `OrgAdmin`). ⚠️ Se fosse `/me`,
+    /// um utilizador conceder-se-ia controlo LATERAL sobre um colega. A suspensão da org é gate à parte,
+    /// lida do armazém no ato (o `autorizar` é puro) — ver o border.
+    GerirAcessoRemotoDaOrg { alvo: OrgId },
+    /// Definir a política de sessão da org — os tetos (org-scoped, `OrgAdmin`). Mesmo dono/eixo do
+    /// `GerirAcessoRemotoDaOrg`; separado porque é uma operação distinta que o painel do #1472 expõe.
+    DefinirPoliticaDeSessao { alvo: OrgId },
 }
 
 /// Resultado de uma decisão de autorização. Sem terceiro estado: ou permite, ou nega.
@@ -308,6 +324,25 @@ pub fn autorizar(sessao: &Sessao, op: &Operacao) -> Decisao {
         // fronteira staff↔cliente no tipo (regra 3 / AC2).
         Operacao::ProvisionarOrg => {
             if principal.eh_staff() {
+                Decisao::Permitido
+            } else {
+                Decisao::Negado
+            }
+        }
+
+        // #1683 device: SELF-scoped. Qualquer principal AUTENTICADO configura o PRÓPRIO device — o
+        // escopo é `/me` (vem da sessão), não um id no payload. **NÃO deriva de `org()`**: senão o
+        // `SemVinculo` (federado sem org) perderia o device em silêncio (dep do @Altair, fatia 4).
+        Operacao::ConfigurarProprioDispositivo => Decisao::Permitido,
+
+        // #1683 access/session-policy: ORG-scoped, `OrgAdmin` da PRÓPRIA org-alvo + org no escopo da
+        // sessão. MESMA forma do `GerirOrg` (papel + escopo + pertencimento). Um `Member` NÃO alcança
+        // (seria controlo lateral); `SemVinculo`/`Staff` também não (sem org = 404 no border). A
+        // suspensão da org é gate à parte (lida do armazém no ato) — o `autorizar` é puro.
+        Operacao::GerirAcessoRemotoDaOrg { alvo } | Operacao::DefinirPoliticaDeSessao { alvo } => {
+            let eh_admin_da_alvo =
+                matches!(principal, Principal::AdminOrg { org, .. } if org == alvo);
+            if eh_admin_da_alvo && sessao.escopo().contem(alvo) {
                 Decisao::Permitido
             } else {
                 Decisao::Negado
@@ -492,15 +527,65 @@ mod tests {
         assert_eq!(autorizar(&membro_s, &Operacao::VerProprioPerfil), Decisao::Permitido);
     }
 
+    #[test]
+    fn remote_device_e_de_qualquer_principal_autenticado() {
+        // #1683 AC4 (metade `device`): self-scoped (`/me`) — member, admin, staff E semvinculo
+        // configuram o PRÓPRIO device. NÃO deriva de `org()`, então o `SemVinculo` não perde o device.
+        let esc = Escopo::de_orgs([OrgId("orgA".into())]);
+        let principais = [
+            admin("u1", "orgA"),
+            membro("u2", "orgA"),
+            staff("s1"),
+            Principal::SemVinculo { usuario: UserId("f1".into()) },
+        ];
+        for p in principais {
+            let s = Sessao::estabelecer(p.clone(), esc.clone());
+            assert_eq!(
+                autorizar(&s, &Operacao::ConfigurarProprioDispositivo),
+                Decisao::Permitido,
+                "device é /me p/ {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_org_exige_admin_da_propria_org_no_escopo() {
+        // #1683 AC4 (metade `access`/`session-policy`): org-scoped, só `OrgAdmin` da PRÓPRIA org no
+        // escopo. As DUAS direções do erro: um `Member` NÃO concede acesso a colega (lateral), e um
+        // admin de OUTRA org não alcança. `SemVinculo` (sem org) = negado (404 no border).
+        let admin_a = Sessao::estabelecer(admin("u1", "orgA"), Escopo::de_orgs([OrgId("orgA".into())]));
+        let membro_a = Sessao::estabelecer(membro("u2", "orgA"), Escopo::de_orgs([OrgId("orgA".into())]));
+        let admin_b = Sessao::estabelecer(admin("u3", "orgB"), Escopo::de_orgs([OrgId("orgB".into())]));
+        let semvinc = Sessao::estabelecer(
+            Principal::SemVinculo { usuario: UserId("f1".into()) },
+            Escopo::vazio(),
+        );
+        let alvo = OrgId("orgA".into());
+        for op in [
+            Operacao::GerirAcessoRemotoDaOrg { alvo: alvo.clone() },
+            Operacao::DefinirPoliticaDeSessao { alvo: alvo.clone() },
+        ] {
+            assert_eq!(autorizar(&admin_a, &op), Decisao::Permitido, "admin da própria org: {op:?}");
+            assert_eq!(autorizar(&membro_a, &op), Decisao::Negado, "member não alcança (lateral): {op:?}");
+            assert_eq!(autorizar(&admin_b, &op), Decisao::Negado, "admin de outra org: {op:?}");
+            assert_eq!(autorizar(&semvinc, &op), Decisao::Negado, "semvinculo sem org: {op:?}");
+        }
+    }
+
     /// O ÚNICO conjunto de operações que um `SemVinculo` pode fazer — todas self-scoped (`/me`).
     /// Acrescentar aqui = dar capacidade a quem não tem org ⇒ revisão de autz. Nenhuma org-scoped entra.
     fn permitido_sem_vinculo(op: &Operacao) -> bool {
         match op {
             // `match` EXAUSTIVO: uma `Operacao` nova OBRIGA a decidir aqui pela `SemVinculo`.
             Operacao::VerProprioPerfil => true,
+            // #1683: o device é do PRÓPRIO utilizador — tenha ou não org (dep do @Altair). Self-scoped.
+            Operacao::ConfigurarProprioDispositivo => true,
             Operacao::GerirOrg { .. }
             | Operacao::ConfigurarAppDaOrg { .. }
-            | Operacao::ProvisionarOrg => false,
+            | Operacao::ProvisionarOrg
+            // #1683 org-scoped: sem org, é o mesmo 404 de inexistente.
+            | Operacao::GerirAcessoRemotoDaOrg { .. }
+            | Operacao::DefinirPoliticaDeSessao { .. } => false,
         }
     }
 
@@ -518,13 +603,16 @@ mod tests {
         // domínio sem ninguém a adicionar aqui, e o teste passaria cego. `indice` é EXAUSTIVO (variante
         // nova ⇒ braço novo, falha de compilação), `N_OPERACOES` conta-as, e `vistos` no fim EXIGE que
         // `todas` toque cada índice. Assim esquecer de listar a operação nova FALHA o teste, não o cala.
-        const N_OPERACOES: usize = 4;
+        const N_OPERACOES: usize = 7;
         fn indice(op: &Operacao) -> usize {
             match op {
                 Operacao::VerProprioPerfil => 0,
                 Operacao::GerirOrg { .. } => 1,
                 Operacao::ConfigurarAppDaOrg { .. } => 2,
                 Operacao::ProvisionarOrg => 3,
+                Operacao::ConfigurarProprioDispositivo => 4,
+                Operacao::GerirAcessoRemotoDaOrg { .. } => 5,
+                Operacao::DefinirPoliticaDeSessao { .. } => 6,
             }
         }
         let todas = [
@@ -532,6 +620,9 @@ mod tests {
             Operacao::GerirOrg { alvo: OrgId("orgA".into()) },
             Operacao::ConfigurarAppDaOrg { alvo: OrgId("orgA".into()) },
             Operacao::ProvisionarOrg,
+            Operacao::ConfigurarProprioDispositivo,
+            Operacao::GerirAcessoRemotoDaOrg { alvo: OrgId("orgA".into()) },
+            Operacao::DefinirPoliticaDeSessao { alvo: OrgId("orgA".into()) },
         ];
         let mut vistos = [false; N_OPERACOES];
         for op in &todas {
