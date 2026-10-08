@@ -113,6 +113,15 @@ impl EstadoOAuth {
         crate::oauth_troca::postar_troca(&self.cliente, &provedor.endpoint_token(), corpo).await
     }
 
+    /// Busca o JWKS do provedor (chaves pra verificar o id_token, fatia 4) pelo mesmo cliente
+    /// disciplinado. Encapsula o cliente + o endpoint; o handler não toca no reqwest.
+    pub async fn buscar_jwks(
+        &self,
+        provedor: Provedor,
+    ) -> Result<galaxie_platform_oauth::Jwks, crate::oauth_troca::ErroExchange> {
+        crate::oauth_troca::buscar_jwks(&self.cliente, &provedor.endpoint_jwks()).await
+    }
+
     /// A config do provedor, se ele estiver LIGADO. `None` ⇒ o handler devolve o 404 uniforme (não
     /// revela se o slug é desconhecido ou só não-configurado). `match` EXAUSTIVO: provedor novo OBRIGA
     /// a mapear o seu campo — não herda um default.
@@ -175,6 +184,13 @@ pub const NOME_COOKIE_AMARRA_OAUTH: &str = "__Host-gx_oauth";
 /// amarra exatamente no retorno e o fluxo nunca fecharia. Mesma política do cookie de sessão.
 pub fn montar_cookie_amarra_oauth(amarra: &str, max_age_seg: u64) -> String {
     format!("{NOME_COOKIE_AMARRA_OAUTH}={amarra}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={max_age_seg}")
+}
+
+/// Expurga o cookie de amarra (`Max-Age=0`) — o callback (fatia 4) limpa-o no cliente ao fechar o
+/// fluxo (sucesso OU falha): o `state` já foi queimado server-side; o cookie não deve sobrar.
+#[must_use]
+pub fn montar_cookie_amarra_expurgo() -> String {
+    format!("{NOME_COOKIE_AMARRA_OAUTH}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0")
 }
 
 /// Estado compartilhado da borda.

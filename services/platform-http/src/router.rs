@@ -10,29 +10,36 @@
 //! rotas OAuth. O corpo de sucesso do back-office é `[]` até a fatia de persistência (ver o handler).
 
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
-use galaxie_platform_conta::usuario_da_sessao;
+use galaxie_platform_conta::{usuario_da_sessao, PerfilDoProvedor};
 use galaxie_platform_config::{
     autorizar_escrita_pref, configs_do_usuario, item_da_forma, ConfigErro, ConfigItem,
 };
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro, MutacaoMembro};
 use galaxie_platform_identity::sessao::ArmazemSessao;
-use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, Sessao, UserId};
+use galaxie_platform_identity::{Escopo, EstadoOrg, OrgId, Papel, Principal, Sessao, UserId};
 use galaxie_platform_org_admin::{
     auditar_guarda_orfa, autorizar_acao_admin, AcaoAdminOrg, AdminErro,
 };
 use galaxie_platform_web::contrato::CodigoErro;
-use galaxie_platform_web::encerrar_sessoes_do_cookie;
-use galaxie_platform_oauth::{iniciar_fluxo, ErroAutorizacao, InicioFluxo, Provedor};
+use galaxie_platform_web::{emitir_sessao, encerrar_sessoes_do_cookie};
+use galaxie_platform_oauth::{
+    iniciar_fluxo, uid_deterministico, verificar_id_token, AmarraNavegador, ErroAutorizacao, Estado,
+    ErroVerificacao, InicioFluxo, Provedor,
+};
 
 use crate::erro::{resposta_de_erro, resposta_de_falha, Visibilidade};
-use crate::sessao::{montar_cookie_amarra_oauth, EstadoBorda, SessaoAtual, SessaoOculta};
+use crate::oauth_troca::ErroExchange;
+use crate::sessao::{
+    montar_cookie_amarra_expurgo, montar_cookie_amarra_oauth, EstadoBorda, SessaoAtual, SessaoOculta,
+    NOME_COOKIE_AMARRA_OAUTH,
+};
 
 /// Fallback do `Router` — a peça que o @Altair **travou** para a fatia 2. Sem ele, uma rota
 /// inexistente cai no fallback PADRÃO do axum (corpo vazio, sem content-type) ≠ o meu 404 de
@@ -151,6 +158,179 @@ async fn iniciar_auth(State(estado): State<EstadoBorda>, Path(provedor): Path<St
         .status(StatusCode::FOUND)
         .header(header::LOCATION, url_autorizacao)
         .header(header::SET_COOKIE, cookie)
+        .body(Body::empty())
+        .expect("resposta 302 é sempre construível")
+}
+
+/// Query params do callback OAuth. Todos `Option`: o provedor pode voltar com `?error=` (sem `code`),
+/// e um callback malformado NÃO deve ser 400 (vira falha de login uniforme, não um oráculo).
+#[derive(serde::Deserialize)]
+struct ParamsCallback {
+    code: Option<String>,
+    state: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// Extrai o valor de um cookie `nome=valor` do header `Cookie` (split `;` → `=`). O valor da amarra é
+/// base64url (sem `;`/`=` internos). Espelha o `candidatos_sessao` do platform-web.
+fn valor_cookie(header_cookie: &str, nome: &str) -> Option<String> {
+    header_cookie.split(';').find_map(|par| {
+        let (k, v) = par.trim().split_once('=')?;
+        (k == nome).then(|| v.to_string())
+    })
+}
+
+/// A falha de login UNIFORME no fio (anti-oráculo — @Altair): TODA falha (state inválido, provedor
+/// recusou, rede, assinatura, claim, infra) devolve a MESMA resposta — 302 pro app SEM cookie de
+/// sessão + expurgo da amarra. O browser não distingue "recusou" de "rede" de "inválido"; a distinção
+/// vive só no LOG (infra loga `warn`).
+fn falha_login() -> Response {
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, "/")
+        .header(header::SET_COOKIE, montar_cookie_amarra_expurgo())
+        .body(Body::empty())
+        .expect("resposta 302 é sempre construível")
+}
+
+/// `GET /api/v1/auth/{provedor}/callback` — FECHA o login federado (fatia 4). Consome o fluxo (uso
+/// único), troca o `code` por token, VERIFICA o id_token (JWKS/RS256), resolve o `UserId`
+/// determinístico, garante o perfil e NASCE a sessão (`SemVinculo`, escopo vazio). Substitui a
+/// semeadura do dev-server (o perfil/sessão reais nascem AQUI).
+///
+/// 🔒 **Anti-oráculo:** toda falha → [`falha_login`] (idêntica). **Ordem (@Altair): perfil ANTES da
+/// sessão** — perfil falhou ⇒ NÃO nasce sessão (senão `/me` alarma sessão-sem-perfil, o 500 de
+/// inconsistência). `code`/`client_secret` nunca logados; a troca é server-side sobre TLS.
+async fn callback(
+    State(estado): State<EstadoBorda>,
+    Path(provedor): Path<String>,
+    headers: HeaderMap,
+    Query(params): Query<ParamsCallback>,
+) -> Response {
+    // OAuth ligado? / provedor conhecido? → senão a rota "não existe" (404, não enumera).
+    let Some(oauth) = estado.oauth.as_ref() else {
+        return resposta_de_erro(CodigoErro::NaoEncontrado);
+    };
+    let Some(prov) = Provedor::da_rota(&provedor) else {
+        return resposta_de_erro(CodigoErro::NaoEncontrado);
+    };
+    // Provedor recusou (`?error=`) ou faltam `code`/`state` → falha de login uniforme.
+    if params.error.is_some() {
+        return falha_login();
+    }
+    let (Some(code), Some(state)) = (params.code, params.state) else {
+        return falha_login();
+    };
+    // Amarra: o cookie curto que o /auth setou. Ausente → falha (não foi ESTE browser que começou).
+    let header_cookie = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let Some(amarra) = valor_cookie(header_cookie, NOME_COOKIE_AMARRA_OAUTH) else {
+        return falha_login();
+    };
+
+    let agora = (estado.agora)();
+    // Consome o fluxo (uso único atômico): só segue se state+amarra+prazo conferem.
+    let fluxo = match oauth.consumir(&Estado(state), &AmarraNavegador(amarra), agora) {
+        Ok(Some(f)) => f,
+        Ok(None) => return falha_login(), // inexistente/vencido/amarra errada
+        Err(_) => {
+            tracing::warn!("[oauth callback] armazém de fluxo indisponível");
+            return falha_login();
+        }
+    };
+    // O provedor da ROTA tem de bater o do FLUXO (o fluxo é a verdade: foi ele quem iniciou).
+    if fluxo.provedor != prov {
+        return falha_login();
+    }
+    let Some(cfg) = oauth.config_de(fluxo.provedor) else {
+        return resposta_de_erro(CodigoErro::NaoEncontrado);
+    };
+
+    // Troca `code`→id_token (server-side, TLS). Rede OU recusa → falha uniforme (distinção só no log).
+    let id_token = match oauth.trocar_codigo(fluxo.provedor, &code, &fluxo.verificador_pkce).await {
+        Ok(t) => t,
+        Err(ErroExchange::Rede) => {
+            tracing::warn!("[oauth callback] troca code→token: falha de rede");
+            return falha_login();
+        }
+        Err(ErroExchange::Troca(classe)) => {
+            // O provedor recusou a troca (code expirado/usado, verifier errado, ...). A classe é
+            // o código de erro OAuth do provedor — seguro logar (não é segredo), ajuda o diagnóstico.
+            tracing::warn!(classe = ?classe, "[oauth callback] troca code→token recusada pelo provedor");
+            return falha_login();
+        }
+    };
+    // Busca o JWKS e VERIFICA (assinatura RS256 + claims). Tudo colapsa em falha uniforme; infra loga.
+    let jwks = match oauth.buscar_jwks(fluxo.provedor).await {
+        Ok(j) => j,
+        Err(_) => {
+            tracing::warn!("[oauth callback] JWKS indisponível/inválido");
+            return falha_login();
+        }
+    };
+    // Sem nonce (a fatia B não enviou um — ver `iniciar_fluxo`). O `iss` é derivado POR PROVEDOR
+    // dentro do `verificar_id_token` (Microsoft-org amarra ao `tid` do token) — não vem da config.
+    let id = match verificar_id_token(&id_token, &jwks, fluxo.provedor, &cfg.client_id, None) {
+        Ok(i) => i,
+        Err(ErroVerificacao::JwksInvalido) => {
+            tracing::warn!("[oauth callback] JWKS inválido na verificação");
+            return falha_login();
+        }
+        Err(classe) => {
+            // Assinatura/claim inválidos. A classe é segura logar (enum, sem conteúdo do token).
+            tracing::warn!(classe = ?classe, "[oauth callback] id_token recusado na verificação");
+            return falha_login();
+        }
+    };
+
+    // Identidade interna DETERMINÍSTICA (find-or-create; NUNCA do e-mail — nOAuth).
+    let uid = UserId(uid_deterministico(id.provedor, &id.subject));
+    // Perfil de EXIBIÇÃO do id_token (exibição nunca bloqueia auth; a chave é o subject).
+    let nome = id.nome.clone().or_else(|| id.email_exibicao.clone()).unwrap_or_default();
+    let email = id.email_exibicao.clone().unwrap_or_default();
+    finalizar_login(&estado, uid, nome, email, agora)
+}
+
+/// O desfecho do login após a identidade VERIFICADA: perfil ANTES da sessão, e nasce a sessão
+/// `SemVinculo`. Separado do [`callback`] (que faz o I/O: troca + JWKS) pra ser testável SEM mockar os
+/// endpoints OIDC (que são hardcoded por segurança no `Provedor`). **@Altair ordem:** se o perfil
+/// falhar, NÃO nasce sessão (senão `/me` alarma sessão-sem-perfil — o 500 de inconsistência).
+fn finalizar_login(
+    estado: &EstadoBorda,
+    uid: UserId,
+    nome: String,
+    email: String,
+    agora: u64,
+) -> Response {
+    if estado
+        .perfis
+        .garantir_no_login(&uid, PerfilDoProvedor { nome, email })
+        .is_err()
+    {
+        tracing::warn!("[oauth callback] armazém de perfil indisponível");
+        return falha_login();
+    }
+
+    // Nasce a sessão: federado SEM vínculo a org, escopo VAZIO (capacidade = só o próprio /me).
+    let sessao = Sessao::estabelecer(Principal::SemVinculo { usuario: uid }, Escopo::vazio());
+    let cookie_sessao = {
+        let mut arm = estado
+            .armazem
+            .lock()
+            .expect("armazém de sessão não deve estar envenenado");
+        let (_id, cookie) = emitir_sessao(&mut *arm, sessao, agora);
+        cookie
+    };
+
+    // 302 pro app COM o cookie de sessão + expurgo da amarra (o fluxo fechou).
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, "/")
+        .header(header::SET_COOKIE, cookie_sessao)
+        .header(header::SET_COOKIE, montar_cookie_amarra_expurgo())
         .body(Body::empty())
         .expect("resposta 302 é sempre construível")
 }
@@ -744,6 +924,7 @@ pub fn rotas(estado: EstadoBorda) -> Router {
         )
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
         .route("/api/v1/auth/{provedor}", get(iniciar_auth))
+        .route("/api/v1/auth/{provedor}/callback", get(callback))
         .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
         .with_state(estado)
@@ -1389,6 +1570,138 @@ mod tests {
         );
         let (status, _h, _c) = resposta_crua(estado, "", "/api/v1/auth/microsoft").await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "queda de infra ⇒ 500, não 404/redirect");
+    }
+
+    // --- #1695 fatia 4: GET /api/v1/auth/{provedor}/callback -------------------
+
+    /// Confere a FALHA DE LOGIN UNIFORME (anti-oráculo): 302 pro app, expurga a amarra, SEM sessão.
+    fn e_falha_login(status: StatusCode, headers: &[(String, String)]) {
+        assert_eq!(status, StatusCode::FOUND, "falha de login é 302 pro app");
+        assert_eq!(header_de(headers, "location"), Some("/"), "redireciona pro app");
+        let cookies: Vec<&str> = headers.iter().filter(|(n, _)| n == "set-cookie").map(|(_, v)| v.as_str()).collect();
+        assert!(
+            cookies.iter().any(|c| c.contains(NOME_COOKIE_AMARRA_OAUTH) && c.contains("Max-Age=0")),
+            "expurga a amarra: {cookies:?}"
+        );
+        assert!(
+            !cookies.iter().any(|c| c.contains(NOME_COOKIE_SESSAO)),
+            "NENHUMA sessão numa falha de login: {cookies:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn callback_oauth_desligado_e_404() {
+        let estado = Borda::nova(
+            ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(),
+            sem_dominios(), sem_perfis(), sem_prefs(), sem_registro(),
+        );
+        let (status, ..) = resposta_crua(estado, "", "/api/v1/auth/microsoft/callback?code=c&state=s").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn callback_provedor_desconhecido_e_404() {
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, ..) = resposta_crua(estado, "", "/api/v1/auth/facebook/callback?code=c&state=s").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn callback_erro_do_provedor_e_falha_uniforme() {
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, headers, _) = resposta_crua(estado, "", "/api/v1/auth/microsoft/callback?error=access_denied").await;
+        e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn callback_sem_code_ou_state_e_falha() {
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, headers, _) = resposta_crua(estado, "", "/api/v1/auth/microsoft/callback").await;
+        e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn callback_sem_amarra_e_falha() {
+        // code+state presentes, mas SEM cookie de amarra → falha (não foi ESTE browser que começou).
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, headers, _) = resposta_crua(estado, "", "/api/v1/auth/microsoft/callback?code=c&state=s").await;
+        e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn callback_state_desconhecido_e_falha() {
+        // Amarra presente, mas o `state` nunca foi iniciado → consumir Ok(None) → falha uniforme.
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let cookie = format!("{NOME_COOKIE_AMARRA_OAUTH}=amarra-qualquer");
+        let (status, headers, _) =
+            resposta_crua(estado, &cookie, "/api/v1/auth/microsoft/callback?code=c&state=naoexiste").await;
+        e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn callback_rota_diferente_do_fluxo_e_falha() {
+        // @Altair teste: o `state`+`amarra` são de um fluxo INICIADO em /auth/google, mas o callback
+        // chega na rota /auth/microsoft. O `consumir` ACERTA (state+amarra válidos) → o guard
+        // `fluxo.provedor != prov` é que recusa (o fluxo é a verdade: foi ele quem iniciou). Sem este
+        // guard, um code de uma rota valeria noutra (confusão de provedor). Falha UNIFORME.
+        let estado = borda_oauth(vec![
+            (Provedor::Google, cfg_provedor("google")),
+            (Provedor::Microsoft, cfg_provedor("microsoft")),
+        ]);
+        // Inicia o fluxo em GOOGLE e colhe state (da Location) + amarra (do cookie).
+        let (_s, headers, _c) = resposta_crua(estado.clone(), "", "/api/v1/auth/google").await;
+        let location = header_de(&headers, "location").expect("Location no 302");
+        let state = query_de(location, "state");
+        let set_cookie = header_de(&headers, "set-cookie").expect("Set-Cookie no 302");
+        let amarra = set_cookie
+            .strip_prefix(&format!("{NOME_COOKIE_AMARRA_OAUTH}="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        // Entrega o callback na rota MICROSOFT com o state+amarra do fluxo GOOGLE.
+        let cookie = format!("{NOME_COOKIE_AMARRA_OAUTH}={amarra}");
+        let alvo = format!("/api/v1/auth/microsoft/callback?code=c&state={state}");
+        let (status, headers, _) = resposta_crua(estado, &cookie, &alvo).await;
+        e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn finaliza_login_perfil_ok_cria_sessao() {
+        let estado = Borda::nova(
+            ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(),
+            Arc::new(galaxie_platform_conta::ArmazemPerfilMemoria::novo()), sem_prefs(), sem_registro(),
+        );
+        let uid = UserId("google:sub1".into());
+        let resp = finalizar_login(&estado, uid.clone(), "Ana".into(), "a@x.com".into(), AGORA);
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        let cookies: Vec<String> = resp.headers().get_all(header::SET_COOKIE).iter().map(|v| v.to_str().unwrap().to_string()).collect();
+        assert!(cookies.iter().any(|c| c.contains(NOME_COOKIE_SESSAO)), "sessão criada: {cookies:?}");
+        assert!(estado.perfis.buscar(&uid).unwrap().is_some(), "perfil criado ANTES da sessão");
+    }
+
+    #[tokio::test]
+    async fn finaliza_login_perfil_err_nao_cria_sessao() {
+        // @Altair teste 7: armazém de perfil em Err ⇒ NENHUMA sessão, NENHUM cookie de sessão.
+        struct PerfilQuebrado;
+        impl galaxie_platform_conta::ArmazemPerfil for PerfilQuebrado {
+            fn buscar(&self, _u: &UserId) -> Result<Option<galaxie_platform_conta::Perfil>, ErroArmazem> {
+                Ok(None)
+            }
+            fn garantir_no_login(&self, _u: &UserId, _p: PerfilDoProvedor) -> Result<(), ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+        }
+        let estado = Borda::nova(
+            ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(),
+            Arc::new(PerfilQuebrado), sem_prefs(), sem_registro(),
+        );
+        let resp = finalizar_login(&estado, UserId("google:sub1".into()), "Ana".into(), "a@x.com".into(), AGORA);
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        let cookies: Vec<String> = resp.headers().get_all(header::SET_COOKIE).iter().map(|v| v.to_str().unwrap().to_string()).collect();
+        assert!(!cookies.iter().any(|c| c.contains(NOME_COOKIE_SESSAO)), "NENHUMA sessão quando o perfil falha: {cookies:?}");
+        let arm = estado.armazem.lock().unwrap();
+        assert!(arm.validar(&SessaoId("qualquer".into()), AGORA).is_none(), "armazém de sessão vazio");
     }
 
     /// Borda com o admin `u1` de `orgA` + a org no store (suspensa ou não) + `u1` como membro

@@ -70,6 +70,13 @@ pub enum Principal {
     AdminOrg { usuario: UserId, org: OrgId },
     /// Staff da Galaxie — concedido FORA DE BANDA, sem org cliente. Não é papel de org.
     Staff { usuario: UserId },
+    /// Humano autenticado (login federado) SEM vínculo a nenhuma org — acabou de entrar por OAuth e
+    /// ainda não aceitou convite. **Capacidade: SÓ o próprio `/me`.** ⚠️ NÃO é `Staff` com org vazia:
+    /// a distinção é a regra 3 (o tipo carrega a fronteira). **NUNCA** juntar `Staff { .. } |
+    /// SemVinculo { .. }` num braço que CONCEDE — só em braços que negam/leem. A sessão nasce com
+    /// `Escopo::vazio()`. Aceitar convite (fluxo futuro) muda o principal ⇒ a sessão tem de ser
+    /// RE-ESTABELECIDA (o principal é congelado na sessão: escreve o vínculo → invalida, ordem do #1570).
+    SemVinculo { usuario: UserId },
 }
 
 impl Principal {
@@ -77,7 +84,10 @@ impl Principal {
     pub fn org(&self) -> Option<&OrgId> {
         match self {
             Principal::UsuarioFinal { org, .. } | Principal::AdminOrg { org, .. } => Some(org),
+            // Sem org: staff (fora de banda) e federado-sem-vínculo. Arms SEPARADOS (não concede nada;
+            // só devolve "sem org") — mas explícitos pra a regra 3 não se diluir num join.
             Principal::Staff { .. } => None,
+            Principal::SemVinculo { .. } => None,
         }
     }
 
@@ -88,6 +98,7 @@ impl Principal {
             Principal::UsuarioFinal { .. } => Some(Papel::Member),
             Principal::AdminOrg { .. } => Some(Papel::OrgAdmin),
             Principal::Staff { .. } => None,
+            Principal::SemVinculo { .. } => None,
         }
     }
 
@@ -101,7 +112,8 @@ impl Principal {
         match self {
             Principal::UsuarioFinal { usuario, .. }
             | Principal::AdminOrg { usuario, .. }
-            | Principal::Staff { usuario } => usuario,
+            | Principal::Staff { usuario }
+            | Principal::SemVinculo { usuario } => usuario,
         }
     }
 }
@@ -478,5 +490,55 @@ mod tests {
         assert_eq!(autorizar(&membro_s, &Operacao::ConfigurarAppDaOrg { alvo: OrgId("orgA".into()) }), Decisao::Permitido);
         assert_eq!(autorizar(&staff_s, &Operacao::ProvisionarOrg), Decisao::Permitido);
         assert_eq!(autorizar(&membro_s, &Operacao::VerProprioPerfil), Decisao::Permitido);
+    }
+
+    /// O ÚNICO conjunto de operações que um `SemVinculo` pode fazer — todas self-scoped (`/me`).
+    /// Acrescentar aqui = dar capacidade a quem não tem org ⇒ revisão de autz. Nenhuma org-scoped entra.
+    fn permitido_sem_vinculo(op: &Operacao) -> bool {
+        match op {
+            // `match` EXAUSTIVO: uma `Operacao` nova OBRIGA a decidir aqui pela `SemVinculo`.
+            Operacao::VerProprioPerfil => true,
+            Operacao::GerirOrg { .. }
+            | Operacao::ConfigurarAppDaOrg { .. }
+            | Operacao::ProvisionarOrg => false,
+        }
+    }
+
+    // @Altair (#1695): o `autorizar` faz `match` na OPERAÇÃO, não no principal — então o compilador NÃO
+    // obriga a decidir nada pela variante `SemVinculo` lá. ESTE teste é quem obriga: enumera TODA
+    // `Operacao` contra `permitido_sem_vinculo` (cujo match exaustivo parte se faltar variante). Uma
+    // operação nova que conceda por acessor ao `SemVinculo` sem entrar na lista certa é apanhada aqui.
+    #[test]
+    fn sem_vinculo_so_alcanca_o_self_scoped() {
+        let s = Sessao::estabelecer(
+            Principal::SemVinculo { usuario: UserId("f1".into()) },
+            Escopo::vazio(),
+        );
+        // @Altair: uma LISTA `todas` crua não garante cobertura — uma `Operacao` nova entraria no
+        // domínio sem ninguém a adicionar aqui, e o teste passaria cego. `indice` é EXAUSTIVO (variante
+        // nova ⇒ braço novo, falha de compilação), `N_OPERACOES` conta-as, e `vistos` no fim EXIGE que
+        // `todas` toque cada índice. Assim esquecer de listar a operação nova FALHA o teste, não o cala.
+        const N_OPERACOES: usize = 4;
+        fn indice(op: &Operacao) -> usize {
+            match op {
+                Operacao::VerProprioPerfil => 0,
+                Operacao::GerirOrg { .. } => 1,
+                Operacao::ConfigurarAppDaOrg { .. } => 2,
+                Operacao::ProvisionarOrg => 3,
+            }
+        }
+        let todas = [
+            Operacao::VerProprioPerfil,
+            Operacao::GerirOrg { alvo: OrgId("orgA".into()) },
+            Operacao::ConfigurarAppDaOrg { alvo: OrgId("orgA".into()) },
+            Operacao::ProvisionarOrg,
+        ];
+        let mut vistos = [false; N_OPERACOES];
+        for op in &todas {
+            vistos[indice(op)] = true;
+            let esperado = if permitido_sem_vinculo(op) { Decisao::Permitido } else { Decisao::Negado };
+            assert_eq!(autorizar(&s, op), esperado, "SemVinculo vs {op:?}");
+        }
+        assert!(vistos.iter().all(|&v| v), "toda Operacao tem de ser exercida contra SemVinculo: {vistos:?}");
     }
 }

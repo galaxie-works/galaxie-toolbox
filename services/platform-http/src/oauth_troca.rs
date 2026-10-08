@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use galaxie_platform_oauth::{extrair_id_token, CorpoTroca, ErroTroca};
+use galaxie_platform_oauth::{extrair_id_token, CorpoTroca, ErroTroca, Jwks};
 
 /// Timeout da troca (segundos). Curto: o token-endpoint responde em ~1s; além disto é falha de rede.
 const TIMEOUT_TROCA_SEG: u64 = 10;
@@ -63,6 +63,15 @@ pub async fn postar_troca(
         .map_err(|_| ErroExchange::Rede)?;
     let texto = resp.text().await.map_err(|_| ErroExchange::Rede)?;
     extrair_id_token(&texto).map_err(ErroExchange::Troca)
+}
+
+/// Busca o JWKS (chaves públicas) do provedor pelo MESMO cliente disciplinado (fatia 4 — verificar o
+/// id_token). GET simples; qualquer falha (rede, não-2xx, JSON inválido) vira `Rede` — o callback
+/// trata tudo como falha de login uniforme no fio + log de infra (não distingue pro browser).
+pub async fn buscar_jwks(cliente: &reqwest::Client, url: &str) -> Result<Jwks, ErroExchange> {
+    let resp = cliente.get(url).send().await.map_err(|_| ErroExchange::Rede)?;
+    let texto = resp.text().await.map_err(|_| ErroExchange::Rede)?;
+    Jwks::do_json(&texto).map_err(|_| ErroExchange::Rede)
 }
 
 #[cfg(test)]

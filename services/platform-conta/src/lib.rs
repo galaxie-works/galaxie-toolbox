@@ -32,7 +32,9 @@ pub fn usuario_da_sessao(sessao: &Sessao) -> &UserId {
     match sessao.principal() {
         Principal::UsuarioFinal { usuario, .. }
         | Principal::AdminOrg { usuario, .. }
-        | Principal::Staff { usuario } => usuario,
+        | Principal::Staff { usuario }
+        // Federado sem vínculo: o próprio `/me` é EXATAMENTE a capacidade dele — extrai o uid.
+        | Principal::SemVinculo { usuario } => usuario,
     }
 }
 
@@ -85,6 +87,16 @@ pub struct Perfil {
     pub idioma: Option<String>,
 }
 
+/// Atributos que o PROVEDOR possui — snapshot de exibição vindo do id_token VERIFICADO (desenho do
+/// @Altair). **SEM `idioma` de propósito:** idioma é preferência do UTILIZADOR, e um login não a pode
+/// apagar — o tipo torna o clobber impossível de escrever (um `Perfil` inteiro convidaria a passar
+/// `idioma: None` a cada login).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfilDoProvedor {
+    pub nome: String,
+    pub email: String,
+}
+
 /// Armazém do perfil, indexado pelo `UserId` do dono. `Result` DESDE O DIA 1 (regra do @Altair, já
 /// aplicada aos stores de org): quando o backing real entrar, muda UMA linha na trait, não a
 /// assinatura + todo consumidor. `Ok(None)` = perfil não encontrado (a borda decide o HTTP); `Err`
@@ -92,13 +104,23 @@ pub struct Perfil {
 pub trait ArmazemPerfil {
     /// O perfil do `uid`, se houver. `Ok(None)` = não encontrado; `Err` = armazém indisponível.
     fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem>;
+
+    /// Garante o perfil no login (callback OAuth, fatia 4): **cria se não existe** (`idioma = None`);
+    /// **se existe, atualiza SÓ `nome`/`email` e PRESERVA `idioma`**. Idempotente (re-login re-afirma).
+    /// `&self` com mutação interior (a borda só tem `Arc<dyn …>`); o backing real muda uma linha.
+    /// `Err` = infra fora do ar.
+    ///
+    /// ⚠️ `nome`/`email` são do PROVEDOR. Se nascer edição de nome in-app, este método deixa de poder
+    /// sobrescrever `nome` — revisitar AQUI (ausência declarada com o sítio de quem a retira).
+    fn garantir_no_login(&self, uid: &UserId, p: PerfilDoProvedor) -> Result<(), ErroArmazem>;
 }
 
-/// Primeira impl: em memória. O perfil REAL nasce no callback OAuth (do `userinfo` do provedor —
-/// fatia C); aqui a semeadura é do dev-server, pro FE fiar o e2e antes do login federado.
+/// Primeira impl: em memória. O perfil REAL nasce no callback OAuth (do id_token do provedor —
+/// fatia 4); o dev-server também semeia, pro FE fiar o e2e antes do login federado. `Mutex` porque a
+/// escrita (`garantir_no_login`) é por `&self` (a borda partilha por `Arc`, sem `&mut`).
 #[derive(Debug, Default)]
 pub struct ArmazemPerfilMemoria {
-    perfis: HashMap<String, Perfil>,
+    perfis: std::sync::Mutex<HashMap<String, Perfil>>,
 }
 
 impl ArmazemPerfilMemoria {
@@ -107,15 +129,40 @@ impl ArmazemPerfilMemoria {
         Self::default()
     }
 
-    /// Semeia o perfil de um usuário (dev-server / testes). Em produção, o callback OAuth grava.
+    /// Semeia o perfil de um usuário (dev-server / testes). Em produção, o callback OAuth grava via
+    /// [`ArmazemPerfil::garantir_no_login`]. Mantido `&mut self` por compat com os call sites de seed.
     pub fn inserir(&mut self, uid: UserId, perfil: Perfil) {
-        self.perfis.insert(uid.0, perfil);
+        self.perfis
+            .get_mut()
+            .expect("mutex de perfis não envenenado")
+            .insert(uid.0, perfil);
     }
 }
 
 impl ArmazemPerfil for ArmazemPerfilMemoria {
     fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem> {
-        Ok(self.perfis.get(&uid.0).cloned())
+        Ok(self
+            .perfis
+            .lock()
+            .expect("mutex de perfis não envenenado")
+            .get(&uid.0)
+            .cloned())
+    }
+
+    fn garantir_no_login(&self, uid: &UserId, p: PerfilDoProvedor) -> Result<(), ErroArmazem> {
+        let mut m = self.perfis.lock().expect("mutex de perfis não envenenado");
+        match m.get_mut(&uid.0) {
+            // Já existe: atualiza SÓ nome/email, PRESERVA idioma (preferência do utilizador).
+            Some(perfil) => {
+                perfil.nome = p.nome;
+                perfil.email = p.email;
+            }
+            // Não existe: cria com idioma=None (o utilizador escolhe depois).
+            None => {
+                m.insert(uid.0.clone(), Perfil { nome: p.nome, email: p.email, idioma: None });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -195,6 +242,32 @@ mod tests {
         assert_eq!(
             resolver_conta_propria(&s, Some(&UserId("s2".into()))),
             Err(ContaErro::NaoEncontrado)
+        );
+    }
+
+    // @Altair teste 6: garantir_no_login cria-se-ausente (idioma=None) e PRESERVA idioma se já existe.
+    #[test]
+    fn garantir_no_login_cria_ausente_com_idioma_none() {
+        let arm = ArmazemPerfilMemoria::novo();
+        let uid = UserId("u1".into());
+        arm.garantir_no_login(&uid, PerfilDoProvedor { nome: "Ana".into(), email: "a@x.com".into() }).unwrap();
+        assert_eq!(
+            arm.buscar(&uid).unwrap(),
+            Some(Perfil { nome: "Ana".into(), email: "a@x.com".into(), idioma: None })
+        );
+    }
+
+    #[test]
+    fn garantir_no_login_preserva_idioma_e_atualiza_nome_email() {
+        let mut arm = ArmazemPerfilMemoria::novo();
+        let uid = UserId("u1".into());
+        // Utilizador já tinha perfil com idioma escolhido.
+        arm.inserir(uid.clone(), Perfil { nome: "Ana".into(), email: "a@x.com".into(), idioma: Some("pt-BR".into()) });
+        // 2º login: nome/email mudaram no provedor; idioma PRESERVADO (um login não apaga a língua).
+        arm.garantir_no_login(&uid, PerfilDoProvedor { nome: "Ana Maria".into(), email: "a2@x.com".into() }).unwrap();
+        assert_eq!(
+            arm.buscar(&uid).unwrap(),
+            Some(Perfil { nome: "Ana Maria".into(), email: "a2@x.com".into(), idioma: Some("pt-BR".into()) })
         );
     }
 }
