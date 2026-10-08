@@ -23,9 +23,10 @@ use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria,
 };
 use galaxie_platform_identity::sessao::ArmazemMemoria;
+use galaxie_platform_oauth::{ArmazemMemoria as ArmazemOAuthMemoria, TTL_FLUXO_OAUTH_SEG};
 
 use crate::rotas;
-use crate::sessao::Borda;
+use crate::sessao::{Borda, EstadoOAuth};
 
 /// Relógio de PRODUÇÃO: epoch em segundos do `SystemTime`. A borda recebe `fn() -> u64` porque a
 /// expiração (#1504 absoluto / #1512 ocioso) é time-aware; esta é a fonte real.
@@ -144,7 +145,26 @@ impl Config {
 /// 1 prova o caminho NEGADO (401/404), que não precisa de dado semeado — org inexistente ⇒ 404 com
 /// store vazio. Dado real e caminho permitido vêm nas fatias seguintes (persistência/seed + auth).
 pub async fn serve(config: Config) -> Result<()> {
-    let borda = Borda::nova(
+    // OAuth do COFRE (fatia 5, AC3): lê `client_id`/`redirect_uri` por env + `client_secret` por
+    // `_FILE` (nunca no código). Config PARCIAL de um provedor ⇒ `Err` ⇒ o boot ABORTA (fail-closed,
+    // o `?` propaga). Lista vazia (nada configurado) ⇒ OAuth DESLIGADO = `/auth` é 404, como a fatia 1.
+    let provedores = crate::oauth_config::do_ambiente()?;
+    let oauth = if provedores.is_empty() {
+        tracing::info!("[boot] OAuth DESLIGADO — nenhum provedor configurado no cofre; /auth = 404");
+        None
+    } else {
+        tracing::info!(provedores = provedores.len(), "[boot] OAuth LIGADO");
+        // Armazém de fluxos em memória COM o gate da fatia 5a (limite + evicção na escrita).
+        Some(EstadoOAuth::nova(
+            Box::new(ArmazemOAuthMemoria::novo()),
+            provedores,
+            TTL_FLUXO_OAUTH_SEG,
+        ))
+    };
+    // Um só ponto de montagem (os 9 stores não se duplicam entre "com/sem OAuth"): `montar` recebe o
+    // `Option` que ESTE boot computou. Registro de formas VAZIO em produção: o binário serve o que
+    // EXISTE (mesmo padrão dos stores vazios); o registro real vem da config do PO, não do código.
+    let borda = Borda::montar(
         ArmazemMemoria::novo(),
         agora_unix,
         Arc::new(AuditorLog::novo()),
@@ -153,10 +173,8 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(ArmazemDominioMemoria::novo()),
         Arc::new(ArmazemPerfilMemoria::novo()),
         Arc::new(ArmazemPrefMemoria::novo()),
-        // Registro de formas VAZIO em produção: o binário serve o que EXISTE (mesmo padrão dos stores
-        // vazios). Sem forma semeada, o PATCH cai em 500-por-inconsistência só se a chave passar a
-        // allowlist sem registro — o registro real vem da config do PO, não do código.
         Arc::new(RegistroFormasMemoria::novo()),
+        oauth,
     );
     // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
     servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await

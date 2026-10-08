@@ -291,9 +291,11 @@ impl Borda {
     }
 
     /// O ÚNICO ponto onde o struct da borda é montado (os dois construtores públicos convergem aqui).
-    /// Um campo novo entra em UM lugar, não em cada construtor.
+    /// Um campo novo entra em UM lugar, não em cada construtor. `pub(crate)` para o `serve()` (fatia 5)
+    /// poder passar `oauth: Option` que ELE computa (liga só se o cofre configurou ≥1 provedor), sem
+    /// duplicar os 9 stores em dois ramos nem expor `montar` fora do crate.
     #[allow(clippy::too_many_arguments)]
-    fn montar(
+    pub(crate) fn montar(
         armazem: ArmazemMemoria,
         agora: fn() -> u64,
         auditor: Arc<dyn Auditor + Send + Sync>,

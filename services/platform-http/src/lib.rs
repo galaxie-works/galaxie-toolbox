@@ -13,6 +13,10 @@
 #![forbid(unsafe_code)]
 
 pub mod erro;
+/// Carga da config OAuth do AMBIENTE (#1695 fatia 5): `client_id`/`redirect_uri` por env +
+/// `client_secret` do cofre via `_FILE` (nunca no código). Provedor só liga se completo; parcial
+/// falha no boot (fail-closed).
+pub mod oauth_config;
 /// Cliente HTTP de saída da troca `code`→token (#1695 fatia C): reqwest disciplinado (rustls,
 /// timeout, redirect DESLIGADO). A única chamada de SAÍDA do fluxo.
 pub mod oauth_troca;
