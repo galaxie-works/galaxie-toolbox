@@ -48,8 +48,8 @@ pub fn carregar(
     let mut ligados = Vec::new();
     for provedor in PROVEDORES {
         let pfx = prefixo_env(provedor);
-        let client_id = env(&format!("{pfx}_CLIENT_ID"));
-        let redirect_uri = env(&format!("{pfx}_REDIRECT_URI"));
+        let client_id = ler_var(&env, &format!("{pfx}_CLIENT_ID"));
+        let redirect_uri = ler_var(&env, &format!("{pfx}_REDIRECT_URI"));
         let client_secret = ler_segredo(pfx, &env, &ler_arquivo)?;
 
         match (client_id, client_secret, redirect_uri) {
@@ -57,6 +57,12 @@ pub fn carregar(
             (None, None, None) => {}
             // Config completa — liga. O `client_secret` NUNCA é logado (só viaja pro `CorpoTroca`).
             (Some(client_id), Some(client_secret), Some(redirect_uri)) => {
+                if !redirect_uri_aceitavel(&redirect_uri) {
+                    bail!(
+                        "{pfx}_REDIRECT_URI tem de ser https:// (ou http://localhost p/ o live-QA de \
+                         dev) — recebido: {redirect_uri}"
+                    );
+                }
                 ligados.push((provedor, ConfigProvedor { client_id, redirect_uri, client_secret }));
             }
             // Meio-provedor: fail-closed. Subir com um provedor pela metade é um bug de deploy silencioso.
@@ -69,21 +75,54 @@ pub fn carregar(
     Ok(ligados)
 }
 
+/// Lê uma variável e normaliza "ausente" E "presente mas vazia/só-espaços" para `None` (@Altair review
+/// #1723). Um `${VAR}` em falta num docker-compose expande para `""`, que `env::var().ok()` devolve como
+/// `Some("")`; sem esta normalização cairia no braço "completo" e o provedor ligaria com um campo VAZIO,
+/// rebentando só em runtime — pior que o fail-closed no boot. O valor não-vazio é mantido como veio (não
+/// se apara o miolo).
+fn ler_var(env: &impl Fn(&str) -> Option<String>, chave: &str) -> Option<String> {
+    env(chave).filter(|v| !v.trim().is_empty())
+}
+
+/// `redirect_uri` tem de ser `https://` (prod, atrás do Traefik com TLS) OU `http://localhost` /
+/// `http://127.0.0.1` — a exceção de dev que MS e Google também concedem, e de que o live-QA da fatia 5
+/// precisa (`localhost:8080`). Plain `http://` para qualquer OUTRO host é um downgrade recusado no boot
+/// (@Altair). O host é EXATO: `http://localhost.evil.com` NÃO passa (o resto após o host tem de ser
+/// vazio, `:porta` ou `/caminho`).
+fn redirect_uri_aceitavel(uri: &str) -> bool {
+    if uri.starts_with("https://") {
+        return true;
+    }
+    for host in ["http://localhost", "http://127.0.0.1"] {
+        if let Some(resto) = uri.strip_prefix(host) {
+            if resto.is_empty() || resto.starts_with(':') || resto.starts_with('/') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// O `client_secret`, preferindo `<pfx>_CLIENT_SECRET_FILE` (caminho do cofre — lê o ficheiro e apara
 /// só o `\n`/`\r` final que `docker secret`/`printf` deixam, sem mexer no miolo do segredo) sobre
-/// `<pfx>_CLIENT_SECRET` (valor direto). `Ok(None)` = nenhum dos dois presente. Um `_FILE` que aponta
-/// ficheiro ilegível é `Err` COM contexto — não se mascara em "ausente" (seria fail-open silencioso).
+/// `<pfx>_CLIENT_SECRET` (valor direto). `Ok(None)` = nenhum dos dois presente, OU o `_FILE` tem conteúdo
+/// vazio/só-espaços (normalizado p/ None como as outras vars — cai no fail-closed parcial). Um `_FILE` que
+/// aponta ficheiro ilegível é `Err` COM contexto — não se mascara em "ausente" (seria fail-open silencioso).
 fn ler_segredo(
     pfx: &str,
     env: &impl Fn(&str) -> Option<String>,
     ler_arquivo: &impl Fn(&str) -> std::io::Result<String>,
 ) -> Result<Option<String>> {
-    if let Some(caminho) = env(&format!("{pfx}_CLIENT_SECRET_FILE")) {
+    // O PRÓPRIO caminho do `_FILE` passa pela normalização: `_FILE=""` (compose em falta) ⇒ cai pro valor
+    // direto, não tenta ler um caminho vazio.
+    if let Some(caminho) = ler_var(env, &format!("{pfx}_CLIENT_SECRET_FILE")) {
         let conteudo = ler_arquivo(&caminho)
             .with_context(|| format!("{pfx}_CLIENT_SECRET_FILE: não consegui ler {caminho}"))?;
-        return Ok(Some(conteudo.trim_end_matches(['\n', '\r']).to_string()));
+        let secret = conteudo.trim_end_matches(['\n', '\r']).to_string();
+        // `_FILE` com conteúdo vazio/só-espaços ⇒ None (mesma normalização das vars).
+        return Ok(Some(secret).filter(|s| !s.trim().is_empty()));
     }
-    Ok(env(&format!("{pfx}_CLIENT_SECRET")))
+    Ok(ler_var(env, &format!("{pfx}_CLIENT_SECRET")))
 }
 
 #[cfg(test)]
@@ -210,5 +249,85 @@ mod tests {
         let pfxs: Vec<&str> = PROVEDORES.iter().map(|p| prefixo_env(*p)).collect();
         assert_eq!(pfxs, ["GALAXIE_OAUTH_MICROSOFT", "GALAXIE_OAUTH_MICROSOFT_PERSONAL", "GALAXIE_OAUTH_GOOGLE"]);
         assert!(!prefixo_env(Provedor::MicrosoftPersonal).contains('-'), "sem hífen no nome de env");
+    }
+
+    // --- @Altair review #1723: `env::var().ok()` devolve Some("") p/ var definida-vazia -------------
+
+    #[test]
+    fn var_definida_vazia_e_tratada_como_ausente() {
+        // `${VAR}` em falta no compose vira "" ⇒ Some("") ⇒ SEM a normalização, ligaria com campo vazio.
+        // Aqui os 3 campos vazios ⇒ provedor DESLIGADO (não "completo com vazios", não "parcial").
+        let got = carregar_de(
+            &[
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_ID", ""),
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_SECRET", ""),
+                ("GALAXIE_OAUTH_GOOGLE_REDIRECT_URI", ""),
+            ],
+            &[],
+        )
+        .unwrap();
+        assert!(got.is_empty(), "var vazia = ausente ⇒ provedor desligado, não ligado com vazio");
+    }
+
+    #[test]
+    fn secret_vazio_com_resto_presente_e_parcial_fail_closed() {
+        // client_id + redirect presentes, mas CLIENT_SECRET definido VAZIO ⇒ secret None ⇒ parcial ⇒
+        // boot aborta (fail-closed). Sem a normalização, ligaria com secret "" e só rebentaria em runtime.
+        let msg = erro_de(carregar_de(
+            &[
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_ID", "cid-g"),
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_SECRET", "   "), // só espaços = vazio
+                ("GALAXIE_OAUTH_GOOGLE_REDIRECT_URI", "https://p.example/cb/google"),
+            ],
+            &[],
+        ));
+        assert!(msg.contains("PARCIAL"), "secret só-espaços ⇒ parcial fail-closed: {msg}");
+    }
+
+    #[test]
+    fn secret_file_vazio_e_tratado_como_ausente() {
+        // `_FILE` aponta um ficheiro de conteúdo vazio/só-`\n` ⇒ secret None ⇒ parcial ⇒ fail-closed.
+        let msg = erro_de(carregar_de(
+            &[
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_ID", "cid-g"),
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_SECRET_FILE", "/run/secrets/vazio"),
+                ("GALAXIE_OAUTH_GOOGLE_REDIRECT_URI", "https://p.example/cb/google"),
+            ],
+            &[("/run/secrets/vazio", "\n")],
+        ));
+        assert!(msg.contains("PARCIAL"), "_FILE vazio ⇒ secret ausente ⇒ parcial fail-closed: {msg}");
+    }
+
+    #[test]
+    fn redirect_http_para_host_arbitrario_e_recusado() {
+        // Plain http:// para um host qualquer = downgrade ⇒ boot aborta (fail-closed).
+        let msg = erro_de(carregar_de(
+            &[
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_ID", "cid-g"),
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_SECRET", "seg-g"),
+                ("GALAXIE_OAUTH_GOOGLE_REDIRECT_URI", "http://evil.example/cb"),
+            ],
+            &[],
+        ));
+        assert!(msg.contains("https://"), "http arbitrário recusado: {msg}");
+        // E `localhost.evil.com` NÃO é a exceção de localhost (host exato).
+        assert!(!redirect_uri_aceitavel("http://localhost.evil.com/cb"), "localhost.evil.com não passa");
+    }
+
+    #[test]
+    fn redirect_http_localhost_e_aceite_para_dev() {
+        // A exceção de dev (live-QA em localhost:8080) — MS/Google também a concedem.
+        let got = carregar_de(
+            &[
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_ID", "cid-g"),
+                ("GALAXIE_OAUTH_GOOGLE_CLIENT_SECRET", "seg-g"),
+                ("GALAXIE_OAUTH_GOOGLE_REDIRECT_URI", "http://localhost:8080/api/v1/auth/google/callback"),
+            ],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(got.len(), 1, "http://localhost é aceite pro live-QA de dev");
+        assert!(redirect_uri_aceitavel("http://127.0.0.1:8080/cb"), "127.0.0.1 também");
+        assert!(redirect_uri_aceitavel("https://plat.example/cb"), "https sempre");
     }
 }
