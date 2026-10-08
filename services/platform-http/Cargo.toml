@@ -26,7 +26,7 @@ required-features = ["dev"]
 [dependencies]
 # `tokio` + `http1` habilitam `axum::serve` (o binário sobe o servidor). O TLS de ENTRADA é do
 # Traefik (mesma origem) — nada de OpenSSL aqui. Sem `json`: os corpos são montados à mão / via serde_json.
-axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "query"] }
 # JSON de DADOS (membros têm nome/email de usuário → escaping correto, não hand-roll). Os erros
 # seguem manuais (slugs fixos, sem dado do cliente). DTO na borda; os tipos de domínio ficam serde-free.
 serde = { version = "1.0", features = ["derive"] }

@@ -120,6 +120,21 @@ impl Provedor {
             Provedor::Google => "https://oauth2.googleapis.com/token".to_string(),
         }
     }
+
+    /// O endpoint JWKS do provedor (as chaves públicas pra verificar a assinatura do id_token, fatia
+    /// 4). Microsoft embute a MESMA authority segura (nunca `/common`); Google tem endpoint único.
+    #[must_use]
+    pub fn endpoint_jwks(&self) -> String {
+        match self {
+            Provedor::Microsoft | Provedor::MicrosoftPersonal => {
+                let authority = self
+                    .authority_microsoft()
+                    .expect("provedor Microsoft tem authority");
+                format!("https://login.microsoftonline.com/{authority}/discovery/v2.0/keys")
+            }
+            Provedor::Google => "https://www.googleapis.com/oauth2/v3/certs".to_string(),
+        }
+    }
 }
 
 /// PKCE — **só `S256`** (o `plain` é recusado por TIPO: não existe construtor que o produza). O
@@ -511,18 +526,43 @@ pub fn extrair_id_token(resposta: &str) -> Result<String, ErroTroca> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subject(pub String);
 
-/// A identidade VERIFICADA que sai do id_token (fatia C-3) — o que a borda (fatia 4) usa pra nascer
-/// sessão/perfil. A âncora é `(provedor, subject)` (a ligação de identidade é SEMPRE por aqui, nunca
-/// por e-mail). `email`/`nome` vêm dos claims OIDC (`email`/`name`, do `scope=... email profile`) e são
-/// **conteúdo de perfil, não chave** — `Option` porque nem todo provedor/conta os emite; a borda
-/// decide o fallback. ⚠️ O e-mail aqui NÃO autentica nem liga convite por si — isso exige
-/// [`Provedor::elegivel_para_ligar_convite`] e é fluxo próprio.
+/// Um e-mail cujo domínio o provedor GARANTE verificado — seguro para ligar convite (desenho do
+/// @Altair, guard nOAuth). **Sem construtor público:** só o [`verificar_id_token`] o cria, e só quando
+/// o token PROVA a verificação (Google `email_verified==true` · Microsoft-org `xms_edov==true` ·
+/// MicrosoftPersonal nunca). Assim um e-mail de exibição não-verificado é **impossível de confundir**
+/// com um verificado por acidente de tipo — a porta do ataque nOAuth fica fechada por construção.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmailVerificado(String);
+
+impl EmailVerificado {
+    /// O e-mail verificado (pro fluxo de convite, quando nascer). Leitura só; a garantia está no tipo.
+    #[must_use]
+    pub fn como_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A identidade VERIFICADA que sai do id_token (fatia C) — o que a borda (fatia 4) usa pra nascer
+/// sessão/perfil. A âncora de identidade é **SEMPRE `(provedor, subject)`**, nunca e-mail.
+/// `nome`/`email_exibicao` são conteúdo de PERFIL (exibição/prefill) — `email_exibicao` = `email` ?:
+/// `preferred_username`, e **NUNCA** é chave nem autoriza nada. O e-mail seguro-para-convite é o
+/// [`EmailVerificado`] PRIVADO, exposto só por [`IdentidadeVerificada::email_para_convite`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentidadeVerificada {
     pub provedor: Provedor,
     pub subject: Subject,
-    pub email: Option<String>,
     pub nome: Option<String>,
+    pub email_exibicao: Option<String>,
+    email_convite: Option<EmailVerificado>,
+}
+
+impl IdentidadeVerificada {
+    /// O e-mail SEGURO-para-ligar-convite, se o token provou a verificação do domínio (ver
+    /// [`EmailVerificado`]). `None` = não provado ⇒ o fluxo de convite não pode usar e-mail (fail-closed).
+    #[must_use]
+    pub fn email_para_convite(&self) -> Option<&EmailVerificado> {
+        self.email_convite.as_ref()
+    }
 }
 
 /// Uma chave pública RSA do JWKS do provedor, indexada por `kid`. `n`/`e` são base64url (o formato
@@ -616,11 +656,17 @@ pub fn verificar_id_token(
         sub: String,
         #[serde(default)]
         nonce: Option<String>,
-        // Conteúdo de PERFIL (não chave). `name` é o nome de exibição OIDC; `email` o e-mail do claim.
+        // Conteúdo de PERFIL / sinais de verificação de e-mail (todos opcionais).
+        #[serde(default)]
+        name: Option<String>,
         #[serde(default)]
         email: Option<String>,
         #[serde(default)]
-        name: Option<String>,
+        email_verified: Option<bool>, // Google: prova de domínio verificado
+        #[serde(default)]
+        preferred_username: Option<String>, // fallback de exibição
+        #[serde(default)]
+        xms_edov: Option<bool>, // Microsoft(org): "email domain owner verified" (guard nOAuth)
     }
 
     // O `kid` do header escolhe a chave; o `alg` do header é IGNORADO (a Validation força RS256).
@@ -659,12 +705,45 @@ pub fn verificar_id_token(
         return Err(ErroVerificacao::ClaimInvalido);
     }
 
+    let email = dados.claims.email.filter(|s| !s.is_empty());
+    // Exibição: e-mail, senão `preferred_username`. NUNCA é chave nem autoriza.
+    let email_exibicao = email
+        .clone()
+        .or_else(|| dados.claims.preferred_username.filter(|s| !s.is_empty()));
+    // Convite (guard nOAuth): só com PROVA de verificação do domínio, POR PROVEDOR — fail-closed
+    // (claim ausente ⇒ não-verificado). MicrosoftPersonal nunca (e-mail definido pelo dono).
+    let dominio_verificado = match provedor {
+        Provedor::Google => dados.claims.email_verified == Some(true),
+        Provedor::Microsoft => dados.claims.xms_edov == Some(true),
+        Provedor::MicrosoftPersonal => false,
+    };
+    let email_convite = email.filter(|_| dominio_verificado).map(EmailVerificado);
+
     Ok(IdentidadeVerificada {
         provedor,
         subject: Subject(dados.claims.sub),
-        email: dados.claims.email.filter(|s| !s.is_empty()),
         nome: dados.claims.name.filter(|s| !s.is_empty()),
+        email_exibicao,
+        email_convite,
     })
+}
+
+/// `UserId` DETERMINÍSTICO a partir de `(provedor, subject)` — a identidade interna do humano federado
+/// (find-or-create, decisão do PO). **NUNCA do e-mail** (nOAuth) — só do `subject`, com separação de
+/// domínio por provedor pra dois provedores nunca colidirem. Desenho do @Altair:
+/// `base64url(SHA-256("galaxie.uid.v1" ‖ 0x00 ‖ slug_provedor ‖ 0x00 ‖ subject))`.
+///
+/// ⚠️ Consequência declarada: o MESMO humano no Google e no Microsoft = **2 UserId** até haver ligação
+/// de contas (que exigirá tabela de mapeamento, não hash). A borda envolve o resultado num `UserId`.
+#[must_use]
+pub fn uid_deterministico(provedor: Provedor, subject: &Subject) -> String {
+    let mut h = Sha256::new();
+    h.update(b"galaxie.uid.v1");
+    h.update([0u8]);
+    h.update(provedor.slug().as_bytes());
+    h.update([0u8]);
+    h.update(subject.0.as_bytes());
+    URL_SAFE_NO_PAD.encode(h.finalize())
 }
 
 #[cfg(test)]
@@ -1034,15 +1113,14 @@ mod tests {
             .as_secs()
     }
 
-    /// Assina um id_token de teste (kid = `KID`, RS256). `exp` é epoch absoluto. Inclui sempre
-    /// `email`/`name` (claims de perfil) pra exercer o surfaçar da [`IdentidadeVerificada`].
-    fn assinar(chave: &EncodingKey, sub: &str, iss: &str, aud: &str, exp: u64, nonce: Option<&str>) -> String {
-        let mut claims = serde_json::json!({
-            "sub": sub, "iss": iss, "aud": aud, "exp": exp,
-            "email": "user@example.com", "name": "User Example",
-        });
-        if let Some(n) = nonce {
-            claims["nonce"] = serde_json::json!(n);
+    /// Assina um id_token de teste (kid = `KID`, RS256). `exp` é epoch absoluto. `extra` = claims
+    /// adicionais (nonce/email/email_verified/xms_edov/preferred_username/name) mesclados por teste.
+    fn assinar(chave: &EncodingKey, sub: &str, iss: &str, aud: &str, exp: u64, extra: serde_json::Value) -> String {
+        let mut claims = serde_json::json!({ "sub": sub, "iss": iss, "aud": aud, "exp": exp });
+        if let serde_json::Value::Object(m) = extra {
+            for (k, v) in m {
+                claims[k] = v;
+            }
         }
         let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
         header.kid = Some(KID.to_string());
@@ -1050,15 +1128,18 @@ mod tests {
     }
 
     #[test]
-    fn verifica_id_token_valido_extrai_provedor_e_subject() {
-        let token = assinar(&enc(), "sub-123", ISS, AUD, agora() + 3600, Some("nonce-x"));
+    fn verifica_id_token_valido_extrai_identidade() {
+        let token = assinar(&enc(), "sub-123", ISS, AUD, agora() + 3600,
+            serde_json::json!({ "nonce": "nonce-x", "name": "User Example", "email": "user@example.com" }));
+        // Microsoft sem `xms_edov` → email_convite None (mas email_exibicao presente). Âncora = subject.
         assert_eq!(
             verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, Some("nonce-x")),
             Ok(IdentidadeVerificada {
                 provedor: Provedor::Microsoft,
                 subject: Subject("sub-123".into()),
-                email: Some("user@example.com".into()),
                 nome: Some("User Example".into()),
+                email_exibicao: Some("user@example.com".into()),
+                email_convite: None,
             })
         );
     }
@@ -1070,7 +1151,7 @@ mod tests {
         let outra = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let enc_outra =
             EncodingKey::from_rsa_pem(outra.to_pkcs8_pem(LineEnding::LF).unwrap().as_bytes()).unwrap();
-        let token = assinar(&enc_outra, "s", ISS, AUD, agora() + 3600, None);
+        let token = assinar(&enc_outra, "s", ISS, AUD, agora() + 3600, serde_json::json!({}));
         assert_eq!(
             verificar_id_token(&token, &jwks(), Provedor::Google, ISS, AUD, None),
             Err(ErroVerificacao::AssinaturaInvalida)
@@ -1080,24 +1161,25 @@ mod tests {
     #[test]
     fn verifica_recusa_iss_aud_exp_e_nonce_errados() {
         let j = jwks();
+        let vazio = || serde_json::json!({});
         // iss errado
-        let t = assinar(&enc(), "s", "https://evil.example/v2.0", AUD, agora() + 3600, None);
+        let t = assinar(&enc(), "s", "https://evil.example/v2.0", AUD, agora() + 3600, vazio());
         assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
         // aud (client_id) errado
-        let t = assinar(&enc(), "s", ISS, "outro-client", agora() + 3600, None);
+        let t = assinar(&enc(), "s", ISS, "outro-client", agora() + 3600, vazio());
         assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
         // exp no passado (além da folga de skew)
-        let t = assinar(&enc(), "s", ISS, AUD, agora() - 3600, None);
+        let t = assinar(&enc(), "s", ISS, AUD, agora() - 3600, vazio());
         assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
         // nonce presente mas ≠ o esperado
-        let t = assinar(&enc(), "s", ISS, AUD, agora() + 3600, Some("real"));
+        let t = assinar(&enc(), "s", ISS, AUD, agora() + 3600, serde_json::json!({ "nonce": "real" }));
         assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, Some("esperado")), Err(ErroVerificacao::ClaimInvalido));
     }
 
     #[test]
     fn verifica_recusa_sub_vazio() {
         // @Altair C-3: `sub: String` recusa sub AUSENTE, mas `""` colapsaria identidades → recusa.
-        let token = assinar(&enc(), "", ISS, AUD, agora() + 3600, None);
+        let token = assinar(&enc(), "", ISS, AUD, agora() + 3600, serde_json::json!({}));
         assert_eq!(
             verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, None),
             Err(ErroVerificacao::ClaimInvalido)
@@ -1106,12 +1188,71 @@ mod tests {
 
     #[test]
     fn verifica_recusa_kid_desconhecido() {
-        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600, None);
+        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600, serde_json::json!({}));
         let jwks_vazio = Jwks::do_json(r#"{"keys":[]}"#).unwrap();
         assert_eq!(
             verificar_id_token(&token, &jwks_vazio, Provedor::Microsoft, ISS, AUD, None),
             Err(ErroVerificacao::AssinaturaInvalida)
         );
+    }
+
+    // --- guard nOAuth: email_para_convite só com PROVA de verificação, por provedor (@Altair) ---
+
+    /// Helper: verifica e devolve o email-para-convite como `Option<String>`.
+    fn convite_de(prov: Provedor, extra: serde_json::Value) -> Option<String> {
+        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600, extra);
+        verificar_id_token(&token, &jwks(), prov, ISS, AUD, None)
+            .unwrap()
+            .email_para_convite()
+            .map(|e| e.como_str().to_string())
+    }
+
+    #[test]
+    fn convite_microsoft_personal_nunca() {
+        // Conta pessoal: e-mail definido pelo dono → NUNCA liga convite, mesmo com email presente.
+        assert_eq!(
+            convite_de(Provedor::MicrosoftPersonal, serde_json::json!({ "email": "p@x.com", "xms_edov": true })),
+            None
+        );
+    }
+
+    #[test]
+    fn convite_google_so_com_email_verified() {
+        assert_eq!(convite_de(Provedor::Google, serde_json::json!({ "email": "g@x.com", "email_verified": false })), None);
+        assert_eq!(convite_de(Provedor::Google, serde_json::json!({ "email": "g@x.com" })), None); // claim ausente = fail-closed
+        assert_eq!(
+            convite_de(Provedor::Google, serde_json::json!({ "email": "g@x.com", "email_verified": true })),
+            Some("g@x.com".into())
+        );
+    }
+
+    #[test]
+    fn convite_microsoft_org_so_com_xms_edov() {
+        assert_eq!(convite_de(Provedor::Microsoft, serde_json::json!({ "email": "m@x.com" })), None); // sem xms_edov = fail-closed
+        assert_eq!(
+            convite_de(Provedor::Microsoft, serde_json::json!({ "email": "m@x.com", "xms_edov": true })),
+            Some("m@x.com".into())
+        );
+    }
+
+    #[test]
+    fn email_exibicao_cai_para_preferred_username() {
+        // Sem `email`, a exibição usa `preferred_username`; e convite segue None (não é verificado).
+        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600,
+            serde_json::json!({ "preferred_username": "pu@x.com" }));
+        let id = verificar_id_token(&token, &jwks(), Provedor::Google, ISS, AUD, None).unwrap();
+        assert_eq!(id.email_exibicao, Some("pu@x.com".into()));
+        assert_eq!(id.email_para_convite(), None);
+    }
+
+    #[test]
+    fn uid_deterministico_estavel_e_separa_provedor() {
+        let s = Subject("abc".into());
+        // Estável pro mesmo (provedor, subject); muda com o provedor (2 users até ligação de contas).
+        assert_eq!(uid_deterministico(Provedor::Google, &s), uid_deterministico(Provedor::Google, &s));
+        assert_ne!(uid_deterministico(Provedor::Google, &s), uid_deterministico(Provedor::Microsoft, &s));
+        assert_ne!(uid_deterministico(Provedor::Google, &s), uid_deterministico(Provedor::Google, &Subject("abd".into())));
+        assert!(!uid_deterministico(Provedor::Google, &s).is_empty());
     }
 
     #[test]

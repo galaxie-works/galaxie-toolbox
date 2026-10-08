@@ -396,7 +396,9 @@ fn usuario_da_sessao(sessao: &Sessao) -> &UserId {
     match sessao.principal() {
         Principal::UsuarioFinal { usuario, .. }
         | Principal::AdminOrg { usuario, .. }
-        | Principal::Staff { usuario } => usuario,
+        | Principal::Staff { usuario }
+        // Federado sem vínculo: o próprio `/me/config` é a capacidade dele — extrai o uid.
+        | Principal::SemVinculo { usuario } => usuario,
     }
 }
 

@@ -70,6 +70,13 @@ pub enum Principal {
     AdminOrg { usuario: UserId, org: OrgId },
     /// Staff da Galaxie — concedido FORA DE BANDA, sem org cliente. Não é papel de org.
     Staff { usuario: UserId },
+    /// Humano autenticado (login federado) SEM vínculo a nenhuma org — acabou de entrar por OAuth e
+    /// ainda não aceitou convite. **Capacidade: SÓ o próprio `/me`.** ⚠️ NÃO é `Staff` com org vazia:
+    /// a distinção é a regra 3 (o tipo carrega a fronteira). **NUNCA** juntar `Staff { .. } |
+    /// SemVinculo { .. }` num braço que CONCEDE — só em braços que negam/leem. A sessão nasce com
+    /// `Escopo::vazio()`. Aceitar convite (fluxo futuro) muda o principal ⇒ a sessão tem de ser
+    /// RE-ESTABELECIDA (o principal é congelado na sessão: escreve o vínculo → invalida, ordem do #1570).
+    SemVinculo { usuario: UserId },
 }
 
 impl Principal {
@@ -77,7 +84,10 @@ impl Principal {
     pub fn org(&self) -> Option<&OrgId> {
         match self {
             Principal::UsuarioFinal { org, .. } | Principal::AdminOrg { org, .. } => Some(org),
+            // Sem org: staff (fora de banda) e federado-sem-vínculo. Arms SEPARADOS (não concede nada;
+            // só devolve "sem org") — mas explícitos pra a regra 3 não se diluir num join.
             Principal::Staff { .. } => None,
+            Principal::SemVinculo { .. } => None,
         }
     }
 
@@ -88,6 +98,7 @@ impl Principal {
             Principal::UsuarioFinal { .. } => Some(Papel::Member),
             Principal::AdminOrg { .. } => Some(Papel::OrgAdmin),
             Principal::Staff { .. } => None,
+            Principal::SemVinculo { .. } => None,
         }
     }
 
@@ -101,7 +112,8 @@ impl Principal {
         match self {
             Principal::UsuarioFinal { usuario, .. }
             | Principal::AdminOrg { usuario, .. }
-            | Principal::Staff { usuario } => usuario,
+            | Principal::Staff { usuario }
+            | Principal::SemVinculo { usuario } => usuario,
         }
     }
 }

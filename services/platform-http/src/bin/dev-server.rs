@@ -10,8 +10,12 @@
 //!  1. a semeadura mora AQUI, no bin, nunca na lib (`pub` atrás de `#[cfg(feature)]` seria ligável);
 //!  2. a sessão semeada é COMUM — `Principal` normal, escopo normal, os MESMOS prazos da real
 //!     (`agora_de_producao`); se fosse mais poderosa, o e2e provaria o cenário errado;
-//!  3. 🪦 **GATILHO DE MORTE: este bin é DELETADO no mesmo PR em que o OAuth (fatia 3) landar.**
-//!     Não "quando der" — quando existir login de verdade, esta porta sintética some.
+//!  3. 🪦 **GATILHO DE MORTE: este bin morre quando o login federado REAL funcionar em dev.**
+//!     ⚠️ Revisto na fatia 4 (#1695): o `/callback` já EXISTE (login real completa em PROD com creds
+//!     reais), mas em DEV os `client_id`/`client_secret` são PLACEHOLDER → o callback não fecha um
+//!     login real, e a sessão SEMEADA aqui continua a ser o stand-in sem-humano do e2e do FE. Logo a
+//!     morte espera a **fatia 5** (creds reais do cofre) + coordenação com o FE — não a fatia 4.
+//!     A semeadura de sessão/perfil é o que o `/callback` substitui em produção.
 
 #![forbid(unsafe_code)]
 
@@ -171,6 +175,7 @@ async fn main() -> Result<()> {
                     client_id: "dev-placeholder-microsoft".into(),
                     redirect_uri: redir("microsoft"),
                     client_secret: "dev-placeholder-secret-microsoft".into(),
+                    issuer: "https://login.microsoftonline.com/dev-tenant/v2.0".into(),
                 },
             ),
             (
@@ -179,6 +184,7 @@ async fn main() -> Result<()> {
                     client_id: "dev-placeholder-microsoft-personal".into(),
                     redirect_uri: redir("microsoft-personal"),
                     client_secret: "dev-placeholder-secret-microsoft-personal".into(),
+                    issuer: "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0".into(),
                 },
             ),
             (
@@ -187,6 +193,7 @@ async fn main() -> Result<()> {
                     client_id: "dev-placeholder-google".into(),
                     redirect_uri: redir("google"),
                     client_secret: "dev-placeholder-secret-google".into(),
+                    issuer: "https://accounts.google.com".into(),
                 },
             ),
         ],

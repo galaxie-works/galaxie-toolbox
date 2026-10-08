@@ -35,6 +35,11 @@ pub struct ConfigProvedor {
     /// O `client_secret` da troca `code`→token (fatia C). Entra na config e é lido do cofre na fatia 5
     /// (o dev-server usa placeholder). Só sai daqui pro `montar_corpo_troca` → `CorpoTroca` não-logável.
     pub client_secret: String,
+    /// O `iss` ESPERADO do id_token deste provedor (fatia 4 / Gap 3). Microsoft-org é **tenant-specific**
+    /// (`https://login.microsoftonline.com/{tenant}/v2.0`) — vem da config do tenant contratado, NUNCA
+    /// `/common` nem padrão. Google = `https://accounts.google.com`. O callback passa-o EXATO ao
+    /// `verificar_id_token` (match exato; a C-3 é tão forte quanto este valor — por isso vem da config).
+    pub issuer: String,
 }
 
 /// Estado do fluxo OAuth injetado na borda: o armazém dos fluxos EM CURSO (atrás de `Mutex` como o de
@@ -113,6 +118,15 @@ impl EstadoOAuth {
         crate::oauth_troca::postar_troca(&self.cliente, &provedor.endpoint_token(), corpo).await
     }
 
+    /// Busca o JWKS do provedor (chaves pra verificar o id_token, fatia 4) pelo mesmo cliente
+    /// disciplinado. Encapsula o cliente + o endpoint; o handler não toca no reqwest.
+    pub async fn buscar_jwks(
+        &self,
+        provedor: Provedor,
+    ) -> Result<galaxie_platform_oauth::Jwks, crate::oauth_troca::ErroExchange> {
+        crate::oauth_troca::buscar_jwks(&self.cliente, &provedor.endpoint_jwks()).await
+    }
+
     /// A config do provedor, se ele estiver LIGADO. `None` ⇒ o handler devolve o 404 uniforme (não
     /// revela se o slug é desconhecido ou só não-configurado). `match` EXAUSTIVO: provedor novo OBRIGA
     /// a mapear o seu campo — não herda um default.
@@ -175,6 +189,13 @@ pub const NOME_COOKIE_AMARRA_OAUTH: &str = "__Host-gx_oauth";
 /// amarra exatamente no retorno e o fluxo nunca fecharia. Mesma política do cookie de sessão.
 pub fn montar_cookie_amarra_oauth(amarra: &str, max_age_seg: u64) -> String {
     format!("{NOME_COOKIE_AMARRA_OAUTH}={amarra}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={max_age_seg}")
+}
+
+/// Expurga o cookie de amarra (`Max-Age=0`) — o callback (fatia 4) limpa-o no cliente ao fechar o
+/// fluxo (sucesso OU falha): o `state` já foi queimado server-side; o cookie não deve sobrar.
+#[must_use]
+pub fn montar_cookie_amarra_expurgo() -> String {
+    format!("{NOME_COOKIE_AMARRA_OAUTH}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0")
 }
 
 /// Estado compartilhado da borda.
