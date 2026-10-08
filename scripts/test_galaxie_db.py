@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CLI = os.path.join(AQUI, "galaxie_db.py")
@@ -31,6 +32,11 @@ def corre(db, *args, espera_erro=False):
 def main():
     tmp = tempfile.mkdtemp()
     db = os.path.join(tmp, "t.db")
+    # #1655: o `recibo-semanal` filtra `dia >= hoje - N dias` (janela deslizante). A data do
+    # consumo tem de ser RELATIVA a "hoje", nunca hardcoded — senão o teste vira time-bomb
+    # (um `--dia 2026-08-31` fixo saiu da janela semanal ~5 semanas depois e quebrou o CI de
+    # TODO PR, 2026-10-08). O despertar fica com data velha de propósito (mudez QUER o antigo).
+    hoje = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # init idempotente (2x sem erro)
     corre(db, "init")
@@ -51,8 +57,8 @@ def main():
         con.close()
 
     # rollup do consumo (UPSERT soma por PK) — base do recibo (AC3)
-    corre(db, "registrar-consumo", "--dia", "2026-08-31", "--papel", "mizar", "--chamadas", "10", "--output", "5000")
-    corre(db, "registrar-consumo", "--dia", "2026-08-31", "--papel", "mizar", "--chamadas", "5", "--output", "2000")
+    corre(db, "registrar-consumo", "--dia", hoje, "--papel", "mizar", "--chamadas", "10", "--output", "5000")
+    corre(db, "registrar-consumo", "--dia", hoje, "--papel", "mizar", "--chamadas", "5", "--output", "2000")
 
     # AC3 — recibo sai de UMA query (não parsing de JSONL)
     recibo = corre(db, "consultar", "recibo-semanal")
@@ -60,10 +66,10 @@ def main():
     assert linha["chamadas"] == 15 and linha["output"] == 7000, f"rollup errado: {linha}"
 
     # --substituir: SET (nao soma) -> idempotente pro produtor de re-scan (#1663)
-    corre(db, "registrar-consumo", "--substituir", "--dia", "2026-08-31", "--papel", "mizar", "--chamadas", "3", "--output", "999")
+    corre(db, "registrar-consumo", "--substituir", "--dia", hoje, "--papel", "mizar", "--chamadas", "3", "--output", "999")
     r2 = next(x for x in corre(db, "consultar", "recibo-semanal")["por_papel"] if x["papel"] == "mizar")
     assert r2["chamadas"] == 3 and r2["output"] == 999, f"substituir nao fez SET (somou?): {r2}"
-    corre(db, "registrar-consumo", "--substituir", "--dia", "2026-08-31", "--papel", "mizar", "--chamadas", "3", "--output", "999")
+    corre(db, "registrar-consumo", "--substituir", "--dia", hoje, "--papel", "mizar", "--chamadas", "3", "--output", "999")
     r3 = next(x for x in corre(db, "consultar", "recibo-semanal")["por_papel"] if x["papel"] == "mizar")
     assert r3["chamadas"] == 3 and r3["output"] == 999, f"substituir nao foi idempotente: {r3}"
 
