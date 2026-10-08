@@ -616,6 +616,7 @@ pub fn verificar_id_token(
     v.set_audience(&[client_id]); // aud == client_id
     v.leeway = SKEW_ID_TOKEN_SEG;
     v.validate_exp = true;
+    v.validate_nbf = true; // nbf é opt-in no jsonwebtoken 9; ligar fecha o "not-before" de graça (@Altair)
 
     let dados = decode::<Claims>(id_token, &key, &v).map_err(|e| match e.kind() {
         jsonwebtoken::errors::ErrorKind::InvalidIssuer
@@ -630,6 +631,13 @@ pub fn verificar_id_token(
         if dados.claims.nonce.as_deref() != Some(esperado) {
             return Err(ErroVerificacao::ClaimInvalido);
         }
+    }
+
+    // `sub` VAZIO → recusa (@Altair, review C-3): o `sub: String` já recusa um `sub` AUSENTE, mas
+    // aceitaria `""` → `Subject("")`, que colapsaria identidades distintas numa só. Nenhum IdP real o
+    // emite, mas fechamos por CONSTRUÇÃO, não por acidente do IdP.
+    if dados.claims.sub.is_empty() {
+        return Err(ErroVerificacao::ClaimInvalido);
     }
 
     Ok((provedor, Subject(dados.claims.sub)))
@@ -1051,6 +1059,16 @@ mod tests {
         // nonce presente mas ≠ o esperado
         let t = assinar(&enc(), "s", ISS, AUD, agora() + 3600, Some("real"));
         assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, Some("esperado")), Err(ErroVerificacao::ClaimInvalido));
+    }
+
+    #[test]
+    fn verifica_recusa_sub_vazio() {
+        // @Altair C-3: `sub: String` recusa sub AUSENTE, mas `""` colapsaria identidades → recusa.
+        let token = assinar(&enc(), "", ISS, AUD, agora() + 3600, None);
+        assert_eq!(
+            verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, None),
+            Err(ErroVerificacao::ClaimInvalido)
+        );
     }
 
     #[test]
