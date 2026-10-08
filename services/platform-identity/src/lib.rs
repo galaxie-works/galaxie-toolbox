@@ -491,4 +491,38 @@ mod tests {
         assert_eq!(autorizar(&staff_s, &Operacao::ProvisionarOrg), Decisao::Permitido);
         assert_eq!(autorizar(&membro_s, &Operacao::VerProprioPerfil), Decisao::Permitido);
     }
+
+    /// O ÚNICO conjunto de operações que um `SemVinculo` pode fazer — todas self-scoped (`/me`).
+    /// Acrescentar aqui = dar capacidade a quem não tem org ⇒ revisão de autz. Nenhuma org-scoped entra.
+    fn permitido_sem_vinculo(op: &Operacao) -> bool {
+        match op {
+            // `match` EXAUSTIVO: uma `Operacao` nova OBRIGA a decidir aqui pela `SemVinculo`.
+            Operacao::VerProprioPerfil => true,
+            Operacao::GerirOrg { .. }
+            | Operacao::ConfigurarAppDaOrg { .. }
+            | Operacao::ProvisionarOrg => false,
+        }
+    }
+
+    // @Altair (#1695): o `autorizar` faz `match` na OPERAÇÃO, não no principal — então o compilador NÃO
+    // obriga a decidir nada pela variante `SemVinculo` lá. ESTE teste é quem obriga: enumera TODA
+    // `Operacao` contra `permitido_sem_vinculo` (cujo match exaustivo parte se faltar variante). Uma
+    // operação nova que conceda por acessor ao `SemVinculo` sem entrar na lista certa é apanhada aqui.
+    #[test]
+    fn sem_vinculo_so_alcanca_o_self_scoped() {
+        let s = Sessao::estabelecer(
+            Principal::SemVinculo { usuario: UserId("f1".into()) },
+            Escopo::vazio(),
+        );
+        let todas = [
+            Operacao::VerProprioPerfil,
+            Operacao::GerirOrg { alvo: OrgId("orgA".into()) },
+            Operacao::ConfigurarAppDaOrg { alvo: OrgId("orgA".into()) },
+            Operacao::ProvisionarOrg,
+        ];
+        for op in &todas {
+            let esperado = if permitido_sem_vinculo(op) { Decisao::Permitido } else { Decisao::Negado };
+            assert_eq!(autorizar(&s, op), esperado, "SemVinculo vs {op:?}");
+        }
+    }
 }
