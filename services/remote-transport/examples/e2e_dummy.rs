@@ -17,20 +17,31 @@
 //! cargo run --example e2e_dummy --features webrtc
 //! ```
 
-use std::net::UdpSocket;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use galaxie_remote_transport::driver::IoDriver;
 use galaxie_remote_transport::session::{EventoSessao, Papel, SessionConfig, Transport};
 use galaxie_remote_transport::{canal_de_comandos, CodedFrameSource, DummyFrameSource, SignalMessage};
 
-/// Cria um driver com socket loopback + Transport do papel dado. O receiver de
-/// comandos é solto (o `pedir_keyframe` tolera `Disconnected` → no-op).
+/// #1716: cria um driver que REPRODUZ o bind de PRODUÇÃO (`0.0.0.0:0`, recebe em todas as interfaces)
+/// e anuncia o loopback como candidato host (`ips_locais = [127.0.0.1]`) — o str0m ACEITA `127.0.0.1`
+/// (o bug era só o `0.0.0.0`). Antes do fix do #1716 o `IoDriver` entregava `destino = local_addr =
+/// 0.0.0.0:P` (≠ candidato) e o caminho direto NUNCA validava → o harness falhava; com a resolução por
+/// rota, o destino vira `127.0.0.1:P` (= candidato) e conecta. Guarda de regressão da AC2.
 fn cria_driver(papel: Papel) -> IoDriver {
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind loopback");
+    let socket = UdpSocket::bind("0.0.0.0:0").expect("bind 0.0.0.0 (reproduz produção)");
     let (cmd, _rx) = canal_de_comandos();
     let transport = Transport::novo(SessionConfig::new(papel, vec![]), cmd);
-    IoDriver::novo(socket, transport).expect("driver")
+    IoDriver::novo(socket, transport)
+        .expect("driver")
+        .com_ips_locais(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])
+}
+
+/// O candidato host ANUNCIADO deste driver: `127.0.0.1:porta-do-bind` (não o `0.0.0.0:porta` que o
+/// `local_addr` devolve agora que o bind é `0.0.0.0`). É o IP real que o peer usa + que o str0m aceita.
+fn candidato_anunciado(driver: &IoDriver) -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), driver.local_addr().port())
 }
 
 fn sdp_de(msg: SignalMessage) -> String {
@@ -43,9 +54,10 @@ fn sdp_de(msg: SignalMessage) -> String {
 fn main() {
     let mut host = cria_driver(Papel::Host);
     let mut ctrl = cria_driver(Papel::Controlador);
-    let addr_h = host.local_addr();
-    let addr_c = ctrl.local_addr();
-    println!("host={addr_h}  controlador={addr_c}");
+    // #1716: o candidato é o loopback REAL (127.0.0.1:porta), não o `0.0.0.0:porta` do bind.
+    let addr_h = candidato_anunciado(&host);
+    let addr_c = candidato_anunciado(&ctrl);
+    println!("host bind={} cand={addr_h}  ctrl bind={} cand={addr_c}", host.local_addr(), ctrl.local_addr());
 
     // --- signaling in-process: offer/answer (o app troca isto pelo WebSocket S0) ---
     let offer = host.transport().criar_offer().expect("criar_offer");
