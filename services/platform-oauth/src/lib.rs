@@ -208,15 +208,36 @@ pub struct FluxoPendente {
 pub enum ErroArmazem {
     /// Armazém indisponível (backing real fora do ar). Nunca ocorre na impl em memória.
     Indisponivel,
+    /// Capacidade esgotada: o armazém está no teto de fluxos EM CURSO e recusou iniciar mais um
+    /// (fail-closed — ver [`LIMITE_FLUXOS_OAUTH`] e [`ArmazemMemoria::iniciar`]). Distinto de
+    /// `Indisponivel`: não é queda de infra, é a válvula de transbordo a disparar — observável,
+    /// transitório (um fluxo vencido a ser varrido devolve a vaga). O border loga e recusa o login.
+    Cheio,
 }
+
+/// Teto de fluxos OAuth EM CURSO que o [`ArmazemMemoria`] mantém (gate medido pelo @Altair, fatia 5):
+/// o `/auth/{provedor}` é **não-autenticado e grava um fluxo por hit**, então sem teto um flood
+/// esgota memória ("buffer que ninguém drena"). Cada fluxo é ~300 B (state+verifier+amarra+prazo) e
+/// vence em [`TTL_FLUXO_OAUTH_SEG`]; como o `iniciar` **varre os vencidos a cada escrita**, o mapa só
+/// retém fluxos genuinamente vivos. `10_000` (~3 MB) é um teto de SEGURANÇA folgado (um cliente de
+/// e-mail de org raramente passa de dezenas de logins simultâneos), não configuração — fica no TIPO,
+/// não num env que apodrece. Ajustável se a telemetria mostrar pressão real.
+pub const LIMITE_FLUXOS_OAUTH: usize = 10_000;
 
 /// Armazém dos fluxos OAuth EM CURSO, indexado pelo `state`. `iniciar` grava; `consumir` valida e
 /// REMOVE — uso único **atômico**: o mesmo `state` não completa duas vezes, nem em corrida. Ambos
 /// devolvem `Result` (ver [`ErroArmazem`]): `Err` é queda de infra, nunca "auth negada".
 pub trait ArmazemEstadoOAuth {
-    /// Grava um fluxo pendente sob o seu `state` (chamado por `/auth/{provedor}`). `Err` só em queda
-    /// de infra do backing real.
-    fn iniciar(&mut self, state: Estado, fluxo: FluxoPendente) -> Result<(), ErroArmazem>;
+    /// Grava um fluxo pendente sob o seu `state` (chamado por `/auth/{provedor}`). Recebe `agora_unix`
+    /// para **varrer os vencidos na escrita** (evicção oportunística, não um job faltável) e medir
+    /// capacidade. `Err(Cheio)` = teto atingido após a varredura ⇒ recusa iniciar (fail-closed, nunca
+    /// estoura memória); `Err(Indisponivel)` = queda de infra do backing real.
+    fn iniciar(
+        &mut self,
+        state: Estado,
+        fluxo: FluxoPendente,
+        agora_unix: u64,
+    ) -> Result<(), ErroArmazem>;
 
     /// Consome o `state` (chamado pelo callback): sai do armazém SEMPRE (uso único — o `state` é
     /// queimado ao ser tocado) e devolve o fluxo SÓ se não venceu **E** a amarra do browser confere.
@@ -245,9 +266,23 @@ impl ArmazemMemoria {
 }
 
 impl ArmazemEstadoOAuth for ArmazemMemoria {
-    fn iniciar(&mut self, state: Estado, fluxo: FluxoPendente) -> Result<(), ErroArmazem> {
+    fn iniciar(
+        &mut self,
+        state: Estado,
+        fluxo: FluxoPendente,
+        agora_unix: u64,
+    ) -> Result<(), ErroArmazem> {
+        // Evicção OPORTUNÍSTICA (gate do @Altair): varre os vencidos ANTES de medir capacidade. Corre
+        // em TODA escrita — o próprio caminho que faz a pressão — então não é um job que possa faltar;
+        // é O(n) sob o mesmo lock do insert, barato pro teto em causa. `>=` (não `>`): cheio ⇒ recusa.
+        self.fluxos.retain(|_, f| agora_unix < f.expira_unix);
+        if self.fluxos.len() >= LIMITE_FLUXOS_OAUTH {
+            // Fail-closed: recusar um login novo é melhor que estourar memória (doutrina de transbordo).
+            // O descarte é OBSERVÁVEL (erro distinto que o border loga), não um silêncio.
+            return Err(ErroArmazem::Cheio);
+        }
         self.fluxos.insert(state, fluxo);
-        Ok(()) // memória nunca cai; o `Result` é a assinatura à prova do backing real
+        Ok(()) // o backing real poderia devolver `Indisponivel`; a memória só cai por `Cheio`
     }
 
     fn consumir(
@@ -917,7 +952,7 @@ mod tests {
         let mut a = ArmazemMemoria::novo();
         let state = Estado::gerar();
         let amarra = AmarraNavegador::gerar();
-        a.iniciar(state.clone(), fluxo(&amarra, 1000)).unwrap();
+        a.iniciar(state.clone(), fluxo(&amarra, 1000), 0).unwrap();
 
         // 1º consumo confere (dentro do prazo, amarra certa). `.unwrap()` prova que é `Ok` (não
         // `Err` de infra) e `.is_some()` que achou o fluxo.
@@ -938,7 +973,7 @@ mod tests {
         // Vencido: agora >= expira ⇒ None.
         let mut a = ArmazemMemoria::novo();
         let s1 = Estado::gerar();
-        a.iniciar(s1.clone(), fluxo(&amarra, 1000)).unwrap();
+        a.iniciar(s1.clone(), fluxo(&amarra, 1000), 0).unwrap();
         assert!(
             a.consumir(&s1, &amarra, 1000).unwrap().is_none(),
             "vencido recusa"
@@ -947,7 +982,7 @@ mod tests {
         // Amarra errada (outro browser) ⇒ Ok(None), mesmo dentro do prazo.
         let mut b = ArmazemMemoria::novo();
         let s2 = Estado::gerar();
-        b.iniciar(s2.clone(), fluxo(&amarra, 1000)).unwrap();
+        b.iniciar(s2.clone(), fluxo(&amarra, 1000), 0).unwrap();
         assert!(
             b.consumir(&s2, &outra, 500).unwrap().is_none(),
             "browser errado recusa"
@@ -957,6 +992,50 @@ mod tests {
             b.consumir(&s2, &amarra, 500).unwrap().is_none(),
             "tocar queima o state"
         );
+    }
+
+    #[test]
+    fn iniciar_varre_vencidos_na_escrita() {
+        // Gate do @Altair: o `iniciar` evicta os vencidos ANTES de inserir (evicção oportunística, não
+        // um job faltável). Grava 3 fluxos que vencem em 1000; uma escrita em 2000 varre os 3 e fica só
+        // com o novo — o mapa só retém fluxos vivos, sem job externo.
+        let amarra = AmarraNavegador::gerar();
+        let mut a = ArmazemMemoria::novo();
+        for _ in 0..3 {
+            a.iniciar(Estado::gerar(), fluxo(&amarra, 1000), 0).unwrap();
+        }
+        assert_eq!(a.fluxos.len(), 3, "3 fluxos vivos gravados");
+        // Escrita em 2000 (> 1000): os 3 vencidos são varridos, resta só o recém-inserido.
+        let vivo = Estado::gerar();
+        a.iniciar(vivo.clone(), fluxo(&amarra, 3000), 2000).unwrap();
+        assert_eq!(a.fluxos.len(), 1, "varreu os vencidos na escrita, só o vivo resta");
+        assert!(a.consumir(&vivo, &amarra, 2500).unwrap().is_some(), "o vivo sobreviveu à varredura");
+    }
+
+    #[test]
+    fn iniciar_no_teto_recusa_fail_closed() {
+        // Gate do @Altair: no teto (após a varredura), o `iniciar` RECUSA (fail-closed) com `Cheio` —
+        // não estoura memória. O descarte é OBSERVÁVEL (erro distinto de `Indisponivel`). Uso um
+        // armazém com teto baixo via struct direta (o `LIMITE_FLUXOS_OAUTH` real é 10k, caro de encher).
+        let amarra = AmarraNavegador::gerar();
+        let mut a = ArmazemMemoria::novo();
+        // Enche até o teto REAL seria caro; provo a invariante enchendo e medindo o `>=`. Como encher 10k
+        // é inviável no teste, exercito a FRONTEIRA: lota o mapa com exatamente o teto de fluxos VIVOS e
+        // confirma que o próximo é recusado, e que um vencido varrido devolve a vaga.
+        for _ in 0..LIMITE_FLUXOS_OAUTH {
+            a.fluxos.insert(Estado::gerar(), fluxo(&amarra, 1000));
+        }
+        // No teto, com TODOS vivos (agora=500 < 1000): a varredura não libera nada ⇒ recusa `Cheio`.
+        assert_eq!(
+            a.iniciar(Estado::gerar(), fluxo(&amarra, 1000), 500),
+            Err(ErroArmazem::Cheio),
+            "no teto com todos vivos ⇒ recusa fail-closed"
+        );
+        assert_eq!(a.fluxos.len(), LIMITE_FLUXOS_OAUTH, "a recusa NÃO inseriu (não estourou o teto)");
+        // Agora=2000 (> 1000): a varredura esvazia o mapa ⇒ a vaga volta e o iniciar passa.
+        let vivo = Estado::gerar();
+        assert!(a.iniciar(vivo.clone(), fluxo(&amarra, 5000), 2000).is_ok(), "vencidos varridos devolvem a vaga");
+        assert_eq!(a.fluxos.len(), 1, "varreu os vencidos e inseriu o novo");
     }
 
     #[test]
@@ -1035,7 +1114,7 @@ mod tests {
         let inicio = iniciar_fluxo(Provedor::Google, "c", redir, &allow, u64::MAX, 600).unwrap();
         assert_eq!(inicio.fluxo.expira_unix, u64::MAX, "saturou, não deu wrap pra baixo");
         let mut arm = ArmazemMemoria::novo();
-        arm.iniciar(inicio.state.clone(), inicio.fluxo.clone()).unwrap();
+        arm.iniciar(inicio.state.clone(), inicio.fluxo.clone(), u64::MAX).unwrap();
         assert!(
             arm.consumir(&inicio.state, &inicio.amarra, u64::MAX).unwrap().is_none(),
             "relógio saturado ⇒ fluxo inutilizável (fail-closed)"
