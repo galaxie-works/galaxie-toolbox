@@ -54,6 +54,10 @@ const RELAY_ALLOCATE_TIMEOUT: Duration = Duration::from_millis(1200);
 /// #1130 fatia 3c: a permissão de peer do coturn expira em ~300s (RFC 5766 §8).
 /// Reemitimos a 3/4 disso (225s) pra nunca deixar lapsar durante a sessão.
 const PERM_REFRESH: Duration = Duration::from_secs(225);
+/// #1527 A-2: janela de overlap — quanto tempo o relay ANTIGO (dedicado) fica drenado+vivo
+/// depois de uma renovação, antes de ser liberado. Cobre a re-nominação do ICE pro candidato
+/// novo (segundos); curto por causa do teto de 41 portas do coturn (#1165).
+const GRACE_DRENAGEM: Duration = Duration::from_secs(10);
 
 /// Quando reenviar o Refresh da alocação: a 3/4 do lifetime concedido, com piso de
 /// 60s (se o coturn conceder um lifetime absurdamente curto, não martelamos o
@@ -334,6 +338,17 @@ struct RelayState {
     /// manda no máximo 1 por tick, então um `438 Stale Nonce` sempre casa com ESTE
     /// txid — daí renovamos o nonce sem corrida.
     ultimo_txid: [u8; 12],
+    /// #1527 A-2 (review do Altair): o socket DONO desta alocação. `None` = usa o
+    /// `session.socket` (o relay inicial do #1130 — via provada, intocada). `Some(s)` = socket
+    /// DEDICADO: a RENOVAÇÃO aloca num `UdpSocket` novo (`bind 0.0.0.0:0`) porque um 2º Allocate
+    /// no MESMO 5-tuple com a alocação viva é **437 Allocation Mismatch** (RFC 5766 §6.2 — o
+    /// Altair mediu contra produção). Cada alocação é um 5-tuple; sobrepor exige socket novo.
+    socket: Option<UdpSocket>,
+    /// #1527 A-2: prazo pra LIBERAR esta alocação (só no relay DRENANDO, durante o overlap).
+    /// `None` = ativa (não liberar). `Some(t)` = drenando; em `t` manda `Refresh lifetime=0` e
+    /// fecha o socket (teto de 41 portas no coturn, #1165 — não segurar duas portas por 10 min).
+    /// O overlap mantém o caminho antigo vivo enquanto o ICE valida o novo candidato relay.
+    liberar_em: Option<Instant>,
 }
 
 /// #1000 (AC1/AC3) — veredito de autorização de UM frame de controle no host.
@@ -447,6 +462,10 @@ struct RuntimeSession {
     injector: Option<galaxie_remote_transport::Injector>,
     /// #1130 fatia 3: relay TURN alocado (data-path), ou `None` (host/srflx puro).
     relay: Option<RelayState>,
+    /// #1527 A-2: relay ANTIGO durante o overlap de uma renovação — mantido vivo (drenado +
+    /// refrescado) até o ICE validar o novo, depois liberado (`Refresh lifetime=0`). `None`
+    /// fora de uma renovação. Ter dois relays simultâneos é o que evita a queda na virada.
+    relay_drenando: Option<RelayState>,
     capture_frames: Option<Receiver<galaxie_remote_capture::CodedFrame>>,
     transport_encoder_commands: TransportCommandReceiver,
     capture_encoder_commands: Option<galaxie_remote_capture::contract::CommandChannel>,
@@ -853,6 +872,7 @@ impl RuntimeSession {
             pressed_buttons: HashSet::new(),
             injector,
             relay,
+            relay_drenando: None,
             capture_frames,
             transport_encoder_commands,
             capture_encoder_commands,
@@ -1005,28 +1025,29 @@ impl RuntimeSession {
 
     fn receive_udp(&mut self) -> Result<(), RemoteError> {
         let mut buffer = [0u8; 65_536];
-        // #1130 fatia 3: snapshot Copy do (turn_server, relayed) pra demultiplexar sem
-        // segurar `&self.relay` enquanto chamamos `&mut self.transport`. O recv NÃO
-        // muta o relay (a permissão é instalada no caminho de ENVIO).
-        let relay_io = self.relay.as_ref().map(|r| (r.turn_server, r.relayed));
+        // #1130 fatia 3: o `session.socket` carrega o tráfego DIRETO (host/srflx) e — só se o
+        // relay inicial existe (`socket=None`) — as Data indications dele. #1527 A-2: um relay
+        // com socket DEDICADO (`Some`, a renovação) é drenado abaixo, no seu próprio socket;
+        // o relay inicial é o ÚNICO que pode estar no `session.socket`, então o snapshot aqui
+        // é guardado por `socket.is_none()`.
+        let relay_io = self
+            .relay
+            .as_ref()
+            .filter(|r| r.socket.is_none())
+            .map(|r| (r.turn_server, r.relayed));
         loop {
             match self.socket.recv_from(&mut buffer) {
                 Ok((len, source)) => {
                     let pacote = &buffer[..len];
-                    // Tráfego vindo do coturn: só a Data indication interessa ao str0m
-                    // (é o pacote do peer embrulhado). O resto (CreatePermission
-                    // Success, Refresh…) é controle TURN e não vai pro str0m. Um pacote
-                    // do peer chega ao str0m como vindo do `peer` no candidato `relayed`.
                     if let Some((turn_server, relayed)) = relay_io {
                         if source == turn_server {
                             if let Some((peer, dados)) = parse_data_indication(pacote) {
                                 self.transport
                                     .receber_udp(peer, relayed, &dados)
                                     .map_err(transport_error)?;
-                            } else {
-                                // Não é dado de peer: é controle TURN (resposta a um
-                                // Refresh/CreatePermission nosso). #1130 fatia 3c.
-                                self.tratar_controle_relay(pacote);
+                            } else if let Some(relay) = self.relay.as_mut() {
+                                // Controle TURN (resposta a Refresh/CreatePermission). #1130 3c.
+                                Self::tratar_controle_relay(relay, pacote);
                             }
                             continue;
                         }
@@ -1034,6 +1055,53 @@ impl RuntimeSession {
                     self.transport
                         .receber_udp(source, self.local_addr, pacote)
                         .map_err(transport_error)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => return Err(RemoteError::Network(error.to_string())),
+            }
+        }
+        // #1527 A-2: drena os sockets DEDICADOS (5-tuple próprio) do relay ativo e do que
+        // está a drenar — o overlap de uma renovação mantém os dois vivos até o ICE validar
+        // o novo candidato relay.
+        if let Some(relay) = self.relay.as_mut() {
+            Self::drenar_relay_dedicado(relay, &mut self.transport, &mut buffer)?;
+        }
+        if let Some(relay) = self.relay_drenando.as_mut() {
+            Self::drenar_relay_dedicado(relay, &mut self.transport, &mut buffer)?;
+        }
+        Ok(())
+    }
+
+    /// #1527 A-2: drena o socket DEDICADO de UM relay (o da renovação; no-op se `socket=None`,
+    /// que é o relay inicial, já drenado no `session.socket`). Demux igual ao do `receive_udp`:
+    /// Data indication do `turn_server` → str0m como vinda do `peer` no `relayed`; o resto é
+    /// controle TURN. Estático (recebe `relay`+`transport` por `&mut`) para não re-emprestar
+    /// `self` inteiro — o loop lê o socket num escopo que solta o borrow antes de mutar o relay.
+    fn drenar_relay_dedicado(
+        relay: &mut RelayState,
+        transport: &mut Transport,
+        buffer: &mut [u8; 65_536],
+    ) -> Result<(), RemoteError> {
+        let turn_server = relay.turn_server;
+        let relayed = relay.relayed;
+        loop {
+            let res = match relay.socket.as_ref() {
+                Some(sock) => sock.recv_from(buffer.as_mut_slice()),
+                None => return Ok(()),
+            };
+            match res {
+                Ok((len, source)) => {
+                    let pacote = &buffer[..len];
+                    if source != turn_server {
+                        continue; // só o nosso coturn fala neste socket dedicado
+                    }
+                    if let Some((peer, dados)) = parse_data_indication(pacote) {
+                        transport
+                            .receber_udp(peer, relayed, &dados)
+                            .map_err(transport_error)?;
+                    } else {
+                        Self::tratar_controle_relay(relay, pacote);
+                    }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
                 Err(error) => return Err(RemoteError::Network(error.to_string())),
@@ -1052,34 +1120,55 @@ impl RuntimeSession {
         destino: SocketAddr,
         dados: &[u8],
     ) -> Result<(), RemoteError> {
-        if let Some(relay) = self.relay.as_mut() {
-            if origem == relay.relayed {
-                if !relay.permitidos.contains_key(&destino.ip()) {
-                    let mut txid = [0u8; 12];
-                    rand::thread_rng().fill(&mut txid[..]);
-                    let perm = build_create_permission_request(
-                        &txid,
-                        destino,
-                        &relay.username,
-                        &relay.realm,
-                        &relay.nonce,
-                        &relay.key,
-                    );
-                    self.socket
-                        .send_to(&perm, relay.turn_server)
-                        .map_err(|e| RemoteError::Network(e.to_string()))?;
-                    relay.ultimo_txid = txid;
-                    relay
-                        .permitidos
-                        .insert(destino.ip(), Instant::now() + PERM_REFRESH);
-                }
-                let mut txid = [0u8; 12];
-                rand::thread_rng().fill(&mut txid[..]);
-                let ind = build_send_indication(&txid, destino, dados);
-                return Self::enviar_best_effort(&self.socket, &ind, relay.turn_server);
+        // #1527 A-2: o datagrama de relay sai pelo socket do relay cujo `relayed` == origem —
+        // ATIVO ou DRENANDO (durante o overlap de uma renovação, os dois estão vivos). Cada
+        // relay tem o seu socket (`socket=Some`, 5-tuple próprio) ou usa o `session.socket`
+        // (`None`, o relay inicial). Host/srflx (`origem` != nenhum relayed) vai direto.
+        if origem == self.relay.as_ref().map(|r| r.relayed).unwrap_or(destino) {
+            if let Some(relay) = self.relay.as_mut() {
+                return Self::enviar_por_relay(relay, &self.socket, destino, dados);
+            }
+        }
+        if Some(origem) == self.relay_drenando.as_ref().map(|r| r.relayed) {
+            if let Some(relay) = self.relay_drenando.as_mut() {
+                return Self::enviar_por_relay(relay, &self.socket, destino, dados);
             }
         }
         Self::enviar_best_effort(&self.socket, dados, destino)
+    }
+
+    /// #1527 A-2: embrulha `dados` numa Send indication pelo socket DESTE relay (o seu
+    /// `socket` dedicado, ou o `session_socket` fallback do relay inicial), instalando
+    /// CreatePermission pro peer na 1ª vez. Estático: não toca `self` (o chamador já escolheu
+    /// o relay por `origem`), o que mantém os borrows limpos no overlap de dois relays.
+    fn enviar_por_relay(
+        relay: &mut RelayState,
+        session_socket: &UdpSocket,
+        destino: SocketAddr,
+        dados: &[u8],
+    ) -> Result<(), RemoteError> {
+        let sock = relay.socket.as_ref().unwrap_or(session_socket);
+        if !relay.permitidos.contains_key(&destino.ip()) {
+            let mut txid = [0u8; 12];
+            rand::thread_rng().fill(&mut txid[..]);
+            let perm = build_create_permission_request(
+                &txid,
+                destino,
+                &relay.username,
+                &relay.realm,
+                &relay.nonce,
+                &relay.key,
+            );
+            Self::enviar_best_effort(sock, &perm, relay.turn_server)?;
+            relay.ultimo_txid = txid;
+            relay
+                .permitidos
+                .insert(destino.ip(), Instant::now() + PERM_REFRESH);
+        }
+        let mut txid = [0u8; 12];
+        rand::thread_rng().fill(&mut txid[..]);
+        let ind = build_send_indication(&txid, destino, dados);
+        Self::enviar_best_effort(sock, &ind, relay.turn_server)
     }
 
     /// #1070 RB1: envia um datagrama do data-path tratando `WouldBlock` (buffer de
@@ -1105,10 +1194,9 @@ impl RuntimeSession {
     ///   todas as permissões) com o nonce fresco, senão a alocação/permissões CAEM.
     /// - Refresh Success → reagenda pelo lifetime REALMENTE concedido (o coturn pode
     ///   conceder menos do que pedimos).
-    fn tratar_controle_relay(&mut self, pacote: &[u8]) {
-        let Some(relay) = self.relay.as_mut() else {
-            return;
-        };
+    /// #1527 A-2: estático (recebe o relay por `&mut`) para o `receive_udp` poder tratar
+    /// controle do relay ATIVO ou do DRENANDO sem re-emprestar `self` inteiro no overlap.
+    fn tratar_controle_relay(relay: &mut RelayState, pacote: &[u8]) {
         if let Some(nonce_novo) = parse_stale_nonce(pacote, &relay.ultimo_txid) {
             relay.nonce = nonce_novo;
             let agora = Instant::now();
@@ -1123,30 +1211,43 @@ impl RuntimeSession {
     }
 
     /// #1527 A-2: aplica a credencial TURN NOVA (roteada do `remote_session_renew_ice` via
-    /// `RuntimeCommand::RenewIce`). Faz o Allocate NOVO SOBREPONDO (mesmo socket, credencial
-    /// fresca), anuncia o candidato relay novo (trickle → ICE restart: o peer migra) e TROCA
-    /// o data-path (`self.relay`) pra a alocação nova.
+    /// `RuntimeCommand::RenewIce`). Aloca num SOCKET NOVO sobrepondo, anuncia o candidato relay
+    /// novo (trickle → ICE restart: o peer migra) e TROCA o data-path (`self.relay`).
+    ///
+    /// ⚠️ SOCKET NOVO, não o mesmo (review do Altair, medido contra produção): uma alocação TURN
+    /// é o 5-tuple; um 2º Allocate do MESMO socket com a antiga viva é **437 Allocation Mismatch**
+    /// (RFC 5766 §6.2). Por isso a renovação faz `bind 0.0.0.0:0` → 5-tuple novo → o coturn aceita.
     ///
     /// Invariantes:
-    /// - **rearme** do `reemitir_em`: o `gather_relay` recomputa-o do `ttl_seconds` novo —
-    ///   sem rearme, a 2ª reemissão nunca dispararia (o requisito do Altair, review do #1700).
-    /// - **overlap (AC1/AC2 "dados continuam passando")**: anuncia o relay novo ANTES da troca
-    ///   e NÃO libera a alocação antiga explícito — paramos de a refrescar e ela expira no
-    ///   lifetime dela, então o caminho antigo sobrevive na coturn enquanto o ICE valida o novo.
-    /// - **permissões**: o relay novo nasce com `permitidos` vazio; re-instalam LAZY no 1º
-    ///   envio a cada peer (`enviar_datagrama`), sem migração manual.
+    /// - **rearme** do `reemitir_em`: o `gather_relay` recomputa-o do `ttl_seconds` novo (requisito
+    ///   do Altair; sem rearme a 2ª reemissão nunca dispararia).
+    /// - **overlap "dados continuam passando"**: o relay antigo DEDICADO vai pra `relay_drenando`
+    ///   (vivo+refrescado+drenado) por `GRACE_DRENAGEM` enquanto o ICE valida o novo, depois é
+    ///   liberado (`Refresh lifetime=0`). O relay INICIAL (no `session.socket`, que serve
+    ///   host/srflx) não pode drenar aqui → liberado síncrono (gap breve só na 1ª renovação).
+    /// - **permissões**: o relay novo nasce com `permitidos` vazio; re-instalam LAZY no 1º envio.
     ///
-    /// Falha de alocação NÃO é fatal: mantém o relay antigo (ainda serve até o TTL) e GRITA —
-    /// sem reaplicar, a sessão cai quando a credencial antiga morrer.
+    /// Falha de alocação NÃO é fatal: mantém o relay antigo + GRITA — sem reaplicar, a sessão cai.
     fn aplicar_renew_ice(&mut self, ice_servers: &[IceServer]) -> Result<(), RemoteError> {
         for (turn_server, username, credential, ttl_seconds) in &resolver_turn_alvos(ice_servers) {
-            let Some(novo) =
-                gather_relay(&self.socket, *turn_server, username, credential, *ttl_seconds)
-            else {
-                continue;
+            // 5-tuple NOVO: socket dedicado pra renovação (senão 437 contra a alocação viva).
+            let socket_novo = match UdpSocket::bind("0.0.0.0:0")
+                .and_then(|s| s.set_nonblocking(true).map(|()| s))
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("[remote] #1527 A-2: bind do socket de renovacao falhou ({e}) — pulo");
+                    continue;
+                }
             };
+            let Some(mut novo) =
+                gather_relay(&socket_novo, *turn_server, username, credential, *ttl_seconds)
+            else {
+                continue; // `socket_novo` dropa aqui (porta liberada)
+            };
+            novo.socket = Some(socket_novo); // o relay NOVO é dono do seu socket
             let relayed_novo = novo.relayed;
-            // Anuncia o candidato relay novo ANTES da troca (overlap: o antigo ainda serve).
+            // Anuncia o candidato relay novo (trickle → ICE restart; o peer migra pra ele).
             self.transport
                 .candidato_relay(relayed_novo)
                 .map_err(transport_error)?;
@@ -1157,13 +1258,24 @@ impl RuntimeSession {
                 }
                 .into(),
             })?;
-            // Troca o data-path: a partir daqui `enviar_datagrama`/`receive_udp` usam o relay
-            // NOVO; o antigo (dropado) para de ser refrescado e expira no lifetime (overlap).
-            self.relay = Some(novo);
+            // Renovação sobre renovação: se já havia um a drenar, libera-o AGORA (1 overlap só,
+            // teto de portas).
+            if let Some(velho) = self.relay_drenando.take() {
+                Self::liberar_relay(&velho, &self.socket);
+            }
+            // Troca o data-path pro relay NOVO; decide o destino do antigo.
+            if let Some(mut antigo) = self.relay.replace(novo) {
+                if antigo.socket.is_some() {
+                    antigo.liberar_em = Some(Instant::now() + GRACE_DRENAGEM);
+                    self.relay_drenando = Some(antigo); // overlap: drena+refresca até o prazo
+                } else {
+                    Self::liberar_relay(&antigo, &self.socket); // inicial: libera síncrono
+                }
+            }
             log::info!(
-                "[remote] #1527 A-2: credencial TURN REAPLICADA — relay novo alocado \
-                 (relayed={relayed_novo}), data-path trocado, reemitir_em rearmado; a alocacao \
-                 antiga expira no lifetime (overlap). segredo NAO logado."
+                "[remote] #1527 A-2: credencial TURN REAPLICADA — relay novo (relayed={relayed_novo}) \
+                 em socket NOVO (5-tuple novo, sem 437); reemitir_em rearmado; antigo em overlap/\
+                 liberado. segredo NAO logado."
             );
             return Ok(());
         }
@@ -1174,12 +1286,63 @@ impl RuntimeSession {
         Ok(())
     }
 
+    /// #1527 A-2: Refresh da alocação (mantém o lifetime) pelo socket DESTE relay (dedicado,
+    /// ou o `fallback` do relay inicial). Atualiza `ultimo_txid`/`refresh_em`. Reusado pelo
+    /// relay ativo e pelo que está a drenar no overlap.
+    fn refrescar_relay(relay: &mut RelayState, fallback: &UdpSocket) -> Result<(), RemoteError> {
+        let mut txid = [0u8; 12];
+        rand::thread_rng().fill(&mut txid[..]);
+        let req = build_refresh_request(
+            &txid,
+            relay.lifetime_s,
+            &relay.username,
+            &relay.realm,
+            &relay.nonce,
+            &relay.key,
+        );
+        let sock = relay.socket.as_ref().unwrap_or(fallback);
+        sock.send_to(&req, relay.turn_server)
+            .map_err(|e| RemoteError::Network(e.to_string()))?;
+        relay.ultimo_txid = txid;
+        relay.refresh_em = Instant::now() + intervalo_refresh(relay.lifetime_s);
+        Ok(())
+    }
+
+    /// #1527 A-2: LIBERA a alocação (Refresh `lifetime=0`, RFC 5766 §7) pelo socket do relay —
+    /// fim do overlap, pra não segurar a porta do coturn (teto de 41, #1165). Best-effort: o
+    /// relay vai ser largado (socket fechado) a seguir, então um erro de envio não importa.
+    fn liberar_relay(relay: &RelayState, fallback: &UdpSocket) {
+        let mut txid = [0u8; 12];
+        rand::thread_rng().fill(&mut txid[..]);
+        let req = build_refresh_request(
+            &txid,
+            0,
+            &relay.username,
+            &relay.realm,
+            &relay.nonce,
+            &relay.key,
+        );
+        let sock = relay.socket.as_ref().unwrap_or(fallback);
+        let _ = sock.send_to(&req, relay.turn_server);
+    }
+
     /// #1130 fatia 3c: mantém a alocação e as permissões do relay VIVAS ("não cai").
     /// Manda no MÁXIMO 1 request por tick (refresh tem prioridade; senão a 1ª permissão
     /// vencida), pra que um `438 Stale Nonce` sempre case com o `ultimo_txid`. No-op se
     /// a sessão é host/srflx puro.
     fn manutencao_relay(&mut self) -> Result<(), RemoteError> {
         let agora = Instant::now();
+        // #1527 A-2: relay DRENANDO (overlap de uma renovação). Libera no prazo (`liberar_em`):
+        // Refresh lifetime=0 + fecha o socket (drop) — não segurar a porta. Antes do prazo,
+        // mantém-no refrescado pra o caminho antigo não cair enquanto o ICE valida o novo.
+        if let Some(drenando) = self.relay_drenando.as_mut() {
+            if drenando.liberar_em.is_some_and(|t| agora >= t) {
+                Self::liberar_relay(drenando, &self.socket);
+                self.relay_drenando = None;
+            } else if agora >= drenando.refresh_em {
+                Self::refrescar_relay(drenando, &self.socket)?;
+            }
+        }
         // #1527: relógio da CREDENCIAL (distinto do Refresh do lifetime). Dispara a 3/4 do
         // `ttl_seconds` (duração, imune a skew) e sinaliza que precisa de credencial NOVA — o
         // `Refresh` não a salva (a alocação é amarrada ao username que a criou, AC3). Limpa
@@ -1215,24 +1378,9 @@ impl RuntimeSession {
         let Some(relay) = self.relay.as_mut() else {
             return Ok(());
         };
-        // 1. Refresh da alocação antes do lifetime expirar.
+        // 1. Refresh da alocação antes do lifetime expirar (no socket DESTE relay — #1527 A-2).
         if agora >= relay.refresh_em {
-            let mut txid = [0u8; 12];
-            rand::thread_rng().fill(&mut txid[..]);
-            let req = build_refresh_request(
-                &txid,
-                relay.lifetime_s,
-                &relay.username,
-                &relay.realm,
-                &relay.nonce,
-                &relay.key,
-            );
-            self.socket
-                .send_to(&req, relay.turn_server)
-                .map_err(|e| RemoteError::Network(e.to_string()))?;
-            relay.ultimo_txid = txid;
-            // Reagenda otimista; a Success (recv) ajusta pelo lifetime concedido.
-            relay.refresh_em = agora + intervalo_refresh(relay.lifetime_s);
+            Self::refrescar_relay(relay, &self.socket)?;
             return Ok(());
         }
         // 2. Reemite UMA permissão vencida (a próxima entra no tick seguinte).
@@ -1254,8 +1402,8 @@ impl RuntimeSession {
                 &relay.nonce,
                 &relay.key,
             );
-            self.socket
-                .send_to(&perm, relay.turn_server)
+            let sock = relay.socket.as_ref().unwrap_or(&self.socket);
+            sock.send_to(&perm, relay.turn_server)
                 .map_err(|e| RemoteError::Network(e.to_string()))?;
             relay.ultimo_txid = txid;
             relay.permitidos.insert(ip, agora + PERM_REFRESH);
@@ -1899,6 +2047,10 @@ fn gather_relay(
         reemitir_em: ttl_seconds.map(|ttl| Instant::now() + antecedencia_reemissao(ttl)),
         permitidos: HashMap::new(),
         ultimo_txid: [0u8; 12],
+        // `None` = usa o `session.socket` (relay inicial, via provada). A RENOVAÇÃO sobrescreve
+        // para `Some(socket_novo)` no `aplicar_renew_ice` (5-tuple novo, evita o 437).
+        socket: None,
+        liberar_em: None,
     })
 }
 
@@ -2415,6 +2567,23 @@ mod tests {
         let json = serde_json::to_value(RemoteSessionEvent::RenewIceNeeded {}).unwrap();
         assert_eq!(json["type"], "renew_ice_needed");
         assert_eq!(json.as_object().unwrap().len(), 1, "RenewIceNeeded nao deve ter payload");
+    }
+
+    #[test]
+    fn renovacao_aloca_de_socket_com_5tuple_novo() {
+        // #1527 A-2 (regressão do 437 que o Altair mediu): a renovação TEM de alocar de um
+        // socket NOVO — um 2º Allocate do MESMO 5-tuple com a alocação viva é 437 Allocation
+        // Mismatch (RFC 5766 §6.2). Este teste fixa a PREMISSA: um `bind 0.0.0.0:0` novo dá um
+        // `local_addr` (porta) distinto do socket vivo ⇒ 5-tuple distinto. (A prova E2E — o
+        // coturn ACEITAR o 2º Allocate — é gated no relay real / sonda do Altair; aqui é o
+        // invariante local que o `aplicar_renew_ice` depende.)
+        let vivo = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let renovacao = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        assert_ne!(
+            vivo.local_addr().unwrap().port(),
+            renovacao.local_addr().unwrap().port(),
+            "o socket da renovacao tem de ter 5-tuple distinto do relay vivo (senao 437)"
+        );
     }
 
     // ── #1130: o AC "o segredo TURN nunca aparece em log" ganha guarda ───────
