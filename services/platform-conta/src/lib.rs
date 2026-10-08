@@ -87,10 +87,6 @@ pub struct Perfil {
     pub idioma: Option<String>,
 }
 
-/// Armazém do perfil, indexado pelo `UserId` do dono. `Result` DESDE O DIA 1 (regra do @Altair, já
-/// aplicada aos stores de org): quando o backing real entrar, muda UMA linha na trait, não a
-/// assinatura + todo consumidor. `Ok(None)` = perfil não encontrado (a borda decide o HTTP); `Err`
-/// = infra fora do ar (distinta de "não achei", como no resto da plataforma).
 /// Atributos que o PROVEDOR possui — snapshot de exibição vindo do id_token VERIFICADO (desenho do
 /// @Altair). **SEM `idioma` de propósito:** idioma é preferência do UTILIZADOR, e um login não a pode
 /// apagar — o tipo torna o clobber impossível de escrever (um `Perfil` inteiro convidaria a passar
@@ -101,6 +97,10 @@ pub struct PerfilDoProvedor {
     pub email: String,
 }
 
+/// Armazém do perfil, indexado pelo `UserId` do dono. `Result` DESDE O DIA 1 (regra do @Altair, já
+/// aplicada aos stores de org): quando o backing real entrar, muda UMA linha na trait, não a
+/// assinatura + todo consumidor. `Ok(None)` = perfil não encontrado (a borda decide o HTTP); `Err`
+/// = infra fora do ar (distinta de "não achei", como no resto da plataforma).
 pub trait ArmazemPerfil {
     /// O perfil do `uid`, se houver. `Ok(None)` = não encontrado; `Err` = armazém indisponível.
     fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem>;
@@ -117,7 +117,7 @@ pub trait ArmazemPerfil {
 
 /// Primeira impl: em memória. O perfil REAL nasce no callback OAuth (do id_token do provedor —
 /// fatia 4); o dev-server também semeia, pro FE fiar o e2e antes do login federado. `Mutex` porque a
-/// escrita (`upsert`) é por `&self` (a borda partilha por `Arc`, sem `&mut`).
+/// escrita (`garantir_no_login`) é por `&self` (a borda partilha por `Arc`, sem `&mut`).
 #[derive(Debug, Default)]
 pub struct ArmazemPerfilMemoria {
     perfis: std::sync::Mutex<HashMap<String, Perfil>>,
@@ -130,7 +130,7 @@ impl ArmazemPerfilMemoria {
     }
 
     /// Semeia o perfil de um usuário (dev-server / testes). Em produção, o callback OAuth grava via
-    /// [`ArmazemPerfil::upsert`]. Mantido `&mut self` por compat com os call sites de seed existentes.
+    /// [`ArmazemPerfil::garantir_no_login`]. Mantido `&mut self` por compat com os call sites de seed.
     pub fn inserir(&mut self, uid: UserId, perfil: Perfil) {
         self.perfis
             .get_mut()

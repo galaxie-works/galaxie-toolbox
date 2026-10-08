@@ -35,11 +35,6 @@ pub struct ConfigProvedor {
     /// O `client_secret` da troca `code`→token (fatia C). Entra na config e é lido do cofre na fatia 5
     /// (o dev-server usa placeholder). Só sai daqui pro `montar_corpo_troca` → `CorpoTroca` não-logável.
     pub client_secret: String,
-    /// O `iss` ESPERADO do id_token deste provedor (fatia 4 / Gap 3). Microsoft-org é **tenant-specific**
-    /// (`https://login.microsoftonline.com/{tenant}/v2.0`) — vem da config do tenant contratado, NUNCA
-    /// `/common` nem padrão. Google = `https://accounts.google.com`. O callback passa-o EXATO ao
-    /// `verificar_id_token` (match exato; a C-3 é tão forte quanto este valor — por isso vem da config).
-    pub issuer: String,
 }
 
 /// Estado do fluxo OAuth injetado na borda: o armazém dos fluxos EM CURSO (atrás de `Mutex` como o de

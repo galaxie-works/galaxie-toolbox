@@ -175,7 +175,6 @@ async fn main() -> Result<()> {
                     client_id: "dev-placeholder-microsoft".into(),
                     redirect_uri: redir("microsoft"),
                     client_secret: "dev-placeholder-secret-microsoft".into(),
-                    issuer: "https://login.microsoftonline.com/dev-tenant/v2.0".into(),
                 },
             ),
             (
@@ -184,7 +183,6 @@ async fn main() -> Result<()> {
                     client_id: "dev-placeholder-microsoft-personal".into(),
                     redirect_uri: redir("microsoft-personal"),
                     client_secret: "dev-placeholder-secret-microsoft-personal".into(),
-                    issuer: "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0".into(),
                 },
             ),
             (
@@ -193,7 +191,6 @@ async fn main() -> Result<()> {
                     client_id: "dev-placeholder-google".into(),
                     redirect_uri: redir("google"),
                     client_secret: "dev-placeholder-secret-google".into(),
-                    issuer: "https://accounts.google.com".into(),
                 },
             ),
         ],

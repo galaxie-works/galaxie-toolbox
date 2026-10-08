@@ -514,15 +514,31 @@ mod tests {
             Principal::SemVinculo { usuario: UserId("f1".into()) },
             Escopo::vazio(),
         );
+        // @Altair: uma LISTA `todas` crua não garante cobertura — uma `Operacao` nova entraria no
+        // domínio sem ninguém a adicionar aqui, e o teste passaria cego. `indice` é EXAUSTIVO (variante
+        // nova ⇒ braço novo, falha de compilação), `N_OPERACOES` conta-as, e `vistos` no fim EXIGE que
+        // `todas` toque cada índice. Assim esquecer de listar a operação nova FALHA o teste, não o cala.
+        const N_OPERACOES: usize = 4;
+        fn indice(op: &Operacao) -> usize {
+            match op {
+                Operacao::VerProprioPerfil => 0,
+                Operacao::GerirOrg { .. } => 1,
+                Operacao::ConfigurarAppDaOrg { .. } => 2,
+                Operacao::ProvisionarOrg => 3,
+            }
+        }
         let todas = [
             Operacao::VerProprioPerfil,
             Operacao::GerirOrg { alvo: OrgId("orgA".into()) },
             Operacao::ConfigurarAppDaOrg { alvo: OrgId("orgA".into()) },
             Operacao::ProvisionarOrg,
         ];
+        let mut vistos = [false; N_OPERACOES];
         for op in &todas {
+            vistos[indice(op)] = true;
             let esperado = if permitido_sem_vinculo(op) { Decisao::Permitido } else { Decisao::Negado };
             assert_eq!(autorizar(&s, op), esperado, "SemVinculo vs {op:?}");
         }
+        assert!(vistos.iter().all(|&v| v), "toda Operacao tem de ser exercida contra SemVinculo: {vistos:?}");
     }
 }

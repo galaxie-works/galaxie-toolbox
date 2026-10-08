@@ -256,7 +256,12 @@ async fn callback(
             tracing::warn!("[oauth callback] troca code→token: falha de rede");
             return falha_login();
         }
-        Err(ErroExchange::Troca(_)) => return falha_login(),
+        Err(ErroExchange::Troca(classe)) => {
+            // O provedor recusou a troca (code expirado/usado, verifier errado, ...). A classe é
+            // o código de erro OAuth do provedor — seguro logar (não é segredo), ajuda o diagnóstico.
+            tracing::warn!(classe = ?classe, "[oauth callback] troca code→token recusada pelo provedor");
+            return falha_login();
+        }
     };
     // Busca o JWKS e VERIFICA (assinatura RS256 + claims). Tudo colapsa em falha uniforme; infra loga.
     let jwks = match oauth.buscar_jwks(fluxo.provedor).await {
@@ -266,14 +271,19 @@ async fn callback(
             return falha_login();
         }
     };
-    // Sem nonce (a fatia B não enviou um). `iss` EXATO da config (tenant-specific; nunca /common).
-    let id = match verificar_id_token(&id_token, &jwks, fluxo.provedor, &cfg.issuer, &cfg.client_id, None) {
+    // Sem nonce (a fatia B não enviou um — ver `iniciar_fluxo`). O `iss` é derivado POR PROVEDOR
+    // dentro do `verificar_id_token` (Microsoft-org amarra ao `tid` do token) — não vem da config.
+    let id = match verificar_id_token(&id_token, &jwks, fluxo.provedor, &cfg.client_id, None) {
         Ok(i) => i,
         Err(ErroVerificacao::JwksInvalido) => {
             tracing::warn!("[oauth callback] JWKS inválido na verificação");
             return falha_login();
         }
-        Err(_) => return falha_login(), // assinatura/claim inválidos
+        Err(classe) => {
+            // Assinatura/claim inválidos. A classe é segura logar (enum, sem conteúdo do token).
+            tracing::warn!(classe = ?classe, "[oauth callback] id_token recusado na verificação");
+            return falha_login();
+        }
     };
 
     // Identidade interna DETERMINÍSTICA (find-or-create; NUNCA do e-mail — nOAuth).
@@ -1414,7 +1424,6 @@ mod tests {
             client_id: format!("cid-{slug}"),
             redirect_uri: format!("https://plat.example/api/v1/auth/{slug}/callback"),
             client_secret: format!("secret-{slug}"),
-            issuer: format!("https://issuer.example/{slug}"),
         }
     }
 
@@ -1626,6 +1635,34 @@ mod tests {
         let cookie = format!("{NOME_COOKIE_AMARRA_OAUTH}=amarra-qualquer");
         let (status, headers, _) =
             resposta_crua(estado, &cookie, "/api/v1/auth/microsoft/callback?code=c&state=naoexiste").await;
+        e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn callback_rota_diferente_do_fluxo_e_falha() {
+        // @Altair teste: o `state`+`amarra` são de um fluxo INICIADO em /auth/google, mas o callback
+        // chega na rota /auth/microsoft. O `consumir` ACERTA (state+amarra válidos) → o guard
+        // `fluxo.provedor != prov` é que recusa (o fluxo é a verdade: foi ele quem iniciou). Sem este
+        // guard, um code de uma rota valeria noutra (confusão de provedor). Falha UNIFORME.
+        let estado = borda_oauth(vec![
+            (Provedor::Google, cfg_provedor("google")),
+            (Provedor::Microsoft, cfg_provedor("microsoft")),
+        ]);
+        // Inicia o fluxo em GOOGLE e colhe state (da Location) + amarra (do cookie).
+        let (_s, headers, _c) = resposta_crua(estado.clone(), "", "/api/v1/auth/google").await;
+        let location = header_de(&headers, "location").expect("Location no 302");
+        let state = query_de(location, "state");
+        let set_cookie = header_de(&headers, "set-cookie").expect("Set-Cookie no 302");
+        let amarra = set_cookie
+            .strip_prefix(&format!("{NOME_COOKIE_AMARRA_OAUTH}="))
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        // Entrega o callback na rota MICROSOFT com o state+amarra do fluxo GOOGLE.
+        let cookie = format!("{NOME_COOKIE_AMARRA_OAUTH}={amarra}");
+        let alvo = format!("/api/v1/auth/microsoft/callback?code=c&state={state}");
+        let (status, headers, _) = resposta_crua(estado, &cookie, &alvo).await;
         e_falha_login(status, &headers);
     }
 

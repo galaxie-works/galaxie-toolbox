@@ -57,27 +57,11 @@ impl Provedor {
         }
     }
 
-    /// Se o e-mail asserido por este provedor é confiável pra **ligar um convite** (invariante 4
-    /// completada, @Altair): o convite nasce por e-mail, e vincular `(provedor,subject)→UserId` por
-    /// e-mail SÓ vale se o provedor VERIFICA o e-mail. `match` EXAUSTIVO — provedor novo OBRIGA a
-    /// decidir por ele, não herda um default.
-    ///
-    /// ⚠️ **`microsoft-personal` é `false`**: conta pessoal com e-mail definido pelo dono é a
-    /// garantia mais fraca; deixá-la ligar convite permitiria asserir um e-mail arbitrário e roubar
-    /// o convite de outra pessoa. A regra vive NO TIPO, não num `if` esquecível.
-    #[must_use]
-    pub fn elegivel_para_ligar_convite(&self) -> bool {
-        match self {
-            Provedor::Microsoft | Provedor::Google => true,
-            Provedor::MicrosoftPersonal => false,
-        }
-    }
-
     /// A **authority** do endpoint Microsoft — o eixo de segurança do #1683/#1549 (desenho do
     /// @Altair). A rota `microsoft` SÓ aceita conta de organização (`/organizations`); a
     /// `microsoft-personal` só pessoal (`/consumers`). **NUNCA `/common`**: `/common` aceita as
     /// duas, e uma conta pessoal a entrar pela rota `microsoft` seria tratada como e-mail forte
-    /// (elegível a ligar convite, ver [`Provedor::elegivel_para_ligar_convite`]) quando NÃO é — a
+    /// (domínio verificado por `xms_edov`, ver [`verificar_id_token`]) quando NÃO é — a
     /// garantia passaria a ser falsa sem nada falhar. Google não usa este eixo (`None`). A regra
     /// vive NO TIPO, não num `if` esquecível.
     #[must_use]
@@ -402,6 +386,12 @@ pub struct InicioFluxo {
 /// 🔑 **`saturating_add`**: se `agora_unix` vier saturado (`u64::MAX` — o fallback fail-closed do
 /// relógio morto, ver `servidor.rs`), `expira` fica em `MAX` e o `consumir` do callback recusa na hora
 /// (`agora >= expira`). Um relógio quebrado torna o fluxo inutilizável — fail-CLOSED, nunca imortal.
+///
+/// 🔑 **Sem `nonce` é DELIBERADO** (@Altair): o anti-replay/anti-CSRF do fluxo é o trio
+/// `state` + `amarra` (cookie amarrado ao browser) + `PKCE(S256)`, todos CSPRNG e conferidos no
+/// callback. Não emitimos `nonce` na authorize-URL; por isso o callback chama
+/// [`verificar_id_token`] com `nonce_esperado = None` (não há nonce a casar). Se um dia passarmos a
+/// emitir `nonce`, ele entra AQUI (gravado no [`FluxoPendente`]) e volta como `Some(...)` na verificação.
 pub fn iniciar_fluxo(
     provedor: Provedor,
     client_id: &str,
@@ -522,7 +512,7 @@ pub fn extrair_id_token(resposta: &str) -> Result<String, ErroTroca> {
 
 /// O `sub` (subject) VERIFICADO do id_token — o id ESTÁVEL do humano no provedor. A ligação da
 /// identidade é por `(Provedor, Subject)`, **NUNCA por string de e-mail** (invariante do @Altair):
-/// o e-mail só liga CONVITE, e só se o provedor o verifica ([`Provedor::elegivel_para_ligar_convite`]).
+/// o e-mail só liga CONVITE, e só se o token PROVA a verificação do domínio (ver [`verificar_id_token`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subject(pub String);
 
@@ -616,6 +606,25 @@ impl Jwks {
 /// Folga de skew de relógio na validação de `exp` (segundos). Pequena — o id_token é fresco.
 const SKEW_ID_TOKEN_SEG: u64 = 60;
 
+/// O `tid` do tenant das CONTAS PESSOAIS Microsoft (`consumers`). Uma conta pessoal NÃO entra pela
+/// rota de organização (`Provedor::Microsoft`): o seu `tid` é este, e é recusado lá.
+const TID_MS_CONSUMERS: &str = "9188040d-6c67-4c5b-b112-36a304b66dad";
+
+/// `issuer` fixo das contas pessoais Microsoft (`MicrosoftPersonal` / `consumers`).
+const ISS_MS_CONSUMERS: &str = "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0";
+
+/// `true` se `s` tem a FORMA de um GUID (8-4-4-4-12 hex). Não valida que o tenant existe — só a forma,
+/// pra o `iss` de Microsoft-org (`.../{tid}/v2.0`) não aceitar um `tid` arbitrário/injetado.
+fn eh_guid(s: &str) -> bool {
+    let grupos: [usize; 5] = [8, 4, 4, 4, 12];
+    let partes: Vec<&str> = s.split('-').collect();
+    partes.len() == 5
+        && partes
+            .iter()
+            .zip(grupos)
+            .all(|(g, n)| g.len() == n && g.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Erro da verificação do id_token (fatia C-3). A distinção é **só pro LOG**: a borda (fatia 4)
 /// colapsa TUDO numa falha de login uniforme no fio (anti-oráculo). Nada daqui verificado ⇒ nada
 /// vira sessão.
@@ -629,23 +638,27 @@ pub enum ErroVerificacao {
     JwksInvalido,
 }
 
-/// Verifica o `id_token` OIDC e extrai a identidade VERIFICADA `(Provedor, Subject)` — o coração da
-/// segurança do fluxo (o @Altair: "a validação do token vive AQUI"). Dado o JWKS que a borda buscou:
+/// Verifica o `id_token` OIDC e extrai a [`IdentidadeVerificada`] — o coração da segurança do fluxo
+/// (o @Altair: "a validação do token vive AQUI"). Dado o JWKS que a borda buscou:
 ///
 ///  1. **Assinatura RS256** contra a chave do `kid` do header — e o algoritmo é FORÇADO a RS256 na
 ///     validação (nunca se confia no `alg` do header: mata *algorithm-confusion*, incl. `alg:none`).
-///  2. **Claims não-negociáveis:** `iss` EXATO (o chamador passa o esperado — para Microsoft é
-///     tenant-specific, e é a fatia 4 que o computa; nunca `/common`), `aud == client_id`, `exp` com
-///     folga pequena de skew, e `nonce` (se foi enviado) — este último à mão (o `jsonwebtoken` não o vê).
+///  2. **`aud == client_id`**, **`exp`/`nbf`** com folga pequena de skew, **`nonce`** (se foi enviado;
+///     à mão — o `jsonwebtoken` não o vê), e o **`iss` POR PROVEDOR** (correção do @Altair, #1717):
+///     - **Google:** `https://accounts.google.com` **ou** `accounts.google.com` (o Google emite as duas).
+///     - **MicrosoftPersonal:** o issuer FIXO dos `consumers`.
+///     - **Microsoft (org, `/organizations` = multi-tenant):** NÃO se compara com valor fixo (rejeitaria
+///       todos os tenants menos um). Depois do decode (assinatura já verificada ⇒ claims confiáveis),
+///       exige-se que o `tid` seja um GUID **e ≠ `consumers`**, e que `iss == .../{tid}/v2.0` com ESSE
+///       `tid` — amarrando o issuer ao tenant que assinou. Com find-or-create ABERTO, QUALQUER tenant
+///       de organização entra (decisão de produto do PO); restringir = lista de tenants, fatia própria.
 ///
 /// ⚠️ O `exp` é validado contra o relógio do SISTEMA (padrão do `jsonwebtoken`, correto para frescura
-/// de token — distinto do relógio injetável das sessões). O `id_token` chega SÓ do corpo do
-/// token-endpoint sobre TLS ([`extrair_id_token`]), nunca do front-channel.
+/// de token). O `id_token` chega SÓ do corpo do token-endpoint sobre TLS ([`extrair_id_token`]).
 pub fn verificar_id_token(
     id_token: &str,
     jwks: &Jwks,
     provedor: Provedor,
-    iss_esperado: &str,
     client_id: &str,
     nonce_esperado: Option<&str>,
 ) -> Result<IdentidadeVerificada, ErroVerificacao> {
@@ -654,6 +667,10 @@ pub fn verificar_id_token(
     #[derive(serde::Deserialize)]
     struct Claims {
         sub: String,
+        #[serde(default)]
+        iss: Option<String>, // validado à mão no caminho Microsoft-org (template com o tid)
+        #[serde(default)]
+        tid: Option<String>, // Microsoft: tenant id (GUID) — amarra o issuer ao tenant
         #[serde(default)]
         nonce: Option<String>,
         // Conteúdo de PERFIL / sinais de verificação de e-mail (todos opcionais).
@@ -677,11 +694,17 @@ pub fn verificar_id_token(
         .map_err(|_| ErroVerificacao::JwksInvalido)?;
 
     let mut v = Validation::new(Algorithm::RS256); // SÓ RS256 — nunca o alg do header
-    v.set_issuer(&[iss_esperado]); // exato
     v.set_audience(&[client_id]); // aud == client_id
     v.leeway = SKEW_ID_TOKEN_SEG;
     v.validate_exp = true;
     v.validate_nbf = true; // nbf é opt-in no jsonwebtoken 9; ligar fecha o "not-before" de graça (@Altair)
+    // `iss` POR PROVEDOR: Google (2 formas) e personal (fixo) pelo `jsonwebtoken`; Microsoft-org à mão
+    // depois do decode (o `iss` depende do `tid` do token, que só se conhece verificado).
+    match provedor {
+        Provedor::Google => v.set_issuer(&["https://accounts.google.com", "accounts.google.com"]),
+        Provedor::MicrosoftPersonal => v.set_issuer(&[ISS_MS_CONSUMERS]),
+        Provedor::Microsoft => {} // validado à mão abaixo (multi-tenant)
+    }
 
     let dados = decode::<Claims>(id_token, &key, &v).map_err(|e| match e.kind() {
         jsonwebtoken::errors::ErrorKind::InvalidIssuer
@@ -703,6 +726,20 @@ pub fn verificar_id_token(
     // emite, mas fechamos por CONSTRUÇÃO, não por acidente do IdP.
     if dados.claims.sub.is_empty() {
         return Err(ErroVerificacao::ClaimInvalido);
+    }
+
+    // Microsoft-org (multi-tenant): o `iss` NÃO foi validado pelo `jsonwebtoken` (dependia do tid).
+    // Agora, com a assinatura já verificada, amarra-se o issuer ao tenant que assinou: `tid` GUID,
+    // ≠ consumers (conta pessoal não entra pela rota de org), e `iss == .../{tid}/v2.0` com ESSE tid.
+    if provedor == Provedor::Microsoft {
+        let tid = dados.claims.tid.as_deref().unwrap_or("");
+        if !eh_guid(tid) || tid == TID_MS_CONSUMERS {
+            return Err(ErroVerificacao::ClaimInvalido);
+        }
+        let iss_esperado = format!("https://login.microsoftonline.com/{tid}/v2.0");
+        if dados.claims.iss.as_deref() != Some(iss_esperado.as_str()) {
+            return Err(ErroVerificacao::ClaimInvalido);
+        }
     }
 
     let email = dados.claims.email.filter(|s| !s.is_empty());
@@ -852,14 +889,6 @@ mod tests {
             None,
             "case-sensitive: só o slug exato"
         );
-    }
-
-    #[test]
-    fn so_provedor_de_email_verificado_liga_convite() {
-        assert!(Provedor::Microsoft.elegivel_para_ligar_convite());
-        assert!(Provedor::Google.elegivel_para_ligar_convite());
-        // ⚠️ microsoft-personal NÃO — e-mail fraco; ligar convite aqui seria roubo de conta.
-        assert!(!Provedor::MicrosoftPersonal.elegivel_para_ligar_convite());
     }
 
     #[test]
@@ -1076,8 +1105,18 @@ mod tests {
     use rsa::RsaPrivateKey;
 
     const KID: &str = "test-kid-1";
-    const ISS: &str = "https://login.microsoftonline.com/tenant-abc/v2.0";
     const AUD: &str = "cid-123";
+    /// Tenant GUID de teste pra Microsoft-org (o `iss` amarra-se a ele).
+    const TID: &str = "11111111-2222-3333-4444-555555555555";
+
+    /// O `iss` VÁLIDO de cada provedor (pro teste assinar tokens que passam o `iss` por-provedor).
+    fn iss_de(prov: Provedor) -> String {
+        match prov {
+            Provedor::Google => "https://accounts.google.com".into(),
+            Provedor::MicrosoftPersonal => ISS_MS_CONSUMERS.into(),
+            Provedor::Microsoft => format!("https://login.microsoftonline.com/{TID}/v2.0"),
+        }
+    }
 
     /// Componentes de um par RSA de teste (pem PKCS#8, n, e) — gerado UMA vez (o keygen 2048 é caro).
     fn componentes() -> &'static (String, String, String) {
@@ -1113,27 +1152,35 @@ mod tests {
             .as_secs()
     }
 
-    /// Assina um id_token de teste (kid = `KID`, RS256). `exp` é epoch absoluto. `extra` = claims
-    /// adicionais (nonce/email/email_verified/xms_edov/preferred_username/name) mesclados por teste.
-    fn assinar(chave: &EncodingKey, sub: &str, iss: &str, aud: &str, exp: u64, extra: serde_json::Value) -> String {
-        let mut claims = serde_json::json!({ "sub": sub, "iss": iss, "aud": aud, "exp": exp });
+    /// Assina um JWT de teste (kid = `KID`, RS256) a partir de um objeto de claims PRONTO.
+    fn assinar(chave: &EncodingKey, claims: &serde_json::Value) -> String {
+        let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some(KID.to_string());
+        encode(&header, claims, chave).expect("assina")
+    }
+
+    /// Token VÁLIDO pro `prov` (sub/aud/exp/iss certos — e `tid` no Microsoft-org), com `extra`
+    /// mesclado por cima (os testes sobrepõem campos: sub vazio, exp passado, iss/tid errados, ...).
+    fn token_para(prov: Provedor, extra: serde_json::Value) -> String {
+        let mut claims = serde_json::json!({ "sub": "s", "aud": AUD, "exp": agora() + 3600, "iss": iss_de(prov) });
+        if prov == Provedor::Microsoft {
+            claims["tid"] = serde_json::json!(TID);
+        }
         if let serde_json::Value::Object(m) = extra {
             for (k, v) in m {
                 claims[k] = v;
             }
         }
-        let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
-        header.kid = Some(KID.to_string());
-        encode(&header, &claims, chave).expect("assina")
+        assinar(&enc(), &claims)
     }
 
     #[test]
     fn verifica_id_token_valido_extrai_identidade() {
-        let token = assinar(&enc(), "sub-123", ISS, AUD, agora() + 3600,
-            serde_json::json!({ "nonce": "nonce-x", "name": "User Example", "email": "user@example.com" }));
-        // Microsoft sem `xms_edov` → email_convite None (mas email_exibicao presente). Âncora = subject.
+        let token = token_para(Provedor::Microsoft,
+            serde_json::json!({ "sub": "sub-123", "nonce": "nonce-x", "name": "User Example", "email": "user@example.com" }));
+        // MS-org sem `xms_edov` → email_convite None (mas email_exibicao presente). Âncora = subject.
         assert_eq!(
-            verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, Some("nonce-x")),
+            verificar_id_token(&token, &jwks(), Provedor::Microsoft, AUD, Some("nonce-x")),
             Ok(IdentidadeVerificada {
                 provedor: Provedor::Microsoft,
                 subject: Subject("sub-123".into()),
@@ -1146,62 +1193,73 @@ mod tests {
 
     #[test]
     fn verifica_recusa_assinatura_de_outra_chave() {
-        // Token assinado por chave DIFERENTE, mas com o mesmo `kid` do JWKS → a assinatura não bate.
+        // Claims válidos, mas assinado por chave DIFERENTE (mesmo kid) → a assinatura não bate.
         let mut rng = rand::thread_rng();
         let outra = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let enc_outra =
-            EncodingKey::from_rsa_pem(outra.to_pkcs8_pem(LineEnding::LF).unwrap().as_bytes()).unwrap();
-        let token = assinar(&enc_outra, "s", ISS, AUD, agora() + 3600, serde_json::json!({}));
-        assert_eq!(
-            verificar_id_token(&token, &jwks(), Provedor::Google, ISS, AUD, None),
-            Err(ErroVerificacao::AssinaturaInvalida)
-        );
+        let enc_outra = EncodingKey::from_rsa_pem(outra.to_pkcs8_pem(LineEnding::LF).unwrap().as_bytes()).unwrap();
+        let claims = serde_json::json!({ "sub": "s", "aud": AUD, "exp": agora() + 3600, "iss": iss_de(Provedor::Google) });
+        let token = assinar(&enc_outra, &claims);
+        assert_eq!(verificar_id_token(&token, &jwks(), Provedor::Google, AUD, None), Err(ErroVerificacao::AssinaturaInvalida));
     }
 
     #[test]
-    fn verifica_recusa_iss_aud_exp_e_nonce_errados() {
+    fn verifica_recusa_aud_exp_e_nonce_errados() {
         let j = jwks();
-        let vazio = || serde_json::json!({});
-        // iss errado
-        let t = assinar(&enc(), "s", "https://evil.example/v2.0", AUD, agora() + 3600, vazio());
-        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
-        // aud (client_id) errado
-        let t = assinar(&enc(), "s", ISS, "outro-client", agora() + 3600, vazio());
-        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
-        // exp no passado (além da folga de skew)
-        let t = assinar(&enc(), "s", ISS, AUD, agora() - 3600, vazio());
-        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, None), Err(ErroVerificacao::ClaimInvalido));
-        // nonce presente mas ≠ o esperado
-        let t = assinar(&enc(), "s", ISS, AUD, agora() + 3600, serde_json::json!({ "nonce": "real" }));
-        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, ISS, AUD, Some("esperado")), Err(ErroVerificacao::ClaimInvalido));
+        let t = token_para(Provedor::Google, serde_json::json!({ "aud": "outro-client" }));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Google, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        let t = token_para(Provedor::Google, serde_json::json!({ "exp": agora() - 3600 }));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Google, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        let t = token_para(Provedor::Google, serde_json::json!({ "nonce": "real" }));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Google, AUD, Some("esperado")), Err(ErroVerificacao::ClaimInvalido));
+    }
+
+    #[test]
+    fn verifica_google_iss_duas_formas_e_recusa_terceira() {
+        // Google emite o `iss` em DUAS formas (defeito 2 do review do @Altair) — ambas aceites.
+        for iss in ["https://accounts.google.com", "accounts.google.com"] {
+            let t = token_para(Provedor::Google, serde_json::json!({ "iss": iss }));
+            assert!(verificar_id_token(&t, &jwks(), Provedor::Google, AUD, None).is_ok(), "iss {iss} aceite");
+        }
+        let t = token_para(Provedor::Google, serde_json::json!({ "iss": "https://accounts.evil.com" }));
+        assert_eq!(verificar_id_token(&t, &jwks(), Provedor::Google, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+    }
+
+    #[test]
+    fn verifica_microsoft_org_amarra_iss_ao_tid() {
+        // Defeito 1 do review do @Altair: multi-tenant — o `iss` amarra-se ao `tid` do token.
+        let j = jwks();
+        // tid GUID + iss == template(tid) → ok (QUALQUER tenant de org passa; find-or-create aberto).
+        assert!(verificar_id_token(&token_para(Provedor::Microsoft, serde_json::json!({})), &j, Provedor::Microsoft, AUD, None).is_ok());
+        // iss ≠ template(tid) → recusa.
+        let t = token_para(Provedor::Microsoft, serde_json::json!({ "iss": "https://login.microsoftonline.com/outro/v2.0" }));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        // tid não-GUID → recusa.
+        let t = token_para(Provedor::Microsoft, serde_json::json!({ "tid": "nao-guid", "iss": "https://login.microsoftonline.com/nao-guid/v2.0" }));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, AUD, None), Err(ErroVerificacao::ClaimInvalido));
+        // tid == consumers (conta pessoal pela rota de ORG) → recusa.
+        let t = token_para(Provedor::Microsoft, serde_json::json!({ "tid": TID_MS_CONSUMERS, "iss": ISS_MS_CONSUMERS }));
+        assert_eq!(verificar_id_token(&t, &j, Provedor::Microsoft, AUD, None), Err(ErroVerificacao::ClaimInvalido));
     }
 
     #[test]
     fn verifica_recusa_sub_vazio() {
-        // @Altair C-3: `sub: String` recusa sub AUSENTE, mas `""` colapsaria identidades → recusa.
-        let token = assinar(&enc(), "", ISS, AUD, agora() + 3600, serde_json::json!({}));
-        assert_eq!(
-            verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, None),
-            Err(ErroVerificacao::ClaimInvalido)
-        );
+        let token = token_para(Provedor::Google, serde_json::json!({ "sub": "" }));
+        assert_eq!(verificar_id_token(&token, &jwks(), Provedor::Google, AUD, None), Err(ErroVerificacao::ClaimInvalido));
     }
 
     #[test]
     fn verifica_recusa_kid_desconhecido() {
-        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600, serde_json::json!({}));
+        let token = token_para(Provedor::Google, serde_json::json!({}));
         let jwks_vazio = Jwks::do_json(r#"{"keys":[]}"#).unwrap();
-        assert_eq!(
-            verificar_id_token(&token, &jwks_vazio, Provedor::Microsoft, ISS, AUD, None),
-            Err(ErroVerificacao::AssinaturaInvalida)
-        );
+        assert_eq!(verificar_id_token(&token, &jwks_vazio, Provedor::Google, AUD, None), Err(ErroVerificacao::AssinaturaInvalida));
     }
 
     // --- guard nOAuth: email_para_convite só com PROVA de verificação, por provedor (@Altair) ---
 
     /// Helper: verifica e devolve o email-para-convite como `Option<String>`.
     fn convite_de(prov: Provedor, extra: serde_json::Value) -> Option<String> {
-        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600, extra);
-        verificar_id_token(&token, &jwks(), prov, ISS, AUD, None)
+        let token = token_para(prov, extra);
+        verificar_id_token(&token, &jwks(), prov, AUD, None)
             .unwrap()
             .email_para_convite()
             .map(|e| e.como_str().to_string())
@@ -1238,9 +1296,8 @@ mod tests {
     #[test]
     fn email_exibicao_cai_para_preferred_username() {
         // Sem `email`, a exibição usa `preferred_username`; e convite segue None (não é verificado).
-        let token = assinar(&enc(), "s", ISS, AUD, agora() + 3600,
-            serde_json::json!({ "preferred_username": "pu@x.com" }));
-        let id = verificar_id_token(&token, &jwks(), Provedor::Google, ISS, AUD, None).unwrap();
+        let token = token_para(Provedor::Google, serde_json::json!({ "preferred_username": "pu@x.com" }));
+        let id = verificar_id_token(&token, &jwks(), Provedor::Google, AUD, None).unwrap();
         assert_eq!(id.email_exibicao, Some("pu@x.com".into()));
         assert_eq!(id.email_para_convite(), None);
     }
