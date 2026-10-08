@@ -2,6 +2,7 @@
 name = "galaxie-remote-net"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 
 # Feature-gate (D1-bis, #971/#690 — decisão do @Altair no #955). `default` = núcleo

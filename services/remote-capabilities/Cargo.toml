@@ -2,6 +2,7 @@
 name = "galaxie-remote-capabilities"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
 publish = false
 
 # Crate FOLHA do vocabulário de capability (#1070 RB7). Dep única: serde. Sem runtime,
