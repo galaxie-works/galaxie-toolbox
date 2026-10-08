@@ -11,9 +11,10 @@
 //! Atrás da feature `webrtc` (puxa o `str0m` via [`Transport`]).
 
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::time::Instant;
 
+use crate::destino::{resolver_destino, rota_local};
 use crate::session::{EventoSessao, Passo, Transport, TransportError};
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +33,12 @@ pub struct IoDriver {
     socket: UdpSocket,
     transport: Transport,
     local: SocketAddr,
+    /// #1716: os IPs de interface anunciados como candidato host. Quando o socket vincula em
+    /// `0.0.0.0` (produção), o `local_addr` é `0.0.0.0:porta` — que NÃO bate nenhum candidato, então
+    /// o str0m descartaria o STUN do caminho direto. Com esta lista, o `drenar_socket` resolve o
+    /// destino REAL por rota (ver [`crate::destino`]). VAZIO ⇒ comportamento antigo (destino =
+    /// `local`): preserva os chamadores que vinculam num IP concreto (ex. `127.0.0.1`).
+    ips_locais: Vec<IpAddr>,
     proximo_timeout: Option<Instant>,
     encerrado: bool,
     buf: [u8; 2048],
@@ -47,10 +54,22 @@ impl IoDriver {
             socket,
             transport,
             local,
+            ips_locais: Vec::new(),
             proximo_timeout: None,
             encerrado: false,
             buf: [0u8; 2048],
         })
+    }
+
+    /// #1716: declara os IPs de interface anunciados como candidato host (`candidato_local`). Quando o
+    /// socket vincula em `0.0.0.0`, é isto que deixa o `drenar_socket` resolver o destino REAL por rota
+    /// em vez de entregar `0.0.0.0:porta` (que o str0m descarta). Chamar com os MESMOS IPs que foram
+    /// anunciados — a resolução só aceita um IP que o peer viu no SDP. Sem esta chamada (lista vazia),
+    /// o destino continua sendo `local_addr` (chamadores que vinculam num IP concreto não mudam).
+    #[must_use]
+    pub fn com_ips_locais(mut self, ips: Vec<IpAddr>) -> Self {
+        self.ips_locais = ips;
+        self
     }
 
     /// Endereço local do socket — vira o candidato ICE host que o peer recebe via
@@ -125,16 +144,29 @@ impl IoDriver {
         Ok(eventos)
     }
 
-    /// Lê (sem bloquear) todos os datagramas pendentes e entrega ao transporte.
+    /// Lê (sem bloquear) todos os datagramas pendentes e entrega ao transporte. #1716: o DESTINO
+    /// entregue ao str0m é resolvido por rota quando há `ips_locais` (bind `0.0.0.0`) — senão é o
+    /// `local` (comportamento antigo p/ quem vincula num IP concreto).
     fn drenar_socket(&mut self) -> Result<(), DriverError> {
         loop {
             match self.socket.recv_from(&mut self.buf) {
                 Ok((n, origem)) => {
-                    self.transport.receber_udp(origem, self.local, &self.buf[..n])?;
+                    let destino = self.destino_para(origem);
+                    self.transport.receber_udp(origem, destino, &self.buf[..n])?;
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
                 Err(e) => return Err(DriverError::Io(e)),
             }
         }
+    }
+
+    /// #1716: o destino a entregar ao str0m pra um `origem`. Sem `ips_locais` (vazio) ⇒ `local`
+    /// (antigo). Com ⇒ resolve por rota (ver [`crate::destino`]); o fallback no 1º candidato é só
+    /// `debug` (o harness não tem logger instalado — no-op inofensivo).
+    fn destino_para(&self, origem: SocketAddr) -> SocketAddr {
+        if self.ips_locais.is_empty() {
+            return self.local;
+        }
+        resolver_destino(origem, &self.ips_locais, self.local.port(), rota_local).addr()
     }
 }

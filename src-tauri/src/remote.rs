@@ -21,10 +21,10 @@ use galaxie_remote_transport::turn::{
 };
 use galaxie_remote_net::protocol::Capabilities;
 use galaxie_remote_transport::{
-    canal_de_comandos, decode, encode_input, CapabilityPolicy, ControlMessage,
-    CommandReceiver as TransportCommandReceiver, EncoderCommand as TransportEncoderCommand,
-    EventoSessao, Frame as ControlFrame, IceServer, InputEvent, Papel, Passo, ScreenInfo,
-    SessionConfig, SignalMessage, Transport,
+    canal_de_comandos, decode, encode_input, resolver_destino, rota_local, CapabilityPolicy,
+    ControlMessage, CommandReceiver as TransportCommandReceiver, Destino,
+    EncoderCommand as TransportEncoderCommand, EventoSessao, Frame as ControlFrame, IceServer,
+    InputEvent, Papel, Passo, ScreenInfo, SessionConfig, SignalMessage, Transport,
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -457,6 +457,13 @@ struct RuntimeSession {
     transport: Transport,
     socket: UdpSocket,
     local_addr: SocketAddr,
+    /// #1716: os IPs de interface anunciados como candidato host (os mesmos do gathering). O bind é
+    /// `0.0.0.0`, logo `local_addr` = `0.0.0.0:porta` — que o str0m NÃO casa com nenhum candidato. No
+    /// `receive_udp` o destino REAL é resolvido por rota contra esta lista (ver [`resolver_destino`]).
+    ips_locais: Vec<IpAddr>,
+    /// #1716: cache do destino resolvido por `source.ip()` (map curto — poucos peers por sessão); evita
+    /// re-perguntar a rota a cada datagrama.
+    cache_destino: HashMap<IpAddr, SocketAddr>,
     next_timeout: Option<Instant>,
     last_stats: Instant,
     pressed_keys: HashSet<galaxie_remote_transport::Tecla>,
@@ -877,6 +884,8 @@ impl RuntimeSession {
             transport,
             socket,
             local_addr,
+            ips_locais: ips_locais.clone(),
+            cache_destino: HashMap::new(),
             next_timeout: None,
             last_stats: Instant::now(),
             pressed_keys: HashSet::new(),
@@ -1076,8 +1085,11 @@ impl RuntimeSession {
                     if relay_io.is_none() && Some(source) == coturn {
                         continue; // restolho do coturn de uma alocação liberada (fail-closed)
                     }
+                    // #1716: o destino NÃO é o `local_addr` (`0.0.0.0:porta`, que o str0m descarta) —
+                    // é resolvido por rota contra os candidatos anunciados (cacheado por source.ip()).
+                    let destino = self.resolver_destino_cache(source);
                     self.transport
-                        .receber_udp(source, self.local_addr, pacote)
+                        .receber_udp(source, destino, pacote)
                         .map_err(transport_error)?;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -1094,6 +1106,29 @@ impl RuntimeSession {
             Self::drenar_relay_dedicado(relay, &mut self.transport, &mut buffer)?;
         }
         Ok(())
+    }
+
+    /// #1716: o destino a entregar ao str0m pra um datagrama de `source` no caminho DIRETO, resolvido
+    /// por rota contra os IPs anunciados e cacheado por `source.ip()` (map curto — poucos peers). O bind
+    /// é `0.0.0.0`, então entregar `local_addr` (`0.0.0.0:porta`) faria o str0m descartar o STUN; aqui o
+    /// destino vira o `IP_real:porta` que o peer viu no SDP. Fallback (rota fora da lista anunciada) é
+    /// logado em `debug` — nunca entrega um IP que o peer não viu.
+    fn resolver_destino_cache(&mut self, source: SocketAddr) -> SocketAddr {
+        if let Some(d) = self.cache_destino.get(&source.ip()) {
+            return *d;
+        }
+        let porta = self.local_addr.port();
+        let destino = match resolver_destino(source, &self.ips_locais, porta, rota_local) {
+            Destino::Rota(a) => a,
+            Destino::Fallback(a) => {
+                log::debug!(
+                    "[remote #1716] rota pra {source} não deu um IP anunciado; destino cai no 1º candidato {a}"
+                );
+                a
+            }
+        };
+        self.cache_destino.insert(source.ip(), destino);
+        destino
     }
 
     /// #1527 A-2: drena o socket DEDICADO de UM relay (o da renovação; no-op se `socket=None`,
