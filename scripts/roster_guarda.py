@@ -128,17 +128,32 @@ def _ler_papeis(roster_dir):
     return out
 
 
+def _celula(texto):
+    """Escapa `|` (e achata quebras de linha) — foi o `|` em texto livre que quebrou 3/11
+    linhas do ROSTER-markdown a mao (#1654)."""
+    return str(texto).replace("\r", " ").replace("\n", " ").replace("|", "\\|")
+
+
+def _paragem(pd):
+    """Coluna `paragem` (#1718): `desde · por`, ou `-`. O `motivo` fica no JSON — a tabela e de
+    PRESENCA (poda do #1606). Sem ela, parado-por-ordem e indistinguivel de mudo na tabela."""
+    if not pd:
+        return "-"
+    return _celula(f"{pd['desde']} · {pd['por']}")
+
+
 def _render_roster_md(papeis):
     linhas = ["# ROSTER — estado vivo (gerado dos roster/<papel>.json)", "",
-              "| papel | enc | estado | sessao.id | sessao.titulo | tick_declarado | nasceu |",
-              "|---|---|---|---|---|---|---|"]
+              "| papel | enc | estado | sessao.id | sessao.titulo | tick_declarado | paragem | nasceu |",
+              "|---|---|---|---|---|---|---|---|"]
     for p in PAPEIS:
         o = papeis.get(p)
         if not o:
             continue
         linhas.append(
             f"| {o['papel']} | {o['encarnacao']} | {o['estado']} | `{o['sessao']['id']}` | "
-            f"{o['sessao']['titulo']} | {o['tick_declarado'] or '-'} | {o['nasceu']} |"
+            f"{_celula(o['sessao']['titulo'])} | {o['tick_declarado'] or '-'} | "
+            f"{_paragem(o['paragem_declarada'])} | {o['nasceu']} |"
         )
     return "\n".join(linhas) + "\n"
 

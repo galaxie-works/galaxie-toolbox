@@ -76,6 +76,32 @@ def main():
     assert md.startswith("<!-- GERADO") and "hash:" in md.split("\n", 1)[0], "ROSTER.md sem header GERADO+hash"
     assert "| mizar |" in md and "| altair |" in md
 
+    # --- coluna paragem (#1718): parado-por-ordem != mudo, legivel na tabela ---
+    import re
+    def colunas(linha):  # celulas separadas por `|` NAO escapado
+        return [c.strip() for c in re.split(r"(?<!\\)\|", linha)[1:-1]]
+    cab = colunas(next(l for l in md.splitlines() if l.startswith("| papel |")))
+    i_par = cab.index("paragem")
+    linha_mizar = next(l for l in md.splitlines() if l.startswith("| mizar |"))
+    assert colunas(linha_mizar)[i_par] == "-", "#1718: paragem null devia renderizar '-'"
+    g.escrever(d, base("alcor", titulo="Dev BE", estado="vivo", paragem_declarada={
+        "desde": "2026-10-08T16:00Z", "por": "ordem PO | pausa", "motivo": "nao vai pra tabela"}))
+    md = open(os.path.join(d, "ROSTER.md"), encoding="utf-8").read()
+    linha_alcor = next(l for l in md.splitlines() if l.startswith("| alcor |"))
+    assert len(colunas(linha_alcor)) == len(cab), f"#1718: `|` no texto quebrou a linha: {linha_alcor}"
+    assert colunas(linha_alcor)[i_par] == "2026-10-08T16:00Z · ordem PO \\| pausa", \
+        f"#1718: paragem nao renderizou desde·por escapado: {colunas(linha_alcor)[i_par]!r}"
+    assert "nao vai pra tabela" not in md, "#1718: motivo nao deve ir pra tabela (presenca, poda #1606)"
+
+    # ROSTER.md gerado pelo renderer ANTERIOR (sem a coluna, hash do proprio corpo) -> regenera sem recusa
+    d4 = tempfile.mkdtemp()
+    g.escrever(d4, base("mizar"))
+    corpo_velho = "# ROSTER\n\n| papel | enc | estado | sessao.id | sessao.titulo | tick_declarado | nasceu |\n"
+    with open(os.path.join(d4, "ROSTER.md"), "w", encoding="utf-8") as f:
+        f.write(f"{g.CABECALHO} · hash:{g._hash(corpo_velho)} -->\n{corpo_velho}")
+    g.regenerar(d4)  # nao pode levantar RosterInvalido
+    assert "| paragem |" in open(os.path.join(d4, "ROSTER.md"), encoding="utf-8").read()
+
     # --- hash-guard: editar o ROSTER.md a mao -> regenerar RECUSA (nao sobrescreve em silencio) ---
     caminho_md = os.path.join(d, "ROSTER.md")
     conteudo = open(caminho_md, encoding="utf-8").read()
