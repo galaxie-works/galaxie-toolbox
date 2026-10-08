@@ -92,13 +92,20 @@ pub struct Perfil {
 pub trait ArmazemPerfil {
     /// O perfil do `uid`, se houver. `Ok(None)` = não encontrado; `Err` = armazém indisponível.
     fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem>;
+
+    /// Grava (ou sobrescreve) o perfil do `uid` — o callback OAuth (fatia 4) chama isto ao nascer a
+    /// sessão (idempotente: re-login do mesmo humano re-afirma o perfil do id_token). `&self` com
+    /// mutação interior porque a borda só tem `Arc<dyn ArmazemPerfil>` (não `&mut`); o backing real
+    /// (Postgres) muda uma linha. `Err` = infra fora do ar.
+    fn upsert(&self, uid: UserId, perfil: Perfil) -> Result<(), ErroArmazem>;
 }
 
-/// Primeira impl: em memória. O perfil REAL nasce no callback OAuth (do `userinfo` do provedor —
-/// fatia C); aqui a semeadura é do dev-server, pro FE fiar o e2e antes do login federado.
+/// Primeira impl: em memória. O perfil REAL nasce no callback OAuth (do id_token do provedor —
+/// fatia 4); o dev-server também semeia, pro FE fiar o e2e antes do login federado. `Mutex` porque a
+/// escrita (`upsert`) é por `&self` (a borda partilha por `Arc`, sem `&mut`).
 #[derive(Debug, Default)]
 pub struct ArmazemPerfilMemoria {
-    perfis: HashMap<String, Perfil>,
+    perfis: std::sync::Mutex<HashMap<String, Perfil>>,
 }
 
 impl ArmazemPerfilMemoria {
@@ -107,15 +114,32 @@ impl ArmazemPerfilMemoria {
         Self::default()
     }
 
-    /// Semeia o perfil de um usuário (dev-server / testes). Em produção, o callback OAuth grava.
+    /// Semeia o perfil de um usuário (dev-server / testes). Em produção, o callback OAuth grava via
+    /// [`ArmazemPerfil::upsert`]. Mantido `&mut self` por compat com os call sites de seed existentes.
     pub fn inserir(&mut self, uid: UserId, perfil: Perfil) {
-        self.perfis.insert(uid.0, perfil);
+        self.perfis
+            .get_mut()
+            .expect("mutex de perfis não envenenado")
+            .insert(uid.0, perfil);
     }
 }
 
 impl ArmazemPerfil for ArmazemPerfilMemoria {
     fn buscar(&self, uid: &UserId) -> Result<Option<Perfil>, ErroArmazem> {
-        Ok(self.perfis.get(&uid.0).cloned())
+        Ok(self
+            .perfis
+            .lock()
+            .expect("mutex de perfis não envenenado")
+            .get(&uid.0)
+            .cloned())
+    }
+
+    fn upsert(&self, uid: UserId, perfil: Perfil) -> Result<(), ErroArmazem> {
+        self.perfis
+            .lock()
+            .expect("mutex de perfis não envenenado")
+            .insert(uid.0, perfil);
+        Ok(())
     }
 }
 

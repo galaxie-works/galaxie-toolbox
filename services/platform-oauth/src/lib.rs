@@ -511,6 +511,20 @@ pub fn extrair_id_token(resposta: &str) -> Result<String, ErroTroca> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subject(pub String);
 
+/// A identidade VERIFICADA que sai do id_token (fatia C-3) — o que a borda (fatia 4) usa pra nascer
+/// sessão/perfil. A âncora é `(provedor, subject)` (a ligação de identidade é SEMPRE por aqui, nunca
+/// por e-mail). `email`/`nome` vêm dos claims OIDC (`email`/`name`, do `scope=... email profile`) e são
+/// **conteúdo de perfil, não chave** — `Option` porque nem todo provedor/conta os emite; a borda
+/// decide o fallback. ⚠️ O e-mail aqui NÃO autentica nem liga convite por si — isso exige
+/// [`Provedor::elegivel_para_ligar_convite`] e é fluxo próprio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentidadeVerificada {
+    pub provedor: Provedor,
+    pub subject: Subject,
+    pub email: Option<String>,
+    pub nome: Option<String>,
+}
+
 /// Uma chave pública RSA do JWKS do provedor, indexada por `kid`. `n`/`e` são base64url (o formato
 /// que o `jsonwebtoken::DecodingKey::from_rsa_components` consome direto).
 struct ChaveRsa {
@@ -594,7 +608,7 @@ pub fn verificar_id_token(
     iss_esperado: &str,
     client_id: &str,
     nonce_esperado: Option<&str>,
-) -> Result<(Provedor, Subject), ErroVerificacao> {
+) -> Result<IdentidadeVerificada, ErroVerificacao> {
     use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
     #[derive(serde::Deserialize)]
@@ -602,6 +616,11 @@ pub fn verificar_id_token(
         sub: String,
         #[serde(default)]
         nonce: Option<String>,
+        // Conteúdo de PERFIL (não chave). `name` é o nome de exibição OIDC; `email` o e-mail do claim.
+        #[serde(default)]
+        email: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
     }
 
     // O `kid` do header escolhe a chave; o `alg` do header é IGNORADO (a Validation força RS256).
@@ -640,7 +659,12 @@ pub fn verificar_id_token(
         return Err(ErroVerificacao::ClaimInvalido);
     }
 
-    Ok((provedor, Subject(dados.claims.sub)))
+    Ok(IdentidadeVerificada {
+        provedor,
+        subject: Subject(dados.claims.sub),
+        email: dados.claims.email.filter(|s| !s.is_empty()),
+        nome: dados.claims.name.filter(|s| !s.is_empty()),
+    })
 }
 
 #[cfg(test)]
@@ -1010,9 +1034,13 @@ mod tests {
             .as_secs()
     }
 
-    /// Assina um id_token de teste (kid = `KID`, RS256). `exp` é epoch absoluto.
+    /// Assina um id_token de teste (kid = `KID`, RS256). `exp` é epoch absoluto. Inclui sempre
+    /// `email`/`name` (claims de perfil) pra exercer o surfaçar da [`IdentidadeVerificada`].
     fn assinar(chave: &EncodingKey, sub: &str, iss: &str, aud: &str, exp: u64, nonce: Option<&str>) -> String {
-        let mut claims = serde_json::json!({ "sub": sub, "iss": iss, "aud": aud, "exp": exp });
+        let mut claims = serde_json::json!({
+            "sub": sub, "iss": iss, "aud": aud, "exp": exp,
+            "email": "user@example.com", "name": "User Example",
+        });
         if let Some(n) = nonce {
             claims["nonce"] = serde_json::json!(n);
         }
@@ -1026,7 +1054,12 @@ mod tests {
         let token = assinar(&enc(), "sub-123", ISS, AUD, agora() + 3600, Some("nonce-x"));
         assert_eq!(
             verificar_id_token(&token, &jwks(), Provedor::Microsoft, ISS, AUD, Some("nonce-x")),
-            Ok((Provedor::Microsoft, Subject("sub-123".into())))
+            Ok(IdentidadeVerificada {
+                provedor: Provedor::Microsoft,
+                subject: Subject("sub-123".into()),
+                email: Some("user@example.com".into()),
+                nome: Some("User Example".into()),
+            })
         );
     }
 
