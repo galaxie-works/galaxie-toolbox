@@ -54,9 +54,11 @@ const RELAY_ALLOCATE_TIMEOUT: Duration = Duration::from_millis(1200);
 /// #1130 fatia 3c: a permissão de peer do coturn expira em ~300s (RFC 5766 §8).
 /// Reemitimos a 3/4 disso (225s) pra nunca deixar lapsar durante a sessão.
 const PERM_REFRESH: Duration = Duration::from_secs(225);
-/// #1527 A-2: janela de overlap — quanto tempo o relay ANTIGO (dedicado) fica drenado+vivo
-/// depois de uma renovação, antes de ser liberado. Cobre a re-nominação do ICE pro candidato
-/// novo (segundos); curto por causa do teto de 41 portas do coturn (#1165).
+/// #1527 A-2: janela de overlap — quanto tempo o relay ANTIGO (dedicado) fica vivo+refrescado
+/// depois de uma renovação, antes de ser liberado (`Refresh lifetime=0`). Mantém o caminho
+/// antigo de pé enquanto o novo é anunciado; NÃO provoca a virada do ICE (o str0m 0.6.3 só
+/// renomeia quando o antigo falhar — ver `aplicar_renew_ice`). Curto por causa do teto de 41
+/// portas do coturn (#1165): segurar duas portas por renovação pesa.
 const GRACE_DRENAGEM: Duration = Duration::from_secs(10);
 
 /// Quando reenviar o Refresh da alocação: a 3/4 do lifetime concedido, com piso de
@@ -463,9 +465,18 @@ struct RuntimeSession {
     /// #1130 fatia 3: relay TURN alocado (data-path), ou `None` (host/srflx puro).
     relay: Option<RelayState>,
     /// #1527 A-2: relay ANTIGO durante o overlap de uma renovação — mantido vivo (drenado +
-    /// refrescado) até o ICE validar o novo, depois liberado (`Refresh lifetime=0`). `None`
-    /// fora de uma renovação. Ter dois relays simultâneos é o que evita a queda na virada.
+    /// refrescado) até ser liberado (`Refresh lifetime=0`). `None` fora de uma renovação.
+    /// ⚠️ O overlap mantém o caminho antigo vivo, mas NÃO faz o ICE virar pro novo: no str0m
+    /// 0.6.3 o candidato relay novo nasce com prioridade MENOR e o `evaluate_nomination` mantém
+    /// o par antigo (de maior prio) enquanto responde; a nomeação só passa ao novo quando o
+    /// antigo FALHA após a libertação (tempo de deteção do str0m — estimado, não medido). A
+    /// virada LIMPA (dados passam na virada, AC2) é a fatia A-3 (Altair desenha no #1527).
     relay_drenando: Option<RelayState>,
+    /// #1527 A-2 (fail-closed, review do Altair): `relayed` de alocações JÁ LIBERADAS. Depois
+    /// do `liberar_relay` o str0m ainda emite transmits com `origem == relayed_antigo` até
+    /// renomear; sem isto caíam num envio DIRETO cru pelo `session.socket` (vazava o IP de host
+    /// pro destino + não entregava nada). `enviar_datagrama` DESCARTA envios desta origem.
+    relayed_liberados: HashSet<SocketAddr>,
     capture_frames: Option<Receiver<galaxie_remote_capture::CodedFrame>>,
     transport_encoder_commands: TransportCommandReceiver,
     capture_encoder_commands: Option<galaxie_remote_capture::contract::CommandChannel>,
@@ -873,6 +884,7 @@ impl RuntimeSession {
             injector,
             relay,
             relay_drenando: None,
+            relayed_liberados: HashSet::new(),
             capture_frames,
             transport_encoder_commands,
             capture_encoder_commands,
@@ -1035,6 +1047,15 @@ impl RuntimeSession {
             .as_ref()
             .filter(|r| r.socket.is_none())
             .map(|r| (r.turn_server, r.relayed));
+        // #1527 A-2 (nit do Altair): o endereço do coturn. Quando NÃO há relay no `session.socket`
+        // (`relay_io` None — o relay ativo está no socket dedicado dele), qualquer tráfego aqui
+        // vindo do coturn é restolho de uma alocação LIBERADA (resposta ao `Refresh lifetime=0`,
+        // Data indication atrasada) → descarta, não entrega ao str0m como tráfego direto.
+        let coturn = self
+            .relay
+            .as_ref()
+            .or(self.relay_drenando.as_ref())
+            .map(|r| r.turn_server);
         loop {
             match self.socket.recv_from(&mut buffer) {
                 Ok((len, source)) => {
@@ -1051,6 +1072,9 @@ impl RuntimeSession {
                             }
                             continue;
                         }
+                    }
+                    if relay_io.is_none() && Some(source) == coturn {
+                        continue; // restolho do coturn de uma alocação liberada (fail-closed)
                     }
                     self.transport
                         .receber_udp(source, self.local_addr, pacote)
@@ -1124,7 +1148,7 @@ impl RuntimeSession {
         // ATIVO ou DRENANDO (durante o overlap de uma renovação, os dois estão vivos). Cada
         // relay tem o seu socket (`socket=Some`, 5-tuple próprio) ou usa o `session.socket`
         // (`None`, o relay inicial). Host/srflx (`origem` != nenhum relayed) vai direto.
-        if origem == self.relay.as_ref().map(|r| r.relayed).unwrap_or(destino) {
+        if Some(origem) == self.relay.as_ref().map(|r| r.relayed) {
             if let Some(relay) = self.relay.as_mut() {
                 return Self::enviar_por_relay(relay, &self.socket, destino, dados);
             }
@@ -1133,6 +1157,17 @@ impl RuntimeSession {
             if let Some(relay) = self.relay_drenando.as_mut() {
                 return Self::enviar_por_relay(relay, &self.socket, destino, dados);
             }
+        }
+        // #1527 A-2 (fail-closed, review do Altair): `origem` de uma alocação JÁ LIBERADA — o
+        // str0m ainda emite transmits por ela até renomear o par. DESCARTA, em vez de cair no
+        // envio DIRETO cru pelo `session.socket` (que vazaria o IP de host pro destino e não
+        // entregaria nada útil). Host/srflx genuíno (origem = base local) segue direto abaixo.
+        if self.relayed_liberados.contains(&origem) {
+            log::debug!(
+                "[remote] #1527 A-2: datagrama de relayed LIBERADO ({origem}) descartado \
+                 (fail-closed; o str0m ainda nao renomeou o par)"
+            );
+            return Ok(());
         }
         Self::enviar_best_effort(&self.socket, dados, destino)
     }
@@ -1211,20 +1246,27 @@ impl RuntimeSession {
     }
 
     /// #1527 A-2: aplica a credencial TURN NOVA (roteada do `remote_session_renew_ice` via
-    /// `RuntimeCommand::RenewIce`). Aloca num SOCKET NOVO sobrepondo, anuncia o candidato relay
-    /// novo (trickle → ICE restart: o peer migra) e TROCA o data-path (`self.relay`).
+    /// `RuntimeCommand::RenewIce`). Aloca num SOCKET NOVO sobrepondo, ANUNCIA o candidato relay
+    /// novo (trickle) e põe o antigo a drenar/liberar. **Fecha o 437, NÃO a virada do data-path.**
     ///
     /// ⚠️ SOCKET NOVO, não o mesmo (review do Altair, medido contra produção): uma alocação TURN
     /// é o 5-tuple; um 2º Allocate do MESMO socket com a antiga viva é **437 Allocation Mismatch**
     /// (RFC 5766 §6.2). Por isso a renovação faz `bind 0.0.0.0:0` → 5-tuple novo → o coturn aceita.
     ///
+    /// ⚠️ O overlap NÃO faz o ICE virar pro relay novo (medido pelo Altair no str0m 0.6.3): o
+    /// candidato relay novo nasce com `local_preference` MENOR e o `evaluate_nomination` mantém o
+    /// par antigo (de maior prio) ENQUANTO ele responde. NÃO é ICE restart (ufrag/pwd não mudam).
+    /// A nomeação só passa ao novo quando o par antigo FALHA depois da libertação — ou seja, há um
+    /// BURACO ≈ o tempo de deteção de falha do str0m (estimado ~15-25 s, **não medido**). O overlap
+    /// serve só pra o caminho antigo não cair ANTES de o novo existir; a virada LIMPA ("dados passam
+    /// na virada", AC2) fica pra a fatia A-3 (ICE restart por renegociação, Altair desenha no #1527).
+    ///
     /// Invariantes:
     /// - **rearme** do `reemitir_em`: o `gather_relay` recomputa-o do `ttl_seconds` novo (requisito
     ///   do Altair; sem rearme a 2ª reemissão nunca dispararia).
-    /// - **overlap "dados continuam passando"**: o relay antigo DEDICADO vai pra `relay_drenando`
-    ///   (vivo+refrescado+drenado) por `GRACE_DRENAGEM` enquanto o ICE valida o novo, depois é
-    ///   liberado (`Refresh lifetime=0`). O relay INICIAL (no `session.socket`, que serve
-    ///   host/srflx) não pode drenar aqui → liberado síncrono (gap breve só na 1ª renovação).
+    /// - **overlap**: o relay antigo DEDICADO vai pra `relay_drenando` (vivo+refrescado+drenado por
+    ///   `GRACE_DRENAGEM`), depois liberado (`Refresh lifetime=0`). O relay INICIAL (no
+    ///   `session.socket`, que serve host/srflx) não pode drenar aqui → liberado síncrono.
     /// - **permissões**: o relay novo nasce com `permitidos` vazio; re-instalam LAZY no 1º envio.
     ///
     /// Falha de alocação NÃO é fatal: mantém o relay antigo + GRITA — sem reaplicar, a sessão cai.
@@ -1247,7 +1289,8 @@ impl RuntimeSession {
             };
             novo.socket = Some(socket_novo); // o relay NOVO é dono do seu socket
             let relayed_novo = novo.relayed;
-            // Anuncia o candidato relay novo (trickle → ICE restart; o peer migra pra ele).
+            // Anuncia o candidato relay novo (trickle). NÃO é ICE restart e o str0m 0.6.3 NÃO
+            // vira pra ele enquanto o antigo responde (prioridade menor) — ver doc acima.
             self.transport
                 .candidato_relay(relayed_novo)
                 .map_err(transport_error)?;
@@ -1262,6 +1305,7 @@ impl RuntimeSession {
             // teto de portas).
             if let Some(velho) = self.relay_drenando.take() {
                 Self::liberar_relay(&velho, &self.socket);
+                self.relayed_liberados.insert(velho.relayed); // fail-closed
             }
             // Troca o data-path pro relay NOVO; decide o destino do antigo.
             if let Some(mut antigo) = self.relay.replace(novo) {
@@ -1270,12 +1314,14 @@ impl RuntimeSession {
                     self.relay_drenando = Some(antigo); // overlap: drena+refresca até o prazo
                 } else {
                     Self::liberar_relay(&antigo, &self.socket); // inicial: libera síncrono
+                    self.relayed_liberados.insert(antigo.relayed); // fail-closed
                 }
             }
             log::info!(
-                "[remote] #1527 A-2: credencial TURN REAPLICADA — relay novo (relayed={relayed_novo}) \
+                "[remote] #1527 A-2: credencial TURN reaplicada — relay novo (relayed={relayed_novo}) \
                  em socket NOVO (5-tuple novo, sem 437); reemitir_em rearmado; antigo em overlap/\
-                 liberado. segredo NAO logado."
+                 liberado. NOTA: o str0m so vira o data-path pro novo quando o antigo falhar \
+                 (buraco estimado, nao medido); virada limpa = fatia A-3. segredo NAO logado."
             );
             return Ok(());
         }
@@ -1337,7 +1383,9 @@ impl RuntimeSession {
         // mantém-no refrescado pra o caminho antigo não cair enquanto o ICE valida o novo.
         if let Some(drenando) = self.relay_drenando.as_mut() {
             if drenando.liberar_em.is_some_and(|t| agora >= t) {
+                let relayed_antigo = drenando.relayed;
                 Self::liberar_relay(drenando, &self.socket);
+                self.relayed_liberados.insert(relayed_antigo); // fail-closed (#1527 A-2)
                 self.relay_drenando = None;
             } else if agora >= drenando.refresh_em {
                 Self::refrescar_relay(drenando, &self.socket)?;
@@ -2569,22 +2617,6 @@ mod tests {
         assert_eq!(json.as_object().unwrap().len(), 1, "RenewIceNeeded nao deve ter payload");
     }
 
-    #[test]
-    fn renovacao_aloca_de_socket_com_5tuple_novo() {
-        // #1527 A-2 (regressão do 437 que o Altair mediu): a renovação TEM de alocar de um
-        // socket NOVO — um 2º Allocate do MESMO 5-tuple com a alocação viva é 437 Allocation
-        // Mismatch (RFC 5766 §6.2). Este teste fixa a PREMISSA: um `bind 0.0.0.0:0` novo dá um
-        // `local_addr` (porta) distinto do socket vivo ⇒ 5-tuple distinto. (A prova E2E — o
-        // coturn ACEITAR o 2º Allocate — é gated no relay real / sonda do Altair; aqui é o
-        // invariante local que o `aplicar_renew_ice` depende.)
-        let vivo = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let renovacao = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        assert_ne!(
-            vivo.local_addr().unwrap().port(),
-            renovacao.local_addr().unwrap().port(),
-            "o socket da renovacao tem de ter 5-tuple distinto do relay vivo (senao 437)"
-        );
-    }
 
     // ── #1130: o AC "o segredo TURN nunca aparece em log" ganha guarda ───────
     //
