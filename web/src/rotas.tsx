@@ -4,10 +4,13 @@ import { ContaPage } from "@/pages/conta";
 import { ConfigPage } from "@/pages/config";
 import { AdminOrgPage } from "@/pages/admin-org";
 import { BackOfficePage } from "@/pages/back-office";
+import { RaizPage } from "@/pages/raiz";
 
 // Config de rotas do app web. Fica em módulo próprio (não em App.tsx) pra
 // App.tsx exportar só o componente — Fast Refresh e o lint da casa
 // (react/only-export-components) exigem um arquivo com componentes só.
+//  • /           (#1484/#1734) — destino do callback OAuth: falha → /login com o
+//                aviso; sucesso → /conta. Ver `pages/raiz.tsx`.
 //  • /login      (#1484) — login/onboarding.
 //  • /conta      (#1489) — conta/perfil (/me): perfil, assinatura, dispositivos.
 //  • /config     (#1491) — config do app: prefs da allowlist (/me/config).
@@ -22,6 +25,7 @@ import { BackOfficePage } from "@/pages/back-office";
 // que o cliente não pode oferecer — qualquer um edita o próprio JS. As páginas
 // pedem o recurso e refletem a negativa. Ver o cabeçalho de `admin-org.tsx`.
 export const rotas = createBrowserRouter([
+  { path: "/", element: <RaizPage /> },
   { path: "/login", element: <LoginPage /> },
   { path: "/conta", element: <ContaPage /> },
   { path: "/config", element: <ConfigPage /> },

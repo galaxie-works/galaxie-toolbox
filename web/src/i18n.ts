@@ -10,6 +10,10 @@ export interface Dicionario {
   subtitulo: string;
   entrarCom: Record<"microsoft" | "microsoft-personal" | "google", string>;
   semSenha: string;
+  // #1484 + contrato #1734 — o callback OAuth falhou (qualquer causa, inclusive
+  // "cancelei no provedor": o sinal é ÚNICO). Texto FIXO — nada da URL é mostrado.
+  loginFalhou: string;
+  loginFalhouDetalhe: string;
   // #1489 — conta/perfil
   minhaConta: string;
   perfil: string;
@@ -120,6 +124,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
       google: "Entrar com Google",
     },
     semSenha: "A Galaxie usa sua conta federada — sem senha própria.",
+    loginFalhou: "Não foi possível entrar",
+    loginFalhouDetalhe: "O login não foi concluído. Escolha a conta e tente de novo.",
     minhaConta: "Minha conta",
     perfil: "Perfil",
     nome: "Nome",
@@ -193,6 +199,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
       google: "Sign in with Google",
     },
     semSenha: "Galaxie uses your federated account — no password of its own.",
+    loginFalhou: "We couldn't sign you in",
+    loginFalhouDetalhe: "Sign-in didn't complete. Choose your account and try again.",
     minhaConta: "My account",
     perfil: "Profile",
     nome: "Name",
@@ -263,4 +271,15 @@ export function idiomaAtual(
     : undefined,
 ): Idioma {
   return navegador?.toLowerCase().startsWith("en") ? "en" : "pt-BR";
+}
+
+/**
+ * Alinha o idioma DECLARADO da página (`<html lang>`) ao idioma RENDERIZADO —
+ * WCAG 3.1.1 (#1484, achado da @Íris). O `index.html` nasce `pt-BR` (o mesmo
+ * default do `idiomaAtual`); sem isto, num navegador em inglês a UI inteira sai
+ * em inglês com a página a declarar português, e o leitor de ecrã lê inglês com
+ * fonética portuguesa. `Idioma` já é tag BCP 47 ("pt-BR" | "en") — vai direto.
+ */
+export function aplicarIdiomaNoDocumento(idioma: Idioma, doc: Document = document): void {
+  doc.documentElement.lang = idioma;
 }
