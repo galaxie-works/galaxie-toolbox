@@ -297,6 +297,24 @@ jobs:
         working-directory: services/platform-identity
         run: cargo test
 
+      # #1683 AC2: "teste que acrescenta variante fictícia e espera falha de compilação". A feature
+      # injeta `Operacao::CanarioSemPolitica` sem política; o passo EXIGE E0004 apontando para ela. Se
+      # compilar, o `autorizar` ganhou catch-all (o default-deny deixou de ser por construção).
+      - name: services/platform-identity — canário AC2 (#1683, variante sem política não compila)
+        working-directory: services/platform-identity
+        shell: bash
+        run: |
+          if cargo check --features canario-operacao-sem-politica 2> canario.log; then
+            echo "::error::uma variante do Operacao SEM política compilou — o match do autorizar perdeu a exaustividade"
+            exit 1
+          fi
+          if ! grep -q "E0004" canario.log || ! grep -q "CanarioSemPolitica" canario.log; then
+            cat canario.log
+            echo "::error::o canário falhou, mas não pelo match não exaustivo"
+            exit 1
+          fi
+          echo "ok: a variante sem política não compila (E0004)"
+
       # #1469 fatia 3: borda web (CSPRNG do SessaoId + parse do cookie). Depende de
       # platform-identity; rand+base64, sem OpenSSL.
       - name: services/platform-web (borda sessão)

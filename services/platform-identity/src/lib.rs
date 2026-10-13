@@ -280,6 +280,11 @@ pub enum Operacao {
     /// Definir a política de sessão da org — os tetos (org-scoped, `OrgAdmin`). Mesmo dono/eixo do
     /// `GerirAcessoRemotoDaOrg`; separado porque é uma operação distinta que o painel do #1472 expõe.
     DefinirPoliticaDeSessao { alvo: OrgId },
+
+    /// Canário do AC2 do #1683: variante FICTÍCIA, sem política, que só existe com a feature
+    /// `canario-operacao-sem-politica`. O CI liga-a e exige que o crate NÃO compile.
+    #[cfg(feature = "canario-operacao-sem-politica")]
+    CanarioSemPolitica,
 }
 
 /// Resultado de uma decisão de autorização. Sem terceiro estado: ou permite, ou nega.
