@@ -13,7 +13,7 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, put};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
@@ -459,7 +459,7 @@ async fn listar_membros(
 /// ANTES de tocar o store). O ENFORÇO da invariante org-não-órfã NÃO vive aqui: é atómico, no store
 /// (`_preservando`), onde o lock está — a DECISÃO pode viver na autz, o enforço vive com o lock
 /// (correção da regra do @Altair). `Ok(())` = a base permitiu; o handler prossegue pro store.
-async fn autz_base_mutacao(
+pub(crate) async fn autz_base_mutacao(
     estado: &EstadoBorda,
     sessao: &galaxie_platform_identity::Sessao,
     acao: &AcaoAdminOrg,
@@ -949,6 +949,22 @@ pub fn rotas(estado: EstadoBorda) -> Router {
             delete(remover_membro).patch(mudar_papel_membro),
         )
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
+        // #1683: config do Remote (GUARDA, não aplica — a ponte é o #1729). Org: teto + concessões.
+        .route(
+            "/api/v1/orgs/{org}/remoto/politica",
+            get(crate::remoto::ver_politica).put(crate::remoto::definir_politica),
+        )
+        .route(
+            "/api/v1/orgs/{org}/remoto/concessoes",
+            get(crate::remoto::listar_concessoes).post(crate::remoto::conceder),
+        )
+        .route("/api/v1/orgs/{org}/remoto/concessoes/{id}", delete(crate::remoto::revogar))
+        // #1683 /me: a restrição que o utilizador põe no SEU device (survive-list: não passa pela org).
+        .route("/api/v1/me/remoto/dispositivos", get(crate::remoto::minhas_restricoes))
+        .route(
+            "/api/v1/me/remoto/dispositivos/{device_id}",
+            put(crate::remoto::definir_restricao).delete(crate::remoto::remover_restricao),
+        )
         .route("/api/v1/auth/{provedor}", get(iniciar_auth))
         .route("/api/v1/auth/{provedor}/callback", get(callback))
         .route("/api/v1/session", delete(encerrar))
@@ -2319,6 +2335,239 @@ mod tests {
         membros.inserir(OrgId("acme".into()), membro_teste("u2", Papel::Member));
         let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis(), sem_prefs(), sem_registro());
         (estado, cookie_adm, cookie_u2)
+    }
+
+    // ===================================================================================================
+    // #1683 — contrato da config do Remote (guarda, não aplica)
+    // ===================================================================================================
+
+    fn json_de(corpo: &[u8]) -> serde_json::Value {
+        serde_json::from_slice(corpo).unwrap_or_else(|_| panic!("JSON: {}", String::from_utf8_lossy(corpo)))
+    }
+
+    const CONCESSAO_U2: &str =
+        r#"{"sujeito":{"tipo":"utilizador","uid":"u2"},"objeto":{"tipo":"dispositivo","id":"pc-ana"},"capacidades":{"screen":true}}"#;
+
+    #[tokio::test]
+    async fn remoto_teto_nasce_no_default_e_o_put_substitui() {
+        let (estado, cookie_adm, _) = borda_admin_e_alvo();
+        let (s, c) = requisicao(estado.clone(), "GET", "/api/v1/orgs/acme/remoto/politica", &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::OK);
+        // "O mais fechado que ainda funciona": as 5 no teto, aprovação por clique, sem não-supervisionado.
+        assert_eq!(
+            json_de(&c),
+            serde_json::json!({
+                "capacidades_maximas": {"screen":true,"input":true,"fileTransfer":true,"clipboard":true,"audio":true},
+                "modo_aprovacao": "clique",
+                "permitir_nao_supervisionado": false
+            })
+        );
+        let novo = r#"{"capacidades_maximas":{"screen":true},"modo_aprovacao":"senha_ou_clique","permitir_nao_supervisionado":true}"#;
+        let (s, _) = requisicao(estado.clone(), "PUT", "/api/v1/orgs/acme/remoto/politica", &cookie_adm, novo).await;
+        assert_eq!(s, StatusCode::OK);
+        let (_, c) = requisicao(estado, "GET", "/api/v1/orgs/acme/remoto/politica", &cookie_adm, "").await;
+        let v = json_de(&c);
+        assert_eq!(v["capacidades_maximas"]["input"], false, "campo omitido nas capacidades = negado");
+        assert_eq!(v["modo_aprovacao"], "senha_ou_clique");
+    }
+
+    #[tokio::test]
+    async fn remoto_vocabulario_e_exatamente_o_do_capabilities_no_fio() {
+        // Canário do AC6 NO FIO: as capacidades saem com EXATAMENTE as 5 chaves do `Capabilities`, e
+        // uma chave fora do vocabulário (o RustDesk tem `camera`, gravação…) é RECUSADA na entrada — o
+        // painel não consegue guardar uma capacidade que o ticket não aplica.
+        let (estado, cookie_adm, _) = borda_admin_e_alvo();
+        let (_, c) = requisicao(estado.clone(), "GET", "/api/v1/orgs/acme/remoto/politica", &cookie_adm, "").await;
+        let chaves: std::collections::BTreeSet<String> =
+            json_de(&c)["capacidades_maximas"].as_object().unwrap().keys().cloned().collect();
+        let esperadas: std::collections::BTreeSet<String> =
+            ["audio", "clipboard", "fileTransfer", "input", "screen"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(chaves, esperadas, "o vocabulário do contrato divergiu do Capabilities");
+        for corpo in [
+            r#"{"capacidades_maximas":{"camera":true},"modo_aprovacao":"clique","permitir_nao_supervisionado":false}"#,
+            r#"{"capacidades_maximas":{},"modo_aprovacao":"clique","permitir_nao_supervisionado":false,"desligar_por_inatividade":true}"#,
+            r#"{"capacidades_maximas":{},"modo_aprovacao":"automatico","permitir_nao_supervisionado":false}"#,
+        ] {
+            let (s, _) = requisicao(estado.clone(), "PUT", "/api/v1/orgs/acme/remoto/politica", &cookie_adm, corpo).await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "fora do vocabulário/contrato: {corpo}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remoto_member_nao_alcanca_e_a_autz_vem_antes_do_corpo() {
+        // AC4, direção "utilizador → acesso lateral": o member `u2` não mexe no teto nem se concede
+        // acesso. E um corpo inválido de quem não pode dá 403, não 400 — a validação não é sondável.
+        let (estado, _, cookie_u2) = borda_admin_e_alvo();
+        for (metodo, caminho, corpo) in [
+            ("GET", "/api/v1/orgs/acme/remoto/politica", ""),
+            ("PUT", "/api/v1/orgs/acme/remoto/politica", "isto nem é json"),
+            ("GET", "/api/v1/orgs/acme/remoto/concessoes", ""),
+            ("POST", "/api/v1/orgs/acme/remoto/concessoes", CONCESSAO_U2),
+            ("DELETE", "/api/v1/orgs/acme/remoto/concessoes/cr-1", ""),
+        ] {
+            let (s, _) = requisicao(estado.clone(), metodo, caminho, &cookie_u2, corpo).await;
+            assert_eq!(s, StatusCode::FORBIDDEN, "member: {metodo} {caminho}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remoto_admin_de_outra_org_recebe_404() {
+        let (estado, cookie_outra) = borda_membros(
+            admin_de("outra"),
+            vec![org_teste("acme")],
+            vec![(OrgId("acme".into()), membro_teste("u2", Papel::Member))],
+        );
+        for (metodo, caminho, corpo) in [
+            ("GET", "/api/v1/orgs/acme/remoto/politica", ""),
+            ("POST", "/api/v1/orgs/acme/remoto/concessoes", CONCESSAO_U2),
+        ] {
+            let (s, _) = requisicao(estado.clone(), metodo, caminho, &cookie_outra, corpo).await;
+            assert_eq!(s, StatusCode::NOT_FOUND, "org alheia não existe para quem pede: {metodo} {caminho}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remoto_concessao_conferida_criada_listada_e_revogada() {
+        let (estado, cookie_adm, _) = borda_admin_e_alvo();
+        let (s, c) = requisicao(estado.clone(), "POST", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, CONCESSAO_U2).await;
+        assert_eq!(s, StatusCode::CREATED, "{}", String::from_utf8_lossy(&c));
+        let criada = json_de(&c);
+        assert_eq!(criada["sujeito"], serde_json::json!({"tipo":"utilizador","uid":"u2"}));
+        assert_eq!(criada["objeto"], serde_json::json!({"tipo":"dispositivo","id":"pc-ana"}));
+        assert_eq!(criada["capacidades"]["screen"], true);
+        assert_eq!(criada["capacidades"]["input"], false, "nasce com SÓ o que foi pedido");
+        assert_eq!(criada["concedida_por"], "adm");
+        assert_eq!(criada["ativa"], true);
+        let id = criada["id"].as_str().unwrap().to_string();
+
+        let (_, c) = requisicao(estado.clone(), "GET", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, "").await;
+        assert_eq!(json_de(&c).as_array().unwrap().len(), 1);
+
+        // AC5: revogar é sempre permitido ao admin e é idempotente.
+        let caminho = format!("/api/v1/orgs/acme/remoto/concessoes/{id}");
+        let (s, _) = requisicao(estado.clone(), "DELETE", &caminho, &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+        let (s, _) = requisicao(estado.clone(), "DELETE", &caminho, &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "revogar outra vez não falha");
+        let (_, c) = requisicao(estado.clone(), "GET", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, "").await;
+        assert_eq!(json_de(&c)[0]["ativa"], false, "o rasto fica, revogado");
+        let (s, _) = requisicao(estado, "DELETE", "/api/v1/orgs/acme/remoto/concessoes/cr-999", &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn remoto_sujeito_tem_de_ser_membro_e_o_device_id_bem_formado() {
+        let (estado, cookie_adm, _) = borda_admin_e_alvo();
+        // Sujeito que NÃO é membro da org ⇒ 404 (não confirma que exista noutro sítio).
+        let estranho = r#"{"sujeito":{"tipo":"utilizador","uid":"zezinho"},"objeto":{"tipo":"dispositivo","id":"pc-ana"},"capacidades":{}}"#;
+        let (s, _) = requisicao(estado.clone(), "POST", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, estranho).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        // `device_id` fora da regra do remote-net ⇒ 400; campo desconhecido ⇒ 400.
+        for corpo in [
+            r#"{"sujeito":{"tipo":"utilizador","uid":"u2"},"objeto":{"tipo":"dispositivo","id":"pc ana"},"capacidades":{}}"#,
+            r#"{"sujeito":{"tipo":"utilizador","uid":"u2"},"objeto":{"tipo":"dispositivo","id":"pc-ana"},"capacidades":{},"expira_em":5}"#,
+            r#"{"sujeito":{"tipo":"grupo","id":"g1"},"objeto":{"tipo":"dispositivo","id":"pc-ana"},"capacidades":{}}"#,
+        ] {
+            let (s, _) = requisicao(estado.clone(), "POST", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, corpo).await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "{corpo}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remoto_org_suspensa_bloqueia_conceder_mas_deixa_listar_e_revogar() {
+        // Regra 5: escrita org-scoped em org suspensa ⇒ 403 org_suspensa. Regra 3: revogar FECHA acesso,
+        // logo atravessa a suspensão — senão a concessão voltava viva na reativação. E o FLUXO INTEIRO
+        // tem de funcionar (review da #1735): o admin LISTA, tira o `id` da listagem e revoga. O `id`
+        // não vem do armazém do teste, vem do fio, como no painel.
+        let mut org = org_teste("acme");
+        org.suspender();
+        let (estado, cookie_adm) = borda_membros(
+            admin_de("acme"),
+            vec![org],
+            vec![(OrgId("acme".into()), membro_teste("u2", Papel::Member))],
+        );
+        let existente = estado
+            .remoto
+            .concessoes
+            .conceder(
+                &OrgId("acme".into()),
+                galaxie_platform_remoto::NovaConcessao {
+                    sujeito: galaxie_platform_remoto::SujeitoRemoto::Utilizador(UserId("u2".into())),
+                    objeto: galaxie_platform_remoto::ObjetoRemoto::Dispositivo(
+                        galaxie_platform_remoto::DeviceId::novo("pc-ana").unwrap(),
+                    ),
+                    capacidades: galaxie_platform_remoto::todas(),
+                    concedida_por: UserId("adm".into()),
+                    concedida_em: AGORA,
+                },
+            )
+            .unwrap();
+        // Conceder e o teto continuam bloqueados.
+        for (metodo, caminho, corpo) in [
+            ("POST", "/api/v1/orgs/acme/remoto/concessoes", CONCESSAO_U2),
+            ("GET", "/api/v1/orgs/acme/remoto/politica", ""),
+            (
+                "PUT",
+                "/api/v1/orgs/acme/remoto/politica",
+                r#"{"capacidades_maximas":{},"modo_aprovacao":"clique","permitir_nao_supervisionado":false}"#,
+            ),
+        ] {
+            let (s, c) = requisicao(estado.clone(), metodo, caminho, &cookie_adm, corpo).await;
+            assert_eq!(s, StatusCode::FORBIDDEN, "{metodo} {caminho}");
+            assert!(String::from_utf8_lossy(&c).contains("org_suspensa"), "{metodo} {caminho}");
+        }
+        // Listar → id → revogar, tudo pelo fio.
+        let (s, c) = requisicao(estado.clone(), "GET", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::OK, "a listagem atravessa a suspensão (é dela que vem o id)");
+        let lista = json_de(&c);
+        assert_eq!(lista.as_array().unwrap().len(), 1);
+        let id = lista[0]["id"].as_str().unwrap().to_string();
+        assert_eq!(id, existente.id.0);
+        let caminho = format!("/api/v1/orgs/acme/remoto/concessoes/{id}");
+        let (s, _) = requisicao(estado.clone(), "DELETE", &caminho, &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "a revogação atravessa a suspensão");
+        let (_, c) = requisicao(estado, "GET", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, "").await;
+        assert_eq!(json_de(&c)[0]["ativa"], false, "revogada, e o admin vê-o");
+    }
+
+    #[tokio::test]
+    async fn remoto_me_restricao_e_do_dono_da_sessao() {
+        // AC4, direção "admin → device alheio": a restrição do device vive SÓ no /me do próprio. Não há
+        // rota com o id de outro utilizador; o que o admin grava fica no espaço DELE e não toca no do u2.
+        let (estado, cookie_adm, cookie_u2) = borda_admin_e_alvo();
+        let corpo = r#"{"capacidades":{"screen":true}}"#;
+        let (s, c) = requisicao(estado.clone(), "PUT", "/api/v1/me/remoto/dispositivos/pc-u2", &cookie_u2, corpo).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(json_de(&c), serde_json::json!({"dispositivo_id":"pc-u2","capacidades":{"screen":true,"input":false,"fileTransfer":false,"clipboard":false,"audio":false}}));
+        // O admin "restringe" o MESMO device_id: fica no espaço dele, a do u2 não muda.
+        let (s, _) = requisicao(estado.clone(), "PUT", "/api/v1/me/remoto/dispositivos/pc-u2", &cookie_adm, r#"{"capacidades":{}}"#).await;
+        assert_eq!(s, StatusCode::OK);
+        let (_, c) = requisicao(estado.clone(), "GET", "/api/v1/me/remoto/dispositivos", &cookie_u2, "").await;
+        assert_eq!(json_de(&c)[0]["capacidades"]["screen"], true, "a restrição do u2 é só do u2");
+        // Remover; remover outra vez ⇒ 404; id mal formado ⇒ 400; sem sessão ⇒ 401.
+        let (s, _) = requisicao(estado.clone(), "DELETE", "/api/v1/me/remoto/dispositivos/pc-u2", &cookie_u2, "").await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+        let (s, _) = requisicao(estado.clone(), "DELETE", "/api/v1/me/remoto/dispositivos/pc-u2", &cookie_u2, "").await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _) = requisicao(estado.clone(), "PUT", "/api/v1/me/remoto/dispositivos/pc%20u2", &cookie_u2, corpo).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        let (s, _) = requisicao(estado, "GET", "/api/v1/me/remoto/dispositivos", "", "").await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn remoto_me_sobrevive_a_suspensao() {
+        // O device é do UTILIZADOR, não recurso da org: o /me não passa pela autz de org (survive-list).
+        let mut org = org_teste("acme");
+        org.suspender();
+        let sessao_u2 = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u2".into()), org: OrgId("acme".into()) },
+            Escopo::de_orgs([OrgId("acme".into())]),
+        );
+        let (estado, cookie_u2) = borda_membros(sessao_u2, vec![org], vec![]);
+        let (s, _) =
+            requisicao(estado, "PUT", "/api/v1/me/remoto/dispositivos/pc-u2", &cookie_u2, r#"{"capacidades":{}}"#).await;
+        assert_eq!(s, StatusCode::OK, "o /me do device sobrevive à suspensão");
     }
 
     // #1545 — REMOVER revoga a sessão do alvo NA HORA (não em 12h). u2 logado ⇒ /me/orgs 200; admin

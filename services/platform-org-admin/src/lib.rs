@@ -44,6 +44,20 @@ pub enum AcaoAdminOrg {
     VerificarDominio,
     EditarSettings,
     GerirAssinatura,
+
+    // --- #1683: configuração do Remote da org (desenho do @Altair; capacidades NOVAS no `Operacao`,
+    // ratificadas no #1683 — não são instâncias do `GerirOrg`). ---
+    /// Ler o teto da org (session-policy). Autorizada IGUAL à escrita ("não se gere o que não se vê").
+    VerPoliticaRemota,
+    /// Gravar o teto da org.
+    DefinirPoliticaRemota,
+    /// Listar as concessões de acesso remoto da org.
+    ListarConcessoesRemotas,
+    /// Criar uma concessão (quem controla que device, com que capacidades).
+    ConcederAcessoRemoto,
+    /// Revogar uma concessão. ⚠️ **Sobrevive à suspensão** (ver [`decidir_acao_admin`]): revogar é o
+    /// movimento para o estado mais fechado (regra 3 do Altair no #1683).
+    RevogarAcessoRemoto,
 }
 
 impl AcaoAdminOrg {
@@ -63,6 +77,11 @@ impl AcaoAdminOrg {
             AcaoAdminOrg::VerificarDominio => "org_admin.verificar_dominio",
             AcaoAdminOrg::EditarSettings => "org_admin.editar_settings",
             AcaoAdminOrg::GerirAssinatura => "org_admin.gerir_assinatura",
+            AcaoAdminOrg::VerPoliticaRemota => "org_admin.remoto.ver_politica",
+            AcaoAdminOrg::DefinirPoliticaRemota => "org_admin.remoto.definir_politica",
+            AcaoAdminOrg::ListarConcessoesRemotas => "org_admin.remoto.listar_concessoes",
+            AcaoAdminOrg::ConcederAcessoRemoto => "org_admin.remoto.conceder_acesso",
+            AcaoAdminOrg::RevogarAcessoRemoto => "org_admin.remoto.revogar_acesso",
         }
     }
 
@@ -123,6 +142,14 @@ fn operacao_de(acao: &AcaoAdminOrg, org: &OrgId) -> Operacao {
         | AcaoAdminOrg::VerificarDominio
         | AcaoAdminOrg::EditarSettings
         | AcaoAdminOrg::GerirAssinatura => Operacao::GerirOrg { alvo: org.clone() },
+        // #1683: capacidades NOVAS, ratificadas pelo @Altair no desenho do card (as 3 variantes que
+        // entraram no `Operacao` — o tripwire abaixo tem-nas numa lista literal própria).
+        AcaoAdminOrg::VerPoliticaRemota | AcaoAdminOrg::DefinirPoliticaRemota => {
+            Operacao::DefinirPoliticaDeSessao { alvo: org.clone() }
+        }
+        AcaoAdminOrg::ListarConcessoesRemotas
+        | AcaoAdminOrg::ConcederAcessoRemoto
+        | AcaoAdminOrg::RevogarAcessoRemoto => Operacao::GerirAcessoRemotoDaOrg { alvo: org.clone() },
     }
 }
 
@@ -246,6 +273,30 @@ pub fn decidir_nao_orfa(
     Ok(())
 }
 
+/// As ações que a SUSPENSÃO da org não bloqueia. `match` EXAUSTIVO sem `_`: ação nova não compila até
+/// decidir. Só sobrevive uma ação que FECHA acesso (a regra 3 do @Altair no #1683), **ou a leitura de
+/// que ela depende**: o `DELETE` da revogação precisa do `id`, e o único sítio que o dá é a listagem.
+/// Sem ela, a revogação numa org suspensa ficava certa no papel e cega na prática (review do Altair na
+/// #1735). A leitura é da própria org pelo seu admin: visibilidade e papel continuam a valer. O teto e
+/// o conceder ficam bloqueados.
+fn sobrevive_a_suspensao(acao: &AcaoAdminOrg) -> bool {
+    match acao {
+        AcaoAdminOrg::RevogarAcessoRemoto | AcaoAdminOrg::ListarConcessoesRemotas => true,
+        AcaoAdminOrg::ListarMembros
+        | AcaoAdminOrg::ConvidarMembro
+        | AcaoAdminOrg::RemoverMembro
+        | AcaoAdminOrg::MudarPapelMembro
+        | AcaoAdminOrg::ListarDominios
+        | AcaoAdminOrg::ReivindicarDominio
+        | AcaoAdminOrg::VerificarDominio
+        | AcaoAdminOrg::EditarSettings
+        | AcaoAdminOrg::GerirAssinatura
+        | AcaoAdminOrg::VerPoliticaRemota
+        | AcaoAdminOrg::DefinirPoliticaRemota
+        | AcaoAdminOrg::ConcederAcessoRemoto => false,
+    }
+}
+
 /// A DECISÃO pura (sem auditoria), na ordem que não vaza: visibilidade (404) → suspensão (403) →
 /// capacidade (403). Separada pra [`autorizar_acao_admin`] auditar AMBOS os ramos sem duplicar a
 /// lógica. Privada: a auditoria é obrigatória, então ninguém chama a decisão sem emitir.
@@ -264,7 +315,13 @@ fn decidir_acao_admin(
     // (2) SUSPENSÃO — a razão GOVERNANTE, ANTES do papel (#1544, desenho do @Altair). Lida do
     // `estado` da org (nunca de claim), por request. Um `Member` de org suspensa vê `Suspensa`, não
     // `Negado`: dizer "papel insuficiente" a quem a org está suspensa é mentira útil pra ninguém.
-    if org_alvo.esta_suspensa() {
+    //
+    // ⚠️ **Exceção: a REVOGAÇÃO remota sobrevive à suspensão** (#1683, regra 3 do @Altair: "revogar
+    // inverte o default-deny — na ambiguidade, o estado mais fechado; conceder = negar, revogar =
+    // deixar revogar"). Revogar FECHA acesso. Se a suspensão a bloqueasse, a concessão que um admin
+    // quis cortar ficava viva e voltava a valer no dia em que a org fosse reativada. A visibilidade (1)
+    // e o papel (3) continuam a valer: só um admin da própria org revoga.
+    if org_alvo.esta_suspensa() && !sobrevive_a_suspensao(acao) {
         return Err(AdminErro::Suspensa);
     }
 
@@ -505,6 +562,68 @@ mod tests {
                 Operacao::GerirOrg { alvo: alvo.clone() },
                 "{acao:?} saiu da Operacao ratificada (GerirOrg) — é autz nova, CHAMA O ARQUITETO antes de mergear"
             );
+        }
+    }
+
+    // ⚠️ A MESMA guarda para as ações do Remote (#1683): lista LITERAL própria, presa às capacidades que
+    // o @Altair RATIFICOU no desenho do #1683 (variantes novas do `Operacao`). Uma ação nova do Remote
+    // tem de entrar aqui à mão — e mudar a capacidade de uma destas volta a ser "chama o arquiteto".
+    #[test]
+    fn acoes_do_remoto_mapeiam_para_as_operacoes_ratificadas_no_1683() {
+        let alvo = OrgId("acme".into());
+        for (acao, esperada) in [
+            (AcaoAdminOrg::VerPoliticaRemota, Operacao::DefinirPoliticaDeSessao { alvo: alvo.clone() }),
+            (AcaoAdminOrg::DefinirPoliticaRemota, Operacao::DefinirPoliticaDeSessao { alvo: alvo.clone() }),
+            (AcaoAdminOrg::ListarConcessoesRemotas, Operacao::GerirAcessoRemotoDaOrg { alvo: alvo.clone() }),
+            (AcaoAdminOrg::ConcederAcessoRemoto, Operacao::GerirAcessoRemotoDaOrg { alvo: alvo.clone() }),
+            (AcaoAdminOrg::RevogarAcessoRemoto, Operacao::GerirAcessoRemotoDaOrg { alvo: alvo.clone() }),
+        ] {
+            assert_eq!(operacao_de(&acao, &alvo), esperada, "{acao:?} saiu da capacidade ratificada no #1683");
+        }
+    }
+
+    const ACOES_REMOTO: [AcaoAdminOrg; 5] = [
+        AcaoAdminOrg::VerPoliticaRemota,
+        AcaoAdminOrg::DefinirPoliticaRemota,
+        AcaoAdminOrg::ListarConcessoesRemotas,
+        AcaoAdminOrg::ConcederAcessoRemoto,
+        AcaoAdminOrg::RevogarAcessoRemoto,
+    ];
+
+    #[test]
+    fn remoto_so_o_admin_da_propria_org_alcanca() {
+        // #1683 AC4 (direção "utilizador → acesso lateral"): um Member NÃO concede acesso a colega nem
+        // mexe no teto; admin de OUTRA org recebe 404 (não enumera); o admin da própria passa.
+        let org_a = org("orgA");
+        for acao in &ACOES_REMOTO {
+            assert_eq!(autz(&sessao_admin("ana", "orgA"), acao, &org_a), Ok(()), "admin da própria: {acao:?}");
+            assert_eq!(autz(&sessao_membro("bia", "orgA"), acao, &org_a), Err(AdminErro::Negado), "member: {acao:?}");
+            assert_eq!(
+                autz(&sessao_admin("caio", "orgB"), acao, &org_a),
+                Err(AdminErro::NaoEncontrada),
+                "admin de outra org: 404, {acao:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn org_suspensa_bloqueia_o_remoto_menos_a_revogacao_e_a_listagem() {
+        // Regra 5 do Altair: org suspensa nega as escritas org-scoped (403). Regra 3: revogar FECHA
+        // acesso, logo atravessa a suspensão — senão a concessão voltava viva na reativação. E a
+        // listagem também, porque é dela que vem o `id` a revogar (review da #1735).
+        let suspensa = org_suspensa("orgA");
+        let admin = sessao_admin("ana", "orgA");
+        for acao in &ACOES_REMOTO {
+            let sobrevive =
+                matches!(acao, AcaoAdminOrg::RevogarAcessoRemoto | AcaoAdminOrg::ListarConcessoesRemotas);
+            let esperado = if sobrevive { Ok(()) } else { Err(AdminErro::Suspensa) };
+            assert_eq!(autz(&admin, acao, &suspensa), esperado, "{acao:?} em org suspensa");
+        }
+        // A exceção não abre o papel nem a visibilidade: um Member continua negado a listar e a
+        // revogar, e um estranho continua sem ver a org.
+        for acao in [AcaoAdminOrg::RevogarAcessoRemoto, AcaoAdminOrg::ListarConcessoesRemotas] {
+            assert_eq!(autz(&sessao_membro("bia", "orgA"), &acao, &suspensa), Err(AdminErro::Negado));
+            assert_eq!(autz(&sessao_admin("caio", "orgB"), &acao, &suspensa), Err(AdminErro::NaoEncontrada));
         }
     }
 

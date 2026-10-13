@@ -290,6 +290,7 @@ dependencies = [
  "galaxie-platform-identity",
  "galaxie-platform-oauth",
  "galaxie-platform-org-admin",
+ "galaxie-platform-remoto",
  "galaxie-platform-web",
  "http-body-util",
  "reqwest",
@@ -325,12 +326,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "galaxie-platform-remoto"
+version = "0.1.0"
+dependencies = [
+ "galaxie-platform-identity",
+ "galaxie-remote-capabilities",
+]
+
+[[package]]
 name = "galaxie-platform-web"
 version = "0.1.0"
 dependencies = [
  "base64",
  "galaxie-platform-identity",
  "rand 0.8.7",
+]
+
+[[package]]
+name = "galaxie-remote-capabilities"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

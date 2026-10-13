@@ -50,6 +50,8 @@ galaxie-platform-conta = { path = "../platform-conta" }
 galaxie-platform-org-admin = { path = "../platform-org-admin" }
 galaxie-platform-config = { path = "../platform-config" }
 galaxie-platform-back-office = { path = "../platform-back-office" }
+# Config do Remote guardada pela plataforma (#1683): concessões, teto da org, restrição do device.
+galaxie-platform-remoto = { path = "../platform-remoto" }
 
 [dev-dependencies]
 # Os testes leem o CORPO inteiro da resposta (o teste do anti-oráculo compara status+headers+CORPO)

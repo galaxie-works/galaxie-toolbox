@@ -12,3 +12,10 @@ publish = false
 # Fatia 1 é pura (std). Nenhuma dependência de propósito: a fundação de autorização
 # não deve arrastar runtime/serde/tls pra dentro da decisão de "quem pode?".
 [dependencies]
+
+# Canário do AC2 do #1683 — NUNCA ligar fora desse teste. Acrescenta ao `Operacao` uma variante
+# FICTÍCIA sem política; o CI exige que `cargo check --features canario-operacao-sem-politica` FALHE
+# com E0004 (match não exaustivo). Se um dia compilar, o `autorizar` ganhou um catch-all e o
+# "negado por construção" virou promessa.
+[features]
+canario-operacao-sem-politica = []

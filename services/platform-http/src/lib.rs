@@ -26,6 +26,9 @@ pub mod oauth_config;
 /// Cliente HTTP de saída da troca `code`→token (#1695 fatia C): reqwest disciplinado (rustls,
 /// timeout, redirect DESLIGADO). A única chamada de SAÍDA do fluxo.
 pub mod oauth_troca;
+/// Contrato HTTP da configuração do Remote (#1683): teto e concessões da org, restrição do device no
+/// `/me`. Guarda e não aplica (a ponte é o #1729).
+pub mod remoto;
 pub mod router;
 pub mod sessao;
 /// Binário de produção (fatia 1 do #1505): `serve(config)` sobe o axum sobre o [`router`]. Sem auth.
