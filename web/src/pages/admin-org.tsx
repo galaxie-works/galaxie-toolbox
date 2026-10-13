@@ -4,10 +4,10 @@ import { Modal } from "@/components/modal";
 import { Alerta } from "@/components/alerta";
 import {
   DICIONARIOS,
-  idiomaAtual,
   type Idioma,
   type Dicionario,
 } from "@/i18n";
+import { useIdiomaAtivo } from "@/idioma-contexto";
 import {
   buscar,
   minhasOrgs,
@@ -77,12 +77,13 @@ const ROTULO: Record<Aba, ChaveDeTexto> = {
  * em vez de chutar uma org, que é o que o invariante 6 impede.
  */
 export function AdminOrgPage({
-  idioma = idiomaAtual(),
+  idioma: explicito,
   org,
 }: {
   idioma?: Idioma;
   org?: string;
 }) {
+  const idioma = useIdiomaAtivo(explicito);
   const t = DICIONARIOS[idioma];
   const [aba, setAba] = useState<Aba>("membros");
   const [descoberta, setDescoberta] = useState<string | null>(org ?? null);

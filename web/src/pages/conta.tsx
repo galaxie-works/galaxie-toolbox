@@ -8,7 +8,8 @@ import {
   revogarDispositivo,
 } from "@/lib/api-me";
 import { useCarregar } from "@/lib/use-carregar";
-import { DICIONARIOS, idiomaAtual, type Dicionario, type Idioma } from "@/i18n";
+import { DICIONARIOS, type Dicionario, type Idioma } from "@/i18n";
+import { useIdiomaAtivo } from "@/idioma-contexto";
 
 // #1489 — UI de conta/perfil (/me). Roda sobre o scaffold #1484, consome o
 // #1473-BE. Doutrina: a UI REFLETE a sessão, não decide autorização; nada é
@@ -175,7 +176,8 @@ function BlocoDispositivos({ t, idioma }: { t: Dicionario; idioma: Idioma }) {
   );
 }
 
-export function ContaPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
+export function ContaPage({ idioma: explicito }: { idioma?: Idioma }) {
+  const idioma = useIdiomaAtivo(explicito);
   const t = DICIONARIOS[idioma];
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 bg-neutral-50 p-6">

@@ -3,7 +3,8 @@ import { Navigate } from "react-router-dom";
 import { obterConfig, salvarConfig, type ItemConfig, type ValorConfig, type ResultadoSalvar } from "@/lib/api-config";
 import { ehNaoAutenticado } from "@/lib/http";
 import { useCarregar } from "@/lib/use-carregar";
-import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
+import { DICIONARIOS, type Idioma } from "@/i18n";
+import { useIdiomaAtivo } from "@/idioma-contexto";
 
 // #1491 — UI de config do app. DATA-DRIVEN: renderiza só as chaves que o BE
 // devolve (a allowlist do #1471); a UI não inventa chave. A barreira é
@@ -64,7 +65,8 @@ function Controle({
   );
 }
 
-export function ConfigPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
+export function ConfigPage({ idioma: explicito }: { idioma?: Idioma }) {
+  const idioma = useIdiomaAtivo(explicito);
   const t = DICIONARIOS[idioma];
   const cfg = useCarregar(obterConfig);
   // Patch local das edições (só as chaves tocadas); o valor exibido é o do

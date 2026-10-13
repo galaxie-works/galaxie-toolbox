@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
+import { DICIONARIOS, type Idioma } from "@/i18n";
+import { useIdiomaAtivo } from "@/idioma-contexto";
 import { listarOrgs, suspender, type Resultado } from "@/lib/back-office";
 
 // Back-office (#1492) — UI de staff pra gerir orgs.
@@ -24,10 +25,11 @@ import { listarOrgs, suspender, type Resultado } from "@/lib/back-office";
 type EstadoTela = "carregando" | "naoExiste" | "erro" | "pronto";
 
 export function BackOfficePage({
-  idioma = idiomaAtual(),
+  idioma: explicito,
 }: {
   idioma?: Idioma;
 }) {
+  const idioma = useIdiomaAtivo(explicito);
   const t = DICIONARIOS[idioma];
   const [estado, setEstado] = useState<EstadoTela>("carregando");
   const [aConfirmar, setAConfirmar] = useState<string | null>(null);
