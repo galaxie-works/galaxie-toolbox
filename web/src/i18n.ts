@@ -264,3 +264,14 @@ export function idiomaAtual(
 ): Idioma {
   return navegador?.toLowerCase().startsWith("en") ? "en" : "pt-BR";
 }
+
+/**
+ * Alinha o idioma DECLARADO da página (`<html lang>`) ao idioma RENDERIZADO —
+ * WCAG 3.1.1 (#1484, achado da @Íris). O `index.html` nasce `pt-BR` (o mesmo
+ * default do `idiomaAtual`); sem isto, num navegador em inglês a UI inteira sai
+ * em inglês com a página a declarar português, e o leitor de ecrã lê inglês com
+ * fonética portuguesa. `Idioma` já é tag BCP 47 ("pt-BR" | "en") — vai direto.
+ */
+export function aplicarIdiomaNoDocumento(idioma: Idioma, doc: Document = document): void {
+  doc.documentElement.lang = idioma;
+}

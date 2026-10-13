@@ -44,7 +44,9 @@ export function LoginPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
           ))}
         </div>
 
-        <p className="mt-6 text-xs text-neutral-400">{t.semSenha}</p>
+        {/* neutral-500 (4.7:1 sobre branco), não 400 (2.6:1): é a mensagem de
+            segurança da tela e precisa de AA — WCAG 1.4.3 (#1484, achado da Íris). */}
+        <p className="mt-6 text-xs text-neutral-500">{t.semSenha}</p>
       </section>
     </main>
   );
