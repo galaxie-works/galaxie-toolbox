@@ -230,6 +230,10 @@ pub struct Borda {
     /// não configura OAuth ⇒ `None` ⇒ `/auth/{provedor}` é 404. Injetado (`Some`) só onde há login
     /// federado a exercer (o `dev-server`; a prod real na fatia 5). Ver [`EstadoOAuth`].
     pub oauth: Option<EstadoOAuth>,
+    /// Config do Remote (#1683): teto da org, concessões e restrição do device. Nasce em MEMÓRIA no
+    /// [`Borda::montar`] — como os outros armazéns da plataforma hoje —, então não muda a assinatura
+    /// dos construtores (os testes semeiam pelos próprios armazéns, que mutam por `&self`).
+    pub remoto: crate::remoto::ArmazensRemoto,
 }
 
 impl Borda {
@@ -318,6 +322,7 @@ impl Borda {
             prefs,
             registro_formas,
             oauth,
+            remoto: crate::remoto::ArmazensRemoto::memoria(),
         })
     }
 }
