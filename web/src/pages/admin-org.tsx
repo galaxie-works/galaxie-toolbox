@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useId, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
 import { Modal } from "@/components/modal";
-import { Alerta } from "@/components/alerta";
+import { Alerta, RegiaoDeStatus } from "@/components/alerta";
 import {
   DICIONARIOS,
   type Idioma,
@@ -17,6 +17,25 @@ import {
   type Membro,
   type Dominio,
 } from "@/lib/org";
+import {
+  ATALHOS,
+  CAMINHOS_REMOTO,
+  CAPACIDADES,
+  CAPACIDADES_DO_ATALHO,
+  MODOS_APROVACAO,
+  atalhoDe,
+  conceder,
+  definirPolitica,
+  deviceIdValido,
+  ligadas,
+  revogar,
+  type Atalho,
+  type CapacidadesRemotas,
+  type ConcessaoRemota,
+  type ModoAprovacao,
+  type PoliticaRemota,
+  type ResultadoEscritaRemota,
+} from "@/lib/remoto";
 
 // Admin da org (#1490) — UI de membros / domínios / settings / assinatura.
 //
@@ -38,9 +57,9 @@ import {
 // do cliente: a UI reage à negativa, distingue 403 de 404, e não inventa nem
 // rota nem campo (as duas guardas do canal que barra).
 
-type Aba = "membros" | "dominios" | "settings" | "assinatura";
+type Aba = "membros" | "dominios" | "remoto" | "settings" | "assinatura";
 
-const ABAS: readonly Aba[] = ["membros", "dominios", "settings", "assinatura"];
+const ABAS: readonly Aba[] = ["membros", "dominios", "remoto", "settings", "assinatura"];
 
 /**
  * Chaves do dicionário cujo valor é TEXTO.
@@ -61,6 +80,7 @@ type ChaveDeTexto = {
 const ROTULO: Record<Aba, ChaveDeTexto> = {
   membros: "membros",
   dominios: "dominios",
+  remoto: "remoto",
   settings: "configuracoes",
   assinatura: "assinatura",
 };
@@ -172,6 +192,8 @@ export function AdminOrgPage({
           <PainelMembros idioma={idioma} org={orgAtual} suspensa={suspensa} />
         ) : aba === "dominios" ? (
           <PainelDominios idioma={idioma} org={orgAtual} suspensa={suspensa} />
+        ) : aba === "remoto" ? (
+          <PainelRemoto idioma={idioma} org={orgAtual} suspensa={suspensa} />
         ) : (
           <PainelPendente
             titulo={t[ROTULO[aba]]}
@@ -553,6 +575,622 @@ function PainelDominios({
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * `avisoDoEstado` para um painel que ESCREVE e depois relê.
+ *
+ * O `recarregar` do `useRecurso` volta o estado a `carregando`, e o
+ * `avisoDoEstado` troca então o painel inteiro por "Carregando…". No
+ * `PainelMembros` isso não perde nada, porque a recusa vive no próprio painel.
+ * No Remote os formulários são FILHOS: cada releitura os desmontava, e com eles o
+ * "Salvo" que acabara de aparecer e o que o admin estava a digitar.
+ *
+ * Daí a regra: `carregando` só substitui o conteúdo na PRIMEIRA carga. Numa
+ * releitura fica o que o servidor devolveu da última vez (não é otimista: é o
+ * estado anterior DO SERVIDOR, até chegar o novo). Qualquer outra negativa
+ * (401/403/404/erro) continua a substituir tudo, como no resto da página.
+ */
+function avisoSemPiscar<T>(
+  recurso: { estado: EstadoRecurso; dados: T | null },
+  t: Dicionario,
+  suspensa: boolean,
+): ReactElement | null {
+  if (recurso.estado === "carregando" && recurso.dados !== null) return null;
+  return avisoDoEstado(recurso.estado, t, suspensa);
+}
+
+/**
+ * A recusa de uma escrita do Remote que a tela tem de MOSTRAR, ou `null`.
+ *
+ * `naoAutenticado` e `naoEhAdmin` devolvem `null` de propósito: são estados da
+ * PÁGINA, e a releitura que se segue a toda escrita leva-os ao `avisoDoEstado`,
+ * que já os sabe dizer (login; "peça a um admin"). Repetir a escada aqui seria o
+ * segundo acerto que o ponto único existe para evitar.
+ *
+ * `orgSuspensa` ganha mensagem própria porque a releitura NÃO a revela: a lista
+ * de concessões atravessa a suspensão (§4.6), então reler mostraria a mesma
+ * lista e o clique pareceria ter sido ignorado.
+ */
+type RecusaRemota = "orgSuspensa" | "erro";
+
+function recusaDe(r: ResultadoEscritaRemota): RecusaRemota | null {
+  switch (r.estado) {
+    case "feito":
+    case "naoAutenticado":
+    case "naoEhAdmin":
+      return null;
+    case "orgSuspensa":
+      return "orgSuspensa";
+    case "naoEncontrado":
+    case "invalido":
+    case "conflito":
+    case "erro":
+      return "erro";
+  }
+}
+
+/** O que a recusa mostra, para dentro de uma `RegiaoDeStatus`. */
+function avisoDaRecusa(recusa: RecusaRemota | null, t: Dicionario) {
+  if (recusa === "orgSuspensa") return { tom: "aviso" as const, titulo: t.orgSuspensa, detalhe: t.orgSuspensaPainel };
+  if (recusa === "erro") return { tom: "erro" as const, titulo: t.remotoFalhou };
+  return null;
+}
+
+/**
+ * A recusa de uma escrita numa região viva SEMPRE MONTADA (gate da @Íris no #1753,
+ * o mesmo mecanismo do #1752). Antes era um `Alerta` que entrava no DOM já com o
+ * texto, e uma região que nasce com o conteúdo é anunciada de forma inconsistente.
+ * O `rotulo` é o nome ESTÁVEL da área (a ação), não o texto da recusa.
+ */
+function RegiaoDaRecusa({ recusa, t, rotulo }: { recusa: RecusaRemota | null; t: Dicionario; rotulo: string }) {
+  const aviso = avisoDaRecusa(recusa, t);
+  // A margem só quando há o que mostrar: vazia, a região não ocupa espaço. Trocar
+  // a classe não remonta o nó (o que importa para o leitor de ecrã).
+  return <RegiaoDeStatus rotulo={rotulo} aviso={aviso} className={aviso ? "mb-4" : undefined} />;
+}
+
+/** "Dispositivo {id}" — o id é DADO, entra por substituição e não por tradução. */
+function rotuloDoDispositivo(t: Dicionario, id: string): string {
+  return t.remotoDispositivo.replace("{id}", id);
+}
+
+/**
+ * Remote (#1472) — concessões e teto da org, contra o §4.6 do contrato.
+ *
+ * ⚠️ **O painel GUARDA, não governa.** Até a ponte do #1729 existir, nada do que
+ * se grava aqui chega às sessões remotas. O aviso no topo diz isso, fixo, e não
+ * sai enquanto for verdade: um painel que parecesse governar em silêncio é o
+ * defeito do AC6 do #1683.
+ *
+ * A porta do painel é a LISTA de concessões. É ela que o `member` não alcança
+ * (`403 negado` ⇒ "peça a um admin", e nada da org aparece), e é ela que
+ * atravessa a suspensão: numa org suspensa o admin continua a ver e a REVOGAR
+ * (revogar acesso nunca pode ficar bloqueado), enquanto conceder e o teto
+ * respondem `403 org_suspensa`.
+ */
+function PainelRemoto({
+  idioma,
+  org,
+  suspensa,
+}: {
+  idioma: Idioma;
+  org: string;
+  suspensa: boolean;
+}) {
+  const t = DICIONARIOS[idioma];
+  const concessoes = useRecurso<ConcessaoRemota[]>(CAMINHOS_REMOTO.concessoes(org));
+  // Os membros servem a DOIS fins: a lista de quem pode receber uma concessão
+  // (o card manda escolher o membro da lista, nunca digitar um uid) e o nome de
+  // quem já tem uma.
+  const membros = useRecurso<Membro[]>(CAMINHOS.membros(org));
+
+  const aviso = avisoSemPiscar(concessoes, t, suspensa);
+  if (aviso) return aviso;
+
+  // Sem o membro na lista (removido da org depois da concessão), mostra-se o
+  // `uid`: é o dado que há, e um rótulo genérico esconderia DE QUEM é o acesso.
+  const nomeDe = (uid: string) => membros.dados?.find((m) => m.uid === uid)?.nome ?? uid;
+
+  return (
+    <div className="flex flex-col gap-8">
+      <Alerta tom="aviso" titulo={t.remotoNaoAplicado} />
+      <section className="flex flex-col gap-4">
+        <h2 className="font-medium text-neutral-900">{t.remotoConcessoes}</h2>
+        <ListaConcessoes
+          idioma={idioma}
+          org={org}
+          concessoes={concessoes.dados ?? []}
+          nomeDe={nomeDe}
+          aoMudar={concessoes.recarregar}
+        />
+        <FormConceder
+          idioma={idioma}
+          org={org}
+          membros={membros}
+          suspensa={suspensa}
+          aoConceder={concessoes.recarregar}
+        />
+      </section>
+      <section className="flex flex-col gap-4">
+        <h2 className="font-medium text-neutral-900">{t.remotoTeto}</h2>
+        <SecaoTeto idioma={idioma} org={org} suspensa={suspensa} />
+      </section>
+    </div>
+  );
+}
+
+function ListaConcessoes({
+  idioma,
+  org,
+  concessoes,
+  nomeDe,
+  aoMudar,
+}: {
+  idioma: Idioma;
+  org: string;
+  concessoes: ConcessaoRemota[];
+  nomeDe: (uid: string) => string;
+  aoMudar: () => void;
+}) {
+  const t = DICIONARIOS[idioma];
+  const [aConfirmar, setAConfirmar] = useState<ConcessaoRemota | null>(null);
+  /** O `id` cujo `DELETE` está em voo: o mesmo desenho do `aRemover` dos membros. */
+  const [aRevogar, setARevogar] = useState<string | null>(null);
+  const [recusa, setRecusa] = useState<RecusaRemota | null>(null);
+
+  async function confirmar(c: ConcessaoRemota) {
+    setRecusa(null);
+    setARevogar(c.id);
+    const r = await revogar(org, c.id);
+    setARevogar(null);
+    setAConfirmar(null);
+    setRecusa(recusaDe(r));
+    // Relê SEMPRE do servidor, também na recusa: a lista mostrada tem de ser a
+    // da borda, não a que o cliente supôs (ver o `recarregar` do `useRecurso`).
+    aoMudar();
+  }
+
+  /** Uma concessão que bate num atalho mostra o NOME dele ("Só ver"); senão, as capacidades. */
+  function acessoDe(c: ConcessaoRemota): string {
+    const atalho = atalhoDe(c.capacidades);
+    if (atalho !== "personalizado") return t.remotoAtalho[atalho];
+    const lista = ligadas(c.capacidades);
+    return lista.length > 0 ? lista.map((k) => t.remotoCapacidade[k]).join(", ") : "—";
+  }
+
+  return (
+    <div>
+      <RegiaoDaRecusa recusa={recusa} t={t} rotulo={t.remotoRevogar} />
+      {concessoes.length === 0 ? (
+        <p className="text-sm text-neutral-500">{t.remotoSemConcessoes}</p>
+      ) : (
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="text-neutral-500">
+              <th className="pb-2 font-medium">{t.remotoMembro}</th>
+              <th className="pb-2 font-medium">{t.remotoDeviceId}</th>
+              <th className="pb-2 font-medium">{t.remotoAcesso}</th>
+              <th className="pb-2 font-medium">{t.estado}</th>
+              <th className="pb-2 font-medium">
+                <span className="sr-only">{t.remotoRevogar}</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {concessoes.map((c) => (
+              <tr key={c.id} className="border-t border-neutral-100">
+                <td className="py-2 text-neutral-900">{nomeDe(c.sujeito.uid)}</td>
+                {/* "Dispositivo {id}", e nada mais: a plataforma não sabe se o
+                    device existe nem se está online (sem registo até o #1729),
+                    e a tela não o afirma. */}
+                <td className="py-2 text-neutral-600">{rotuloDoDispositivo(t, c.objeto.id)}</td>
+                <td className="py-2 text-neutral-600">{acessoDe(c)}</td>
+                <td className="py-2 text-neutral-600">{c.ativa ? t.remotoAtiva : t.remotoRevogada}</td>
+                <td className="py-2 text-right">
+                  {/* Só nas ATIVAS. Revogar de novo é idempotente no servidor,
+                      mas um botão que não muda nada é um botão que mente. */}
+                  {c.ativa ? (
+                    <button
+                      type="button"
+                      onClick={() => setAConfirmar(c)}
+                      disabled={aRevogar !== null}
+                      className="rounded-lg px-2 py-1 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+                    >
+                      {aRevogar === c.id ? t.remotoRevogando : t.remotoRevogar}
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {aConfirmar ? (
+        <ConfirmarRevogacao
+          idioma={idioma}
+          concessao={aConfirmar}
+          nome={nomeDe(aConfirmar.sujeito.uid)}
+          aRevogar={aRevogar !== null}
+          aoConfirmar={() => void confirmar(aConfirmar)}
+          aoCancelar={() => setAConfirmar(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Confirmação de revogação: NOMEIA quem perde o acesso e a que device, como a
+ * `ConfirmarRemocao` dos membros, pela mesma razão (um "tem certeza?" genérico
+ * clica-se no automático).
+ *
+ * O texto do efeito diz só o que é verdade HOJE: a concessão fica no histórico
+ * como revogada. "A sessão cai" só passa a ser verdade com o #1729.
+ */
+function ConfirmarRevogacao({
+  idioma,
+  concessao,
+  nome,
+  aRevogar,
+  aoConfirmar,
+  aoCancelar,
+}: {
+  idioma: Idioma;
+  concessao: ConcessaoRemota;
+  nome: string;
+  aRevogar: boolean;
+  aoConfirmar: () => void;
+  aoCancelar: () => void;
+}) {
+  const t = DICIONARIOS[idioma];
+  return (
+    <Modal rotulo={t.remotoRevogar} aoFechar={aoCancelar}>
+      <h2 className="font-medium text-neutral-900">{t.remotoRevogar}</h2>
+      <p className="mt-2 text-neutral-900">
+        <strong>{nome}</strong>
+      </p>
+      <p className="text-neutral-600">{rotuloDoDispositivo(t, concessao.objeto.id)}</p>
+      <p className="mt-2 text-neutral-500">{t.remotoRevogarAviso}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        {/* CANCELAR primeiro no DOM: recebe o foco inicial do `Modal`. Mesma
+            razão da `ConfirmarRemocao`: um Enter reflexo não pode destruir. */}
+        <button
+          type="button"
+          onClick={aoCancelar}
+          disabled={aRevogar}
+          className="rounded-lg px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+        >
+          {t.cancelar}
+        </button>
+        <button
+          type="button"
+          onClick={aoConfirmar}
+          disabled={aRevogar}
+          className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-700 disabled:opacity-50"
+        >
+          {aRevogar ? t.remotoRevogando : t.remotoRevogar}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * "Conceder acesso": o MEMBRO escolhido da lista da org, o DEVICE pelo id
+ * escrito à mão (não há registo de devices até o #1729) e as capacidades por
+ * atalho ("Só ver", "Acesso total") ou personalizadas.
+ */
+function FormConceder({
+  idioma,
+  org,
+  membros,
+  suspensa,
+  aoConceder,
+}: {
+  idioma: Idioma;
+  org: string;
+  membros: { estado: EstadoRecurso; dados: Membro[] | null };
+  suspensa: boolean;
+  aoConceder: () => void;
+}) {
+  const t = DICIONARIOS[idioma];
+  const ids = useId();
+  const [uid, setUid] = useState("");
+  const [dispositivo, setDispositivo] = useState("");
+  const [atalho, setAtalho] = useState<Atalho>("ver");
+  const [personalizadas, setPersonalizadas] = useState<CapacidadesRemotas>(CAPACIDADES_DO_ATALHO.ver);
+  const [enviando, setEnviando] = useState(false);
+  const [recusa, setRecusa] = useState<RecusaRemota | null>(null);
+
+  // Numa org suspensa o `GET` de membros já responde `403 org_suspensa`: o
+  // formulário dá lugar ao aviso, sem a tela decidir nada por conta própria.
+  const aviso = avisoSemPiscar(membros, t, suspensa);
+  if (aviso) return aviso;
+
+  const capacidades = atalho === "personalizado" ? personalizadas : CAPACIDADES_DO_ATALHO[atalho];
+  // Validado CRU, sem `trim`: o servidor recusa o espaço, e apará-lo aqui em
+  // silêncio mandaria um id diferente do que o admin vê no campo.
+  const dispositivoInvalido = dispositivo !== "" && !deviceIdValido(dispositivo);
+  const podeEnviar =
+    uid !== "" && deviceIdValido(dispositivo) && ligadas(capacidades).length > 0 && !enviando;
+
+  function escolherAtalho(novo: Atalho) {
+    // Ao passar a "Personalizado", parte do que estava escolhido, para o admin
+    // ajustar em vez de recomeçar do zero.
+    if (novo === "personalizado" && atalho !== "personalizado") {
+      setPersonalizadas(CAPACIDADES_DO_ATALHO[atalho]);
+    }
+    setAtalho(novo);
+    setRecusa(null);
+  }
+
+  async function enviar() {
+    setEnviando(true);
+    setRecusa(null);
+    const r = await conceder(org, uid, dispositivo, capacidades);
+    setEnviando(false);
+    setRecusa(recusaDe(r));
+    if (r.estado === "feito") setDispositivo("");
+    aoConceder();
+  }
+
+  return (
+    <form
+      className="flex flex-col gap-3 rounded-xl border border-neutral-200 p-4 text-sm"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (podeEnviar) void enviar();
+      }}
+    >
+      <RegiaoDaRecusa recusa={recusa} t={t} rotulo={t.remotoConceder} />
+      {/* `htmlFor`, não `<label>` envolvendo: envolvido, o valor do controle
+          entra no NOME acessível ("Membro Escolha um membro"), e o leitor de
+          ecrã anuncia o rótulo misturado com o dado. */}
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor={`${ids}-membro`} className="text-neutral-700">
+          {t.remotoMembro}
+        </label>
+        <select
+          id={`${ids}-membro`}
+          value={uid}
+          onChange={(e) => {
+            setUid(e.target.value);
+            setRecusa(null);
+          }}
+          className="rounded-lg border border-neutral-300 px-3 py-1.5"
+        >
+          <option value="">{t.remotoEscolhaMembro}</option>
+          {(membros.dados ?? []).map((m) => (
+            <option key={m.uid} value={m.uid}>
+              {m.nome} ({m.email})
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`${ids}-device`} className="text-neutral-700">
+          {t.remotoDeviceId}
+        </label>
+        <input
+          id={`${ids}-device`}
+          value={dispositivo}
+          onChange={(e) => {
+            setDispositivo(e.target.value);
+            setRecusa(null);
+          }}
+          aria-invalid={dispositivoInvalido}
+          aria-describedby={dispositivoInvalido ? `${ids}-device-erro` : undefined}
+          maxLength={128}
+          autoComplete="off"
+          spellCheck={false}
+          className="rounded-lg border border-neutral-300 px-3 py-2 outline-none focus:border-neutral-900"
+        />
+        {dispositivoInvalido ? (
+          <span id={`${ids}-device-erro`} className="text-red-800">
+            {t.remotoDeviceIdInvalido}
+          </span>
+        ) : null}
+      </div>
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-1 text-neutral-700">{t.remotoAcesso}</legend>
+        <div className="flex flex-wrap gap-4">
+          {ATALHOS.map((a) => (
+            <label key={a} className="flex items-center gap-2">
+              <input
+                type="radio"
+                name={`${ids}-atalho`}
+                checked={atalho === a}
+                onChange={() => escolherAtalho(a)}
+                className="size-4"
+              />
+              <span className="text-neutral-700">{t.remotoAtalho[a]}</span>
+            </label>
+          ))}
+        </div>
+        {atalho === "personalizado" ? (
+          <CaixasDeCapacidades
+            t={t}
+            valor={personalizadas}
+            aoMudar={(c) => {
+              setPersonalizadas(c);
+              setRecusa(null);
+            }}
+          />
+        ) : null}
+      </fieldset>
+      <div>
+        <button
+          type="submit"
+          disabled={!podeEnviar}
+          className="rounded-lg bg-neutral-900 px-4 py-2 font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {enviando ? t.remotoConcedendo : t.remotoConceder}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** As 5 capacidades como caixas de marcar, no padrão de controle bool do `config.tsx`. */
+function CaixasDeCapacidades({
+  t,
+  valor,
+  aoMudar,
+}: {
+  t: Dicionario;
+  valor: CapacidadesRemotas;
+  aoMudar: (c: CapacidadesRemotas) => void;
+}) {
+  return (
+    <div className="flex flex-col">
+      {CAPACIDADES.map((k) => (
+        <label key={k} className="flex items-center justify-between gap-4 py-1">
+          <span className="text-neutral-700">{t.remotoCapacidade[k]}</span>
+          <input
+            type="checkbox"
+            checked={valor[k]}
+            onChange={(e) => aoMudar({ ...valor, [k]: e.target.checked })}
+            className="size-4"
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * O teto da org: as capacidades máximas, o modo de aprovação e o acesso não
+ * supervisionado (#1683 §3). O `PUT` substitui o teto INTEIRO, por isso o
+ * formulário manda sempre os 3 campos.
+ *
+ * O resultado do último salvar vive AQUI e não no formulário: depois de um `PUT`
+ * bem-sucedido os dados mudam, o formulário remonta com eles (`key`), e um
+ * "Salvo" guardado lá dentro sumiria no mesmo instante em que devia aparecer.
+ */
+function SecaoTeto({
+  idioma,
+  org,
+  suspensa,
+}: {
+  idioma: Idioma;
+  org: string;
+  suspensa: boolean;
+}) {
+  const t = DICIONARIOS[idioma];
+  const politica = useRecurso<PoliticaRemota>(CAMINHOS_REMOTO.politica(org));
+  const [resultado, setResultado] = useState<"salvo" | RecusaRemota | null>(null);
+
+  const aviso = avisoSemPiscar(politica, t, suspensa);
+  if (aviso || !politica.dados) return aviso;
+
+  async function salvar(nova: PoliticaRemota) {
+    setResultado(null);
+    const r = await definirPolitica(org, nova);
+    setResultado(r.estado === "feito" ? "salvo" : recusaDe(r));
+    politica.recarregar();
+  }
+
+  return (
+    <>
+      <FormTeto
+        // Remonta com o que o SERVIDOR devolveu: o rascunho nunca sobrevive a
+        // uma releitura que o contradiga.
+        key={JSON.stringify(politica.dados)}
+        t={t}
+        inicial={politica.dados}
+        aoEditar={() => setResultado(null)}
+        aoSalvar={salvar}
+      />
+      {/* A região do resultado mora AQUI, fora do formulário: ele remonta (a
+          `key` acima) a cada releitura, e uma região lá dentro nasceria de novo
+          já com o "Salvo", que é o padrão que anuncia de forma inconsistente
+          (gate da @Íris). Aqui ela monta vazia e só o conteúdo muda. */}
+      <RegiaoDeStatus
+        rotulo={t.resultadoSalvar}
+        aviso={resultado === "salvo" ? { tom: "simples", titulo: t.salvo } : avisoDaRecusa(resultado, t)}
+        className="pt-2"
+      />
+    </>
+  );
+}
+
+function FormTeto({
+  t,
+  inicial,
+  aoEditar,
+  aoSalvar,
+}: {
+  t: Dicionario;
+  inicial: PoliticaRemota;
+  aoEditar: () => void;
+  aoSalvar: (p: PoliticaRemota) => Promise<void>;
+}) {
+  const ids = useId();
+  const [rascunho, setRascunho] = useState<PoliticaRemota>(inicial);
+  const [salvando, setSalvando] = useState(false);
+  const mudou = JSON.stringify(rascunho) !== JSON.stringify(inicial);
+
+  function editar(p: PoliticaRemota) {
+    setRascunho(p);
+    aoEditar();
+  }
+
+  return (
+    <form
+      className="flex flex-col gap-3 text-sm"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setSalvando(true);
+        void aoSalvar(rascunho).finally(() => setSalvando(false));
+      }}
+    >
+      <fieldset>
+        <legend className="mb-1 text-neutral-700">{t.remotoCapacidadesMaximas}</legend>
+        <CaixasDeCapacidades
+          t={t}
+          valor={rascunho.capacidades_maximas}
+          aoMudar={(c) => editar({ ...rascunho, capacidades_maximas: c })}
+        />
+      </fieldset>
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor={`${ids}-aprovacao`} className="text-neutral-700">
+          {t.remotoAprovacaoTitulo}
+        </label>
+        <select
+          id={`${ids}-aprovacao`}
+          value={rascunho.modo_aprovacao}
+          onChange={(e) => editar({ ...rascunho, modo_aprovacao: e.target.value as ModoAprovacao })}
+          className="rounded-lg border border-neutral-300 px-3 py-1.5"
+        >
+          {MODOS_APROVACAO.map((m) => (
+            <option key={m} value={m}>
+              {t.remotoAprovacao[m]}
+            </option>
+          ))}
+        </select>
+      </div>
+      <label className="flex items-center justify-between gap-4">
+        <span className="text-neutral-700">{t.remotoNaoSupervisionado}</span>
+        <input
+          type="checkbox"
+          checked={rascunho.permitir_nao_supervisionado}
+          onChange={(e) => editar({ ...rascunho, permitir_nao_supervisionado: e.target.checked })}
+          className="size-4"
+        />
+      </label>
+      <div className="flex items-center gap-3 pt-2">
+        <button
+          type="submit"
+          disabled={!mudou || salvando}
+          className="rounded-lg bg-neutral-900 px-4 py-2 font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {t.salvar}
+        </button>
+      </div>
+    </form>
   );
 }
 
