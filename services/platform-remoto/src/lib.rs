@@ -241,7 +241,10 @@ pub fn capacidades_efetivas(
 // ---------------------------------------------------------------------------------------------------
 
 /// Teto de concessões por org. O endpoint é de admin, mas um armazém sem teto é a família "buffer que
-/// ninguém drena"; 10 000 sobra para qualquer org real.
+/// ninguém drena"; 10 000 sobra para qualquer org real. **Conta TAMBÉM as revogadas**, de propósito:
+/// elas ficam como rasto, e é o rasto que cresce num ciclo de conceder e revogar. Contar só as ativas
+/// deixava esse ciclo crescer o armazém sem limite. Uma org que chegue ao teto só com histórico precisa
+/// de arquivamento do rasto (fora do v1), não de um teto mais frouxo.
 pub const MAX_CONCESSOES_POR_ORG: usize = 10_000;
 /// Teto de restrições por DONO. A rota `/me` está aberta a qualquer utilizador autenticado e o
 /// `device_id` não é verificado — sem teto, um utilizador cresceria o mapa à vontade. Uma pessoa tem

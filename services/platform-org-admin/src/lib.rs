@@ -273,15 +273,15 @@ pub fn decidir_nao_orfa(
     Ok(())
 }
 
-/// A DECISÃO pura (sem auditoria), na ordem que não vaza: visibilidade (404) → suspensão (403) →
-/// capacidade (403). Separada pra [`autorizar_acao_admin`] auditar AMBOS os ramos sem duplicar a
-/// lógica. Privada: a auditoria é obrigatória, então ninguém chama a decisão sem emitir.
 /// As ações que a SUSPENSÃO da org não bloqueia. `match` EXAUSTIVO sem `_`: ação nova não compila até
-/// decidir — e a única resposta aceitável para "sobrevive?" é a de uma ação que FECHA acesso (a regra
-/// 3 do @Altair no #1683). Tudo o que lê ou concede fica bloqueado numa org suspensa.
+/// decidir. Só sobrevive uma ação que FECHA acesso (a regra 3 do @Altair no #1683), **ou a leitura de
+/// que ela depende**: o `DELETE` da revogação precisa do `id`, e o único sítio que o dá é a listagem.
+/// Sem ela, a revogação numa org suspensa ficava certa no papel e cega na prática (review do Altair na
+/// #1735). A leitura é da própria org pelo seu admin: visibilidade e papel continuam a valer. O teto e
+/// o conceder ficam bloqueados.
 fn sobrevive_a_suspensao(acao: &AcaoAdminOrg) -> bool {
     match acao {
-        AcaoAdminOrg::RevogarAcessoRemoto => true,
+        AcaoAdminOrg::RevogarAcessoRemoto | AcaoAdminOrg::ListarConcessoesRemotas => true,
         AcaoAdminOrg::ListarMembros
         | AcaoAdminOrg::ConvidarMembro
         | AcaoAdminOrg::RemoverMembro
@@ -293,11 +293,13 @@ fn sobrevive_a_suspensao(acao: &AcaoAdminOrg) -> bool {
         | AcaoAdminOrg::GerirAssinatura
         | AcaoAdminOrg::VerPoliticaRemota
         | AcaoAdminOrg::DefinirPoliticaRemota
-        | AcaoAdminOrg::ListarConcessoesRemotas
         | AcaoAdminOrg::ConcederAcessoRemoto => false,
     }
 }
 
+/// A DECISÃO pura (sem auditoria), na ordem que não vaza: visibilidade (404) → suspensão (403) →
+/// capacidade (403). Separada pra [`autorizar_acao_admin`] auditar AMBOS os ramos sem duplicar a
+/// lógica. Privada: a auditoria é obrigatória, então ninguém chama a decisão sem emitir.
 fn decidir_acao_admin(
     sessao: &Sessao,
     acao: &AcaoAdminOrg,
@@ -605,22 +607,24 @@ mod tests {
     }
 
     #[test]
-    fn org_suspensa_bloqueia_o_remoto_menos_a_revogacao() {
+    fn org_suspensa_bloqueia_o_remoto_menos_a_revogacao_e_a_listagem() {
         // Regra 5 do Altair: org suspensa nega as escritas org-scoped (403). Regra 3: revogar FECHA
-        // acesso, logo atravessa a suspensão — senão a concessão voltava viva na reativação.
+        // acesso, logo atravessa a suspensão — senão a concessão voltava viva na reativação. E a
+        // listagem também, porque é dela que vem o `id` a revogar (review da #1735).
         let suspensa = org_suspensa("orgA");
         let admin = sessao_admin("ana", "orgA");
         for acao in &ACOES_REMOTO {
-            let esperado = if *acao == AcaoAdminOrg::RevogarAcessoRemoto { Ok(()) } else { Err(AdminErro::Suspensa) };
+            let sobrevive =
+                matches!(acao, AcaoAdminOrg::RevogarAcessoRemoto | AcaoAdminOrg::ListarConcessoesRemotas);
+            let esperado = if sobrevive { Ok(()) } else { Err(AdminErro::Suspensa) };
             assert_eq!(autz(&admin, acao, &suspensa), esperado, "{acao:?} em org suspensa");
         }
-        // A exceção não abre o papel nem a visibilidade: um Member continua negado a revogar, e um
-        // estranho continua sem ver a org.
-        assert_eq!(autz(&sessao_membro("bia", "orgA"), &AcaoAdminOrg::RevogarAcessoRemoto, &suspensa), Err(AdminErro::Negado));
-        assert_eq!(
-            autz(&sessao_admin("caio", "orgB"), &AcaoAdminOrg::RevogarAcessoRemoto, &suspensa),
-            Err(AdminErro::NaoEncontrada)
-        );
+        // A exceção não abre o papel nem a visibilidade: um Member continua negado a listar e a
+        // revogar, e um estranho continua sem ver a org.
+        for acao in [AcaoAdminOrg::RevogarAcessoRemoto, AcaoAdminOrg::ListarConcessoesRemotas] {
+            assert_eq!(autz(&sessao_membro("bia", "orgA"), &acao, &suspensa), Err(AdminErro::Negado));
+            assert_eq!(autz(&sessao_admin("caio", "orgB"), &acao, &suspensa), Err(AdminErro::NaoEncontrada));
+        }
     }
 
     // ---- #1571: a autz EMITE auditoria nos DOIS ramos (simetria com o back-office) ----

@@ -2444,9 +2444,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remoto_org_suspensa_bloqueia_conceder_mas_deixa_revogar() {
+    async fn remoto_org_suspensa_bloqueia_conceder_mas_deixa_listar_e_revogar() {
         // Regra 5: escrita org-scoped em org suspensa ⇒ 403 org_suspensa. Regra 3: revogar FECHA acesso,
-        // logo atravessa a suspensão — senão a concessão voltava viva na reativação.
+        // logo atravessa a suspensão — senão a concessão voltava viva na reativação. E o FLUXO INTEIRO
+        // tem de funcionar (review da #1735): o admin LISTA, tira o `id` da listagem e revoga. O `id`
+        // não vem do armazém do teste, vem do fio, como no painel.
         let mut org = org_teste("acme");
         org.suspender();
         let (estado, cookie_adm) = borda_membros(
@@ -2470,13 +2472,32 @@ mod tests {
                 },
             )
             .unwrap();
-        let (s, c) = requisicao(estado.clone(), "POST", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, CONCESSAO_U2).await;
-        assert_eq!(s, StatusCode::FORBIDDEN);
-        assert!(String::from_utf8_lossy(&c).contains("org_suspensa"));
-        let caminho = format!("/api/v1/orgs/acme/remoto/concessoes/{}", existente.id.0);
+        // Conceder e o teto continuam bloqueados.
+        for (metodo, caminho, corpo) in [
+            ("POST", "/api/v1/orgs/acme/remoto/concessoes", CONCESSAO_U2),
+            ("GET", "/api/v1/orgs/acme/remoto/politica", ""),
+            (
+                "PUT",
+                "/api/v1/orgs/acme/remoto/politica",
+                r#"{"capacidades_maximas":{},"modo_aprovacao":"clique","permitir_nao_supervisionado":false}"#,
+            ),
+        ] {
+            let (s, c) = requisicao(estado.clone(), metodo, caminho, &cookie_adm, corpo).await;
+            assert_eq!(s, StatusCode::FORBIDDEN, "{metodo} {caminho}");
+            assert!(String::from_utf8_lossy(&c).contains("org_suspensa"), "{metodo} {caminho}");
+        }
+        // Listar → id → revogar, tudo pelo fio.
+        let (s, c) = requisicao(estado.clone(), "GET", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, "").await;
+        assert_eq!(s, StatusCode::OK, "a listagem atravessa a suspensão (é dela que vem o id)");
+        let lista = json_de(&c);
+        assert_eq!(lista.as_array().unwrap().len(), 1);
+        let id = lista[0]["id"].as_str().unwrap().to_string();
+        assert_eq!(id, existente.id.0);
+        let caminho = format!("/api/v1/orgs/acme/remoto/concessoes/{id}");
         let (s, _) = requisicao(estado.clone(), "DELETE", &caminho, &cookie_adm, "").await;
         assert_eq!(s, StatusCode::NO_CONTENT, "a revogação atravessa a suspensão");
-        assert!(!estado.remoto.concessoes.listar(&OrgId("acme".into())).unwrap()[0].ativa());
+        let (_, c) = requisicao(estado, "GET", "/api/v1/orgs/acme/remoto/concessoes", &cookie_adm, "").await;
+        assert_eq!(json_de(&c)[0]["ativa"], false, "revogada, e o admin vê-o");
     }
 
     #[tokio::test]
