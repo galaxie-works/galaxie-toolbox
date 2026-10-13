@@ -143,7 +143,10 @@ pub enum EventoAuditado {
     /// Uma decisão de autz (o caso normal), com o mesmo conteúdo do [`EventoAutz`], agora possuído.
     /// `acao` é o nome estável (do `acao_nome()`, de QUALQUER crate de autz — o buffer é agnóstico
     /// à ação desde o #1571); `alvo` é o **id** da org, quando a ação tem alvo.
-    Autz { ator: UserId, acao: String, alvo: AlvoDono, resultado: ResultadoAutz },
+    /// `ts_unix` (#1565): o INSTANTE DA DECISÃO, em segundos epoch, carimbado no `registrar` — não no
+    /// dreno. O doc do `EventoAutz` manda que a impl carimbe; sem isto o trilho só teria a hora do
+    /// dreno (até um intervalo inteiro depois), e a ordem/janela de um ataque ficava borrada.
+    Autz { ator: UserId, acao: String, alvo: AlvoDono, resultado: ResultadoAutz, ts_unix: u64 },
     /// `n` eventos foram PERDIDOS por transbordo do buffer antes deste dreno. Nunca silencioso.
     Perda { n: u64 },
 }
@@ -160,6 +163,18 @@ pub enum EventoAuditado {
 pub struct AuditorBuffer {
     estado: Mutex<EstadoBuffer>,
     capacidade: usize,
+    /// Relógio do carimbo (`ts_unix`) — injetável pra o teste fixar o instante (como a `Borda`).
+    relogio: fn() -> u64,
+}
+
+/// Relógio de PRODUÇÃO do carimbo de auditoria (segundos epoch). Relógio antes de 1970 ⇒ `0`: é um
+/// METADADO de evidência, não uma checagem de acesso, e `0` (1970) aparece como anomalia óbvia no
+/// trilho em vez de forjar um instante plausível.
+fn relogio_sistema() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[derive(Default)]
@@ -173,7 +188,14 @@ impl AuditorBuffer {
     /// escolhe um teto real (0 é degenerado: tudo vira perda).
     #[must_use]
     pub fn novo(capacidade: usize) -> Self {
-        AuditorBuffer { estado: Mutex::new(EstadoBuffer::default()), capacidade }
+        AuditorBuffer { estado: Mutex::new(EstadoBuffer::default()), capacidade, relogio: relogio_sistema }
+    }
+
+    /// Troca o relógio do carimbo (testes fixam o instante; produção usa o do sistema).
+    #[must_use]
+    pub fn com_relogio(mut self, relogio: fn() -> u64) -> Self {
+        self.relogio = relogio;
+        self
     }
 
     /// DRENA o buffer (chamado pela fatia B, que entrega à rede): devolve os eventos retidos e, se
@@ -205,6 +227,7 @@ impl Auditor for AuditorBuffer {
             acao: evento.acao.to_string(),
             alvo: evento.alvo.para_dono(),
             resultado: evento.resultado,
+            ts_unix: (self.relogio)(),
         });
     }
 }
@@ -372,6 +395,35 @@ mod tests {
         assert!(matches!(&drenado[0], EventoAuditado::Autz { resultado: ResultadoAutz::Permitido, .. }));
         assert!(matches!(&drenado[1], EventoAuditado::Autz { resultado: ResultadoAutz::Negado, .. }));
         assert!(buf.drenar().is_empty(), "2º dreno vazio — o 1º esvaziou");
+    }
+
+    // #1565: o carimbo é o INSTANTE DA DECISÃO (no `registrar`), não o do dreno. O relógio avança
+    // entre os dois registros E antes do dreno; cada evento tem de levar o instante em que foi
+    // registado. Um mutante que carimbasse no dreno (ou com constante) daria o mesmo ts aos dois.
+    #[test]
+    fn carimbo_e_o_instante_do_registrar_nao_do_dreno() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static AGORA: AtomicU64 = AtomicU64::new(0);
+        fn relogio_teste() -> u64 {
+            AGORA.load(Ordering::SeqCst)
+        }
+        let buf = AuditorBuffer::novo(10).com_relogio(relogio_teste);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        AGORA.store(1_000, Ordering::SeqCst);
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Permitido });
+        AGORA.store(1_007, Ordering::SeqCst);
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Negado });
+        AGORA.store(9_999, Ordering::SeqCst); // o dreno acontece BEM depois
+        let ts: Vec<u64> = buf
+            .drenar()
+            .iter()
+            .filter_map(|e| match e {
+                EventoAuditado::Autz { ts_unix, .. } => Some(*ts_unix),
+                EventoAuditado::Perda { .. } => None,
+            })
+            .collect();
+        assert_eq!(ts, vec![1_000, 1_007], "cada evento leva o instante da sua decisão");
     }
 
     // Exigência do @Altair: transbordo é ELE PRÓPRIO evento auditado (nunca silêncio). Teto 2, 5
