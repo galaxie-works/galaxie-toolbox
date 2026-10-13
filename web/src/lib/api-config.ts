@@ -15,8 +15,6 @@ export interface ItemConfig {
   tipo: "bool" | "texto" | "opcao";
   /** Para `tipo: "opcao"`. */
   opcoes?: string[];
-  /** Rótulo i18n opcional; a UI cai na própria `chave` se ausente. */
-  rotulo?: { "pt-BR": string; en: string };
 }
 
 /** As prefs configuráveis pela plataforma (só as da allowlist do BE), com valor atual. */
