@@ -4,6 +4,7 @@ import { obterConfig, salvarConfig, type ItemConfig, type ValorConfig, type Resu
 import { ehNaoAutenticado } from "@/lib/http";
 import { useCarregar } from "@/lib/use-carregar";
 import { DICIONARIOS, type Idioma } from "@/i18n";
+import { rotuloDaChave, rotuloDaOpcao } from "@/lib/rotulos-config";
 import { useIdiomaAtivo } from "@/idioma-contexto";
 
 // #1491 — UI de config do app. DATA-DRIVEN: renderiza só as chaves que o BE
@@ -21,7 +22,9 @@ function Controle({
   onChange: (v: ValorConfig) => void;
   idioma: Idioma;
 }) {
-  const rotulo = item.rotulo?.[idioma] ?? item.chave;
+  // #1749: o rótulo vem do dicionário (o BE não manda texto de UI). Nunca a chave crua.
+  const t = DICIONARIOS[idioma];
+  const rotulo = rotuloDaChave(t, item.chave);
   if (item.tipo === "bool") {
     return (
       <label className="flex items-center justify-between gap-4 py-2 text-sm">
@@ -46,7 +49,7 @@ function Controle({
         >
           {(item.opcoes ?? []).map((o) => (
             <option key={o} value={o}>
-              {o}
+              {rotuloDaOpcao(t, o)}
             </option>
           ))}
         </select>
@@ -149,7 +152,7 @@ export function ConfigPage({ idioma: explicito }: { idioma?: Idioma }) {
               )}
               {resultado && resultado.falhas.length > 0 && (
                 <span className="text-sm text-red-600">
-                  {t.naoGuardado}: {resultado.falhas.map((f) => f.chave).join(", ")}
+                  {t.naoGuardado}: {resultado.falhas.map((f) => rotuloDaChave(t, f.chave)).join(", ")}
                 </span>
               )}
             </div>

@@ -1,11 +1,18 @@
 // #1491 — a UI de config é DATA-DRIVEN: renderiza só as chaves que o BE devolve
 // (a allowlist do #1471), por tipo; salva só o que foi tocado; 401 → login.
+//
+// #1749 (achado da @Íris): este teste passava com um mock que INVENTAVA um campo
+// `rotulo` que o BE nunca manda — e a tela real mostrava `app.tema` cru. Agora o
+// fixture é o formato REAL do `GET /api/v1/me/config` (dev-server, pre-prod
+// `89e37dfb`), e o tipo `ItemConfig` já não declara `rotulo`: um mock que o
+// reinvente é erro de `tsc` (propriedade em excesso), não um teste verde.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { ConfigPage } from "./config";
 import { DICIONARIOS, type Idioma } from "@/i18n";
+import { rotuloDaChave, rotuloDaOpcao } from "@/lib/rotulos-config";
 import * as api from "@/lib/api-config";
 import { ErroApi } from "@/lib/http";
 
@@ -14,10 +21,15 @@ vi.mock("@/lib/api-config", () => ({
   salvarConfig: vi.fn(),
 }));
 
-const ALLOWLIST: api.ItemConfig[] = [
-  { chave: "notificacoes", valor: true, tipo: "bool", rotulo: { "pt-BR": "Notificações", en: "Notifications" } },
-  { chave: "tema", valor: "claro", tipo: "opcao", opcoes: ["claro", "escuro"] },
-  { chave: "apelido", valor: "Ana", tipo: "texto" },
+/** A resposta REAL do BE (medida pela Íris no #1749): sem `rotulo`. */
+const RESPOSTA_REAL: api.ItemConfig[] = [
+  { chave: "app.tema", tipo: "opcao", opcoes: ["claro", "escuro", "sistema"], valor: "escuro" },
+  { chave: "app.notificacoes", tipo: "bool", valor: true },
+];
+/** + uma chave que o FE ainda não conhece, e do tipo `texto` (o 3.º controle). */
+const COM_DESCONHECIDA: api.ItemConfig[] = [
+  ...RESPOSTA_REAL,
+  { chave: "app.apelido", tipo: "texto", valor: "Ana" },
 ];
 
 function montar(idioma: Idioma) {
@@ -32,7 +44,7 @@ function montar(idioma: Idioma) {
 }
 
 beforeEach(() => {
-  vi.mocked(api.obterConfig).mockResolvedValue(ALLOWLIST.map((i) => ({ ...i })));
+  vi.mocked(api.obterConfig).mockResolvedValue(COM_DESCONHECIDA.map((i) => ({ ...i })));
   vi.mocked(api.salvarConfig).mockResolvedValue({ ok: [], falhas: [] });
 });
 afterEach(() => {
@@ -43,29 +55,22 @@ afterEach(() => {
 describe("#1491 ConfigPage", () => {
   it("renderiza SÓ as chaves da allowlist do BE, cada uma pelo seu tipo", async () => {
     montar("pt-BR");
-    // bool → checkbox
-    expect(await screen.findByRole("checkbox")).toBeTruthy();
-    // opcao → combobox (select) com as opções
-    expect(screen.getByRole("combobox")).toBeTruthy();
-    // texto → textbox com o valor atual
-    expect(screen.getByDisplayValue("Ana")).toBeTruthy();
-    // exatamente 3 controles — a UI não inventa chave fora do que o BE devolveu
-    expect(screen.getByText("Notificações")).toBeTruthy();
+    expect(await screen.findByRole("checkbox")).toBeTruthy(); // bool
+    expect(screen.getByRole("combobox")).toBeTruthy(); // opcao
+    expect(screen.getByDisplayValue("Ana")).toBeTruthy(); // texto
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1); // a UI não inventa chave
   });
 
   it("salvar manda SÓ a chave tocada (patch), não a allowlist inteira", async () => {
     const u = userEvent.setup();
     montar("pt-BR");
-    await u.click(await screen.findByRole("checkbox")); // toca 'notificacoes' → false
+    await u.click(await screen.findByRole("checkbox")); // toca 'app.notificacoes' → false
     await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
-    await waitFor(() => expect(api.salvarConfig).toHaveBeenCalledWith({ notificacoes: false }));
+    await waitFor(() => expect(api.salvarConfig).toHaveBeenCalledWith({ "app.notificacoes": false }));
   });
 
   it("save OK (todas gravadas) → mostra 'Salvo'", async () => {
-    vi.mocked(api.salvarConfig).mockResolvedValue({
-      ok: ["notificacoes"],
-      falhas: [],
-    });
+    vi.mocked(api.salvarConfig).mockResolvedValue({ ok: ["app.notificacoes"], falhas: [] });
     const u = userEvent.setup();
     montar("pt-BR");
     await u.click(await screen.findByRole("checkbox"));
@@ -73,20 +78,19 @@ describe("#1491 ConfigPage", () => {
     expect(await screen.findByText(DICIONARIOS["pt-BR"].salvo)).toBeTruthy();
   });
 
-  it("save PARCIAL (uma chave falha) → reporta POR CHAVE, NUNCA 'Salvo' global (mandato #1588)", async () => {
+  it("save PARCIAL → reporta POR CHAVE pelo RÓTULO (nunca a chave crua), e nunca 'Salvo' global (#1588)", async () => {
     vi.mocked(api.salvarConfig).mockResolvedValue({
       ok: [],
-      falhas: [{ chave: "notificacoes", status: 400 }],
+      falhas: [{ chave: "app.notificacoes", status: 400 }],
     });
     const u = userEvent.setup();
-    montar("pt-BR");
+    const { container } = montar("pt-BR");
     await u.click(await screen.findByRole("checkbox"));
     await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
-    // nomeia a chave que falhou…
-    expect(await screen.findByText(/notificacoes/)).toBeTruthy();
-    expect(screen.getByText(new RegExp(DICIONARIOS["pt-BR"].naoGuardado))).toBeTruthy();
-    // …e NÃO mente "Salvo" (a mentira que a saída (b) escreveria no servidor)
-    expect(screen.queryByText(DICIONARIOS["pt-BR"].salvo)).toBeNull();
+    const t = DICIONARIOS["pt-BR"];
+    expect(await screen.findByText(`${t.naoGuardado}: ${t.configChave["app.notificacoes"]}`)).toBeTruthy();
+    expect(container.textContent).not.toContain("app.notificacoes");
+    expect(screen.queryByText(t.salvo)).toBeNull();
   });
 
   it("401 durante o SAVE (sessão morta a meio) → redireciona pro login", async () => {
@@ -115,9 +119,51 @@ describe("#1491 ConfigPage", () => {
     montar("pt-BR");
     expect(await screen.findByText("TELA DE LOGIN")).toBeTruthy();
   });
+});
 
-  it("i18n en", async () => {
+describe("#1749 — rótulos da config vêm do dicionário (contra o formato REAL do BE)", () => {
+  it("pt-BR: Tema / Claro·Escuro·Sistema / Notificações, e NENHUMA chave `app.*` no DOM", async () => {
+    vi.mocked(api.obterConfig).mockResolvedValue(RESPOSTA_REAL.map((i) => ({ ...i })));
+    const { container } = montar("pt-BR");
+    const select = await screen.findByRole("combobox");
+    expect(screen.getByText("Tema")).toBeTruthy();
+    expect(screen.getByText("Notificações")).toBeTruthy();
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Claro", "Escuro", "Sistema"]);
+    expect(container.textContent).not.toMatch(/app\./);
+  });
+
+  it("en: Theme / Light·Dark·System / Notifications, e nenhum valor de opção em português", async () => {
+    vi.mocked(api.obterConfig).mockResolvedValue(RESPOSTA_REAL.map((i) => ({ ...i })));
+    const { container } = montar("en");
+    const select = await screen.findByRole("combobox");
+    expect(screen.getByText("Theme")).toBeTruthy();
+    expect(screen.getByText("Notifications")).toBeTruthy();
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Light", "Dark", "System"]);
+    expect(container.textContent).not.toMatch(/Claro|Escuro|Sistema|app\./);
+  });
+
+  it("o rótulo é só o que se MOSTRA: o valor que vai pro BE continua o dado cru", async () => {
+    vi.mocked(api.obterConfig).mockResolvedValue(RESPOSTA_REAL.map((i) => ({ ...i })));
+    const u = userEvent.setup();
     montar("en");
-    expect(await screen.findByRole("heading", { name: DICIONARIOS.en.configuracoes })).toBeTruthy();
+    const select = (await screen.findByRole("combobox")) as HTMLSelectElement;
+    expect(select.value).toBe("escuro"); // o valor real, não "Dark"
+    await u.selectOptions(select, "Light");
+    await u.click(screen.getByRole("button", { name: DICIONARIOS.en.salvar }));
+    await waitFor(() => expect(api.salvarConfig).toHaveBeenCalledWith({ "app.tema": "claro" }));
+  });
+
+  it.each(["pt-BR", "en"] as const)("chave que o FE não conhece → o fallback, nunca a chave crua (%s)", async (idioma) => {
+    const { container } = montar(idioma); // beforeEach: inclui `app.apelido`
+    expect(await screen.findByText(DICIONARIOS[idioma].configChaveDesconhecida)).toBeTruthy();
+    expect(container.textContent).not.toContain("app.apelido");
+  });
+
+  it("uma chave do servidor nunca alcança o protótipo do dicionário", () => {
+    const t = DICIONARIOS["pt-BR"];
+    for (const chave of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(rotuloDaChave(t, chave)).toBe(t.configChaveDesconhecida);
+    }
+    expect(rotuloDaOpcao(t, "constructor")).toBe("constructor"); // dado cru, não uma função
   });
 });

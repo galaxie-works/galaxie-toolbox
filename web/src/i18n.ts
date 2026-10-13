@@ -2,6 +2,11 @@
 // dicionário por idioma, idioma detectado do navegador. Módulo puro (testável).
 export type Idioma = "pt-BR" | "en";
 
+/** Chaves da allowlist de config que a UI sabe rotular (#1749). O BE não manda texto de UI. */
+export type ChaveConfigConhecida = "app.tema" | "app.notificacoes";
+/** Valores de opção da allowlist que a UI sabe rotular (#1749). */
+export type OpcaoConfigConhecida = "claro" | "escuro" | "sistema";
+
 export interface Dicionario {
   // #1484 — login (identidade federada, sem senha própria). `entrarCom` é o rótulo
   // por provedor (os mesmos do desktop, `api.ts:232`); a chave garante os 3 no tsc.
@@ -37,6 +42,13 @@ export interface Dicionario {
   configuracoes: string;
   semConfig: string;
   naoGuardado: string;
+  // #1749 — rótulos da allowlist de config. O BE devolve só `chave`/valores (sem
+  // texto de UI, regra 7 do AGENTS): a copy mora aqui, indexada por eles. O TIPO
+  // das chaves faz o `tsc` reprovar um idioma que esqueça uma tradução.
+  configChave: Record<ChaveConfigConhecida, string>;
+  configOpcao: Record<OpcaoConfigConhecida, string>;
+  /** Chave que o BE manda e a UI ainda não conhece — nunca mostrar a chave crua. */
+  configChaveDesconhecida: string;
   // #1490 — admin da org. O TIPO é a lista: campo sem tradução nos dois idiomas
   // não compila — o pt/en do DoD fica provado pelo `tsc`, não pela boa vontade
   // de quem editar o dicionário depois.
@@ -147,6 +159,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     configuracoes: "Configurações",
     semConfig: "Nada para configurar",
     naoGuardado: "Não guardado",
+    configChave: { "app.tema": "Tema", "app.notificacoes": "Notificações" },
+    configOpcao: { claro: "Claro", escuro: "Escuro", sistema: "Sistema" },
+    configChaveDesconhecida: "Preferência",
     adminOrg: "Administração da organização",
     membros: "Membros",
     dominios: "Domínios",
@@ -222,6 +237,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     configuracoes: "Settings",
     semConfig: "Nothing to configure",
     naoGuardado: "Not saved",
+    configChave: { "app.tema": "Theme", "app.notificacoes": "Notifications" },
+    configOpcao: { claro: "Light", escuro: "Dark", sistema: "System" },
+    configChaveDesconhecida: "Preference",
     adminOrg: "Organization admin",
     membros: "Members",
     dominios: "Domains",
