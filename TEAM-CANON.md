@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.23 · 2026-10-13 · §5 fatia parcial = sub-issue (`Closes` sempre; o `Ref` deixa de existir), porque o branch atrelado (`gh issue develop`) fecha a issue no merge com ou sem `Closes` · ratificação PENDENTE na PR · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `roster/<papel>.json` (memória; `ROSTER.md` = build-product gerado)
+**v1.23 · 2026-10-13 · §5 fatia parcial = sub-issue (`Closes` sempre; o `Ref` deixa de existir), porque o branch atrelado (`gh issue develop`) fecha a issue no merge com ou sem `Closes` · ratificado pelo PO na PR #1757 (2026-10-13) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `roster/<papel>.json` (memória; `ROSTER.md` = build-product gerado)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
