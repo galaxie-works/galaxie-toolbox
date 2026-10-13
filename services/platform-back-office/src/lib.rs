@@ -143,7 +143,15 @@ pub enum EventoAuditado {
     /// Uma decisão de autz (o caso normal), com o mesmo conteúdo do [`EventoAutz`], agora possuído.
     /// `acao` é o nome estável (do `acao_nome()`, de QUALQUER crate de autz — o buffer é agnóstico
     /// à ação desde o #1571); `alvo` é o **id** da org, quando a ação tem alvo.
-    Autz { ator: UserId, acao: String, alvo: AlvoDono, resultado: ResultadoAutz },
+    /// `ts_unix` (#1565): o INSTANTE DA DECISÃO, em segundos epoch, carimbado no `registrar` — não no
+    /// dreno. O doc do `EventoAutz` manda que a impl carimbe; sem isto o trilho só teria a hora do
+    /// dreno (até um intervalo inteiro depois), e a ordem/janela de um ataque ficava borrada.
+    /// `id` (#1565, @Altair): identidade ESTÁVEL do evento, `<boot_id>-<seq>`, carimbada no
+    /// `registrar`. A entrega ao OpenObserve é **pelo menos uma vez** (um POST que gravou mas cuja
+    /// resposta se perdeu é devolvido e reenviado), então o leitor tem de poder deduplicar — e só um id
+    /// que sobrevive ao `devolver` o permite. O `seq` conta TODO registrar (também o que transborda),
+    /// por isso um buraco na sequência coincide com a `Perda` declarada.
+    Autz { id: String, ator: UserId, acao: String, alvo: AlvoDono, resultado: ResultadoAutz, ts_unix: u64 },
     /// `n` eventos foram PERDIDOS por transbordo do buffer antes deste dreno. Nunca silencioso.
     Perda { n: u64 },
 }
@@ -160,12 +168,40 @@ pub enum EventoAuditado {
 pub struct AuditorBuffer {
     estado: Mutex<EstadoBuffer>,
     capacidade: usize,
+    /// Relógio do carimbo (`ts_unix`) — injetável pra o teste fixar o instante (como a `Borda`).
+    relogio: fn() -> u64,
+    /// Prefixo do `id` dos eventos: distingue os processos (um reinício recomeça o `seq` em 1, e sem
+    /// isto dois eventos diferentes teriam o mesmo id e o leitor deduplicaria evidência real).
+    boot_id: String,
+}
+
+/// O `boot_id` deste processo: nanos do relógio no arranque + pid, em hexadecimal. Não é segredo nem
+/// precisa de ser imprevisível — só tem de não colidir entre arranques do serviço, e o par instante+pid
+/// garante isso sem acrescentar uma dependência de aleatoriedade a este crate.
+fn boot_id_do_processo() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:x}{:x}", std::process::id())
+}
+
+/// Relógio de PRODUÇÃO do carimbo de auditoria (segundos epoch). Relógio antes de 1970 ⇒ `0`: é um
+/// METADADO de evidência, não uma checagem de acesso, e `0` (1970) aparece como anomalia óbvia no
+/// trilho em vez de forjar um instante plausível.
+fn relogio_sistema() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[derive(Default)]
 struct EstadoBuffer {
     eventos: VecDeque<EventoAuditado>,
     perdidos: u64,
+    /// Contador de `registrar` (base do `id`). Conta também o que transborda.
+    seq: u64,
 }
 
 impl AuditorBuffer {
@@ -173,7 +209,72 @@ impl AuditorBuffer {
     /// escolhe um teto real (0 é degenerado: tudo vira perda).
     #[must_use]
     pub fn novo(capacidade: usize) -> Self {
-        AuditorBuffer { estado: Mutex::new(EstadoBuffer::default()), capacidade }
+        AuditorBuffer {
+            estado: Mutex::new(EstadoBuffer::default()),
+            capacidade,
+            relogio: relogio_sistema,
+            boot_id: boot_id_do_processo(),
+        }
+    }
+
+    /// `true` quando o buffer passou de METADE da capacidade — o gatilho do dreno antecipado (#1565,
+    /// @Altair). Sob inundação, esperar o intervalo inteiro deixava o buffer encher e o presente cegar;
+    /// drenar a meio encurta a janela de cegueira para o tempo de um POST.
+    #[must_use]
+    pub fn acima_da_metade(&self) -> bool {
+        let estado = self.estado.lock().expect("buffer de auditoria envenenado");
+        estado.eventos.len() * 2 >= self.capacidade
+    }
+
+    /// DEVOLVE um lote cuja entrega falhou de forma recuperável (rede, 5xx, 401/403 — #1565, regra 1
+    /// do @Altair). Sem isto um POST falhado perdia o lote **em silêncio**, porque o [`drenar`] já o
+    /// tinha tirado e zerado o contador.
+    /// - os `Autz` voltam **pela frente**, na ordem original (são mais antigos que o que entretanto
+    ///   entrou), **até à capacidade**; o que não couber soma-se a `perdidos` — declarado, nunca calado;
+    /// - um `Perda{n}` do lote volta como `perdidos += n` (não como evento): o próximo dreno emite UMA
+    ///   `Perda` com o total, em vez de duas linhas de perda;
+    /// - os `Autz` devolvidos mantêm o `id`, e o reenvio deduplica do lado do leitor.
+    ///
+    /// Quando não cabe tudo, ficam os MAIS ANTIGOS do lote (o início de uma inundação é a evidência que
+    /// mais importa) e o resto vira perda contada.
+    ///
+    /// [`drenar`]: AuditorBuffer::drenar
+    pub fn devolver(&self, lote: Vec<EventoAuditado>) {
+        let mut estado = self.estado.lock().expect("buffer de auditoria envenenado");
+        let mut autz = Vec::with_capacity(lote.len());
+        for ev in lote {
+            match ev {
+                EventoAuditado::Perda { n } => estado.perdidos += n,
+                a @ EventoAuditado::Autz { .. } => autz.push(a),
+            }
+        }
+        let vaga = self.capacidade.saturating_sub(estado.eventos.len());
+        let cabe = autz.len().min(vaga);
+        estado.perdidos += (autz.len() - cabe) as u64;
+        for ev in autz.into_iter().take(cabe).rev() {
+            estado.eventos.push_front(ev);
+        }
+    }
+
+    /// Conta um lote INTEIRO como perdido, sem o devolver: o lote "envenenado" que o destino recusa
+    /// por conteúdo (400/413/outros 4xx — regra 1 do @Altair). Devolvê-lo seria um ciclo infinito; a
+    /// perda fica declarada (`Autz` = 1 cada, `Perda{n}` = n) e sai na próxima `Perda`.
+    pub fn descartar_como_perda(&self, lote: &[EventoAuditado]) {
+        let n: u64 = lote
+            .iter()
+            .map(|e| match e {
+                EventoAuditado::Autz { .. } => 1,
+                EventoAuditado::Perda { n } => *n,
+            })
+            .sum();
+        self.estado.lock().expect("buffer de auditoria envenenado").perdidos += n;
+    }
+
+    /// Troca o relógio do carimbo (testes fixam o instante; produção usa o do sistema).
+    #[must_use]
+    pub fn com_relogio(mut self, relogio: fn() -> u64) -> Self {
+        self.relogio = relogio;
+        self
     }
 
     /// DRENA o buffer (chamado pela fatia B, que entrega à rede): devolve os eventos retidos e, se
@@ -194,17 +295,21 @@ impl AuditorBuffer {
 impl Auditor for AuditorBuffer {
     fn registrar(&self, evento: &EventoAutz) {
         let mut estado = self.estado.lock().expect("buffer de auditoria envenenado");
+        estado.seq += 1;
         if estado.eventos.len() >= self.capacidade {
             // Transbordo: NÃO bloqueia, NÃO descarta o registro já retido, NÃO cresce. Conta a perda
             // — que sai NOMEADA no próximo dreno. O caminho de autz segue: a auditoria nunca o trava.
             estado.perdidos += 1;
             return;
         }
+        let id = format!("{}-{}", self.boot_id, estado.seq);
         estado.eventos.push_back(EventoAuditado::Autz {
+            id,
             ator: evento.ator.clone(),
             acao: evento.acao.to_string(),
             alvo: evento.alvo.para_dono(),
             resultado: evento.resultado,
+            ts_unix: (self.relogio)(),
         });
     }
 }
@@ -372,6 +477,127 @@ mod tests {
         assert!(matches!(&drenado[0], EventoAuditado::Autz { resultado: ResultadoAutz::Permitido, .. }));
         assert!(matches!(&drenado[1], EventoAuditado::Autz { resultado: ResultadoAutz::Negado, .. }));
         assert!(buf.drenar().is_empty(), "2º dreno vazio — o 1º esvaziou");
+    }
+
+    // #1565: o carimbo é o INSTANTE DA DECISÃO (no `registrar`), não o do dreno. O relógio avança
+    // entre os dois registros E antes do dreno; cada evento tem de levar o instante em que foi
+    // registado. Um mutante que carimbasse no dreno (ou com constante) daria o mesmo ts aos dois.
+    #[test]
+    fn carimbo_e_o_instante_do_registrar_nao_do_dreno() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static AGORA: AtomicU64 = AtomicU64::new(0);
+        fn relogio_teste() -> u64 {
+            AGORA.load(Ordering::SeqCst)
+        }
+        let buf = AuditorBuffer::novo(10).com_relogio(relogio_teste);
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        AGORA.store(1_000, Ordering::SeqCst);
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Permitido });
+        AGORA.store(1_007, Ordering::SeqCst);
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Negado });
+        AGORA.store(9_999, Ordering::SeqCst); // o dreno acontece BEM depois
+        let ts: Vec<u64> = buf
+            .drenar()
+            .iter()
+            .filter_map(|e| match e {
+                EventoAuditado::Autz { ts_unix, .. } => Some(*ts_unix),
+                EventoAuditado::Perda { .. } => None,
+            })
+            .collect();
+        assert_eq!(ts, vec![1_000, 1_007], "cada evento leva o instante da sua decisão");
+    }
+
+    // ---- #1565 (B): devolução, lote envenenado, meio-buffer e ids estáveis (regras do @Altair) ----
+
+    fn registrar_n(buf: &AuditorBuffer, n: usize) {
+        let ator = UserId("s1".into());
+        let acao = AcaoBackOffice::ListarOrgs;
+        for _ in 0..n {
+            buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Negado });
+        }
+    }
+
+    fn ids(eventos: &[EventoAuditado]) -> Vec<String> {
+        eventos
+            .iter()
+            .filter_map(|e| match e {
+                EventoAuditado::Autz { id, .. } => Some(id.clone()),
+                EventoAuditado::Perda { .. } => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn devolver_poe_o_lote_de_volta_pela_frente_com_os_mesmos_ids() {
+        // POST falhou (5xx): o lote volta ANTES do que entrou entretanto, na ordem, com o MESMO id
+        // (o reenvio é deduplicável). Sem `devolver`, este lote sumia em silêncio.
+        let buf = AuditorBuffer::novo(10);
+        registrar_n(&buf, 3);
+        let lote = buf.drenar();
+        let ids_lote = ids(&lote);
+        registrar_n(&buf, 2); // entram durante o POST falhado
+        buf.devolver(lote);
+        let tudo = buf.drenar();
+        assert_eq!(tudo.len(), 5, "nada perdido");
+        assert_eq!(&ids(&tudo)[..3], ids_lote.as_slice(), "o lote volta à frente, ids iguais");
+        assert!(!tudo.iter().any(|e| matches!(e, EventoAuditado::Perda { .. })), "nenhuma perda inventada");
+    }
+
+    #[test]
+    fn devolver_sem_vaga_conta_o_excedente_e_a_perda_do_lote() {
+        // Capacidade 4: lote de 3 Autz + Perda{n:5} devolvido com 3 novos já no buffer ⇒ só cabe 1 do
+        // lote; os 2 que não cabem + os 5 da Perda viram perdidos = 7, declarados no próximo dreno.
+        let buf = AuditorBuffer::novo(4);
+        registrar_n(&buf, 3);
+        let mut lote = buf.drenar();
+        lote.push(EventoAuditado::Perda { n: 5 });
+        let primeiro_do_lote = ids(&lote)[0].clone();
+        registrar_n(&buf, 3);
+        buf.devolver(lote);
+        let tudo = buf.drenar();
+        assert_eq!(ids(&tudo).len(), 4, "o buffer fica no teto, não cresce");
+        assert_eq!(ids(&tudo)[0], primeiro_do_lote, "fica o MAIS ANTIGO do lote");
+        assert_eq!(tudo.last(), Some(&EventoAuditado::Perda { n: 7 }), "excedente (2) + Perda do lote (5)");
+    }
+
+    #[test]
+    fn lote_envenenado_vira_perda_contada_sem_voltar() {
+        // 400/413: o destino recusa por conteúdo. Devolver seria ciclo infinito; descartar em silêncio
+        // seria o defeito. Fica a contagem: 2 Autz + Perda{n:4} = 6.
+        let buf = AuditorBuffer::novo(10);
+        registrar_n(&buf, 2);
+        let mut lote = buf.drenar();
+        lote.push(EventoAuditado::Perda { n: 4 });
+        buf.descartar_como_perda(&lote);
+        assert_eq!(buf.drenar(), vec![EventoAuditado::Perda { n: 6 }]);
+    }
+
+    #[test]
+    fn meio_buffer_dispara_o_dreno_antecipado() {
+        let buf = AuditorBuffer::novo(10);
+        registrar_n(&buf, 4);
+        assert!(!buf.acima_da_metade(), "4/10 ainda não");
+        registrar_n(&buf, 1);
+        assert!(buf.acima_da_metade(), "5/10 = metade ⇒ drena já");
+    }
+
+    #[test]
+    fn ids_sao_unicos_e_o_buraco_na_sequencia_coincide_com_a_perda() {
+        // Capacidade 2, 4 registros: retêm-se seq 1 e 2; o 3 e o 4 transbordam (Perda{n:2}). Depois de
+        // drenar, o próximo é o seq 5 — o buraco 3..4 é exatamente a perda declarada.
+        let buf = AuditorBuffer::novo(2);
+        registrar_n(&buf, 4);
+        let d1 = buf.drenar();
+        registrar_n(&buf, 1);
+        let d2 = buf.drenar();
+        let sufixos: Vec<String> = ids(&d1)
+            .into_iter()
+            .chain(ids(&d2))
+            .map(|id| id.rsplit('-').next().unwrap().to_string())
+            .collect();
+        assert_eq!(sufixos, ["1", "2", "5"]);
+        assert!(d1.contains(&EventoAuditado::Perda { n: 2 }));
     }
 
     // Exigência do @Altair: transbordo é ELE PRÓPRIO evento auditado (nunca silêncio). Teto 2, 5

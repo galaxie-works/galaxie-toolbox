@@ -2273,6 +2273,104 @@ mod tests {
         );
     }
 
+    // ---- #1716 (gate da @Lúmen, mutante A2): a guarda acima passa pelo `IoDriver`, que partilha o
+    // `resolver_destino` mas NÃO o ponto de chamada da app. Esta passa pelo `receive_udp` +
+    // `drain_transport` da `RuntimeSession` (o caminho de PRODUÇÃO), com o socket preparado como no
+    // `RuntimeSession::new` (bind `0.0.0.0`, nonblocking). Sem captura, vídeo, injector nem relay
+    // (capabilities todas `false`), que não entram no caminho do STUN direto. Se o `receive_udp`
+    // voltar a entregar `local_addr` (`0.0.0.0:P`), o str0m do host descarta o STUN e nenhum lado
+    // conecta. ----
+    fn runtime_host_bind_producao(eventos: Arc<Mutex<Vec<serde_json::Value>>>) -> RuntimeSession {
+        let socket = UdpSocket::bind("0.0.0.0:0").expect("bind 0.0.0.0 (reproduz produção)");
+        socket.set_nonblocking(true).expect("nonblocking (como no RuntimeSession::new)");
+        let local_addr = socket.local_addr().expect("local_addr");
+        let (encoder_commands, transport_encoder_commands) = canal_de_comandos();
+        let (_tx, commands) = mpsc::channel();
+        let on_event = Channel::new(move |corpo| {
+            if let InvokeResponseBody::Json(json) = corpo {
+                eventos.lock().unwrap().push(serde_json::from_str(&json).unwrap_or_default());
+            }
+            Ok(())
+        });
+        RuntimeSession {
+            role: RemoteRole::Host,
+            capabilities: Capabilities::default(),
+            on_event,
+            video_frames: None,
+            video_failed: Arc::new(AtomicBool::new(false)),
+            video_worker: None,
+            commands,
+            transport: Transport::novo(SessionConfig::new(RemoteRole::Host.papel(), vec![]), encoder_commands),
+            socket,
+            local_addr,
+            ips_locais: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            cache_destino: CacheDestino::default(),
+            next_timeout: None,
+            last_stats: Instant::now(),
+            pressed_keys: HashSet::new(),
+            pressed_buttons: HashSet::new(),
+            injector: None,
+            relay: None,
+            relay_drenando: None,
+            relayed_liberados: HashSet::new(),
+            capture_frames: None,
+            transport_encoder_commands,
+            capture_encoder_commands: None,
+            capture_worker: None,
+            terminal_sent: false,
+        }
+    }
+
+    #[test]
+    fn ac2_receive_udp_da_app_conecta_com_bind_0000() {
+        let eventos = Arc::new(Mutex::new(Vec::new()));
+        let mut host = runtime_host_bind_producao(Arc::clone(&eventos));
+        let mut ctrl = driver_bind_producao(Papel::Controlador);
+        assert!(host.local_addr.ip().is_unspecified(), "o teste TEM de reproduzir o bind 0.0.0.0");
+        let cand_h = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), host.local_addr.port());
+        let cand_c = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), ctrl.local_addr().port());
+
+        // Os papéis da PRODUÇÃO: o Controller faz o offer (ICE controlling) e o host responde
+        // (controlled). Isto importa para a guarda: o lado controlling casa as respostas STUN pela
+        // transação e nomeia o par mesmo descartando os PEDIDOS, por isso um host que fizesse o offer
+        // conectava com o bug (medido: o mutante A2 sobreviveu assim). Como controlled, o host só
+        // conecta se ACEITAR os pedidos do controlador, e é aí que o destino errado os descarta.
+        let offer = ctrl.transport().criar_offer().expect("criar_offer");
+        let answer = host.transport.responder_offer(&sdp_de(offer)).expect("responder_offer");
+        ctrl.transport().aceitar_answer(&sdp_de(answer)).expect("aceitar_answer");
+        host.transport.candidato_local(cand_h).expect("cand local h");
+        ctrl.transport().candidato_local(cand_c).expect("cand local c");
+        host.transport.candidato_remoto(cand_c).expect("cand rem h");
+        ctrl.transport().candidato_remoto(cand_h).expect("cand rem c");
+
+        let host_conectado = |eventos: &Arc<Mutex<Vec<serde_json::Value>>>| {
+            eventos.lock().unwrap().iter().any(|e| e["type"] == "state" && e["state"] == "connected")
+        };
+        let (mut host_ok, mut ctrl_ok) = (false, false);
+        let prazo = Instant::now() + std::time::Duration::from_secs(10);
+        while !(host_ok && ctrl_ok) && Instant::now() < prazo {
+            // A mesma ordem do `RuntimeSession::run`: recebe, atende o timeout vencido, drena.
+            host.receive_udp().expect("host.receive_udp");
+            if host.next_timeout.is_some_and(|t| t <= Instant::now()) {
+                host.transport.atender_timeout(Instant::now()).expect("atender_timeout");
+                host.next_timeout = None;
+            }
+            assert!(!host.drain_transport().expect("host.drain_transport"), "a sessão não pode terminar");
+            host_ok = host_conectado(&eventos);
+            ctrl_ok |= ctrl
+                .bombear(Instant::now())
+                .expect("ctrl.bombear")
+                .iter()
+                .any(|ev| matches!(ev, EventoSessao::Conectada));
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            host_ok && ctrl_ok,
+            "o receive_udp da APP com bind 0.0.0.0 não conectou (host={host_ok}, ctrl={ctrl_ok}) — o \
+             destino entregue ao str0m voltou a ser o local_addr 0.0.0.0:P? (#1716, mutante A2)"
+        );
+    }
+
     // ---- #1716 (review do @Altair): o cache de destino tem TETO contra origens forjadas ----
     #[test]
     fn cache_destino_tem_teto_contra_origens_forjadas() {
