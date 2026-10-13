@@ -54,7 +54,9 @@ type Pedido = { metodo: string; url: string; corpo: unknown };
  * - `suspensa`: política e conceder ⇒ `403 org_suspensa`; listar e revogar ATRAVESSAM;
  * - `falharPost`: o `POST` responde este status (para as recusas).
  */
-function borda(opts: { negar?: string; suspensa?: boolean; falharPost?: number; concessoes?: ConcessaoRemota[] } = {}) {
+function borda(
+  opts: { negar?: string; suspensa?: boolean; falharPost?: number; erroPost?: string; concessoes?: ConcessaoRemota[] } = {},
+) {
   const estado = {
     politica: structuredClone(POLITICA_DEFAULT),
     concessoes: structuredClone(opts.concessoes ?? []),
@@ -82,7 +84,7 @@ function borda(opts: { negar?: string; suspensa?: boolean; falharPost?: number; 
     if (url === "/api/v1/orgs/acme/remoto/concessoes") {
       if (metodo === "GET") return Promise.resolve(json(estado.concessoes));
       if (opts.suspensa) return Promise.resolve(suspensa());
-      if (opts.falharPost) return Promise.resolve(json({ erro: "x" }, opts.falharPost));
+      if (opts.falharPost) return Promise.resolve(json({ erro: opts.erroPost ?? "x" }, opts.falharPost));
       const novo = corpo as Pick<ConcessaoRemota, "sujeito" | "objeto" | "capacidades">;
       const c: ConcessaoRemota = {
         id: `cr-${++estado.seq}`,
@@ -266,6 +268,20 @@ describe("#1472 painel do Remote", () => {
     expect(screen.getByText(t.remotoSemConcessoes)).toBeTruthy();
     // O que o admin escreveu FICA, para corrigir e tentar de novo.
     expect((screen.getByRole("textbox", { name: t.remotoDeviceId }) as HTMLInputElement).value).toBe("pc-bia");
+  });
+
+  it("POST recusado por `org_suspensa` (suspensa com o formulário aberto) ⇒ diz que a ORG está suspensa", async () => {
+    // A releitura NÃO revelaria nada: a lista atravessa a suspensão e voltaria
+    // igual, e o clique pareceria ignorado. Daí a mensagem própria.
+    borda({ falharPost: 403, erroPost: "org_suspensa" });
+    const u = await abrirRemoto();
+    const t = DICIONARIOS["pt-BR"];
+    await u.selectOptions(await screen.findByRole("combobox", { name: t.remotoMembro }), "membro-2");
+    await u.type(screen.getByRole("textbox", { name: t.remotoDeviceId }), "pc-bia");
+    await u.click(screen.getByRole("button", { name: t.remotoConceder }));
+
+    expect(await screen.findByRole("status", { name: t.orgSuspensa })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: t.remotoFalhou })).toBeNull();
   });
 
   it("AC2: revogar pede confirmação NOMEADA e, confirmado, a lista mostra 'Revogada'", async () => {
