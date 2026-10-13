@@ -14,6 +14,7 @@
 // pra não quebrar quem já importava daqui (use-carregar, testes do #1489).
 
 import { pedir } from "@/lib/http";
+import type { CapacidadesRemotas } from "@/lib/remoto";
 export { ErroApi, ehNaoAutenticado } from "@/lib/http";
 
 /** @rota /me */
@@ -40,6 +41,36 @@ export interface Dispositivo {
   ultimoAcesso: string;
   /** true se é a sessão que está fazendo esta chamada (não pode se auto-revogar sem aviso). */
   sessaoAtual: boolean;
+}
+
+/**
+ * Uma restrição que o utilizador pôs no SEU device (#1756). Só reduz: o efetivo
+ * de uma sessão é a interseção concessão ∩ teto da org ∩ esta restrição (#1683),
+ * aplicada pela ponte #1729. Não é um inventário de devices: a lista só tem os
+ * que o utilizador limitou.
+ *
+ * @rota /me/remoto/dispositivos
+ */
+export interface RestricaoRemota {
+  dispositivo_id: string;
+  capacidades: CapacidadesRemotas;
+}
+
+export function listarRestricoesRemotas(): Promise<RestricaoRemota[]> {
+  return pedir<RestricaoRemota[]>("/me/remoto/dispositivos");
+}
+
+/** Cria ou substitui a restrição do device (`PUT`, idempotente no servidor). */
+export function definirRestricaoRemota(dispositivo: string, capacidades: CapacidadesRemotas): Promise<RestricaoRemota> {
+  return pedir<RestricaoRemota>(`/me/remoto/dispositivos/${encodeURIComponent(dispositivo)}`, {
+    method: "PUT",
+    body: JSON.stringify({ capacidades }),
+  });
+}
+
+/** Tira a restrição: o device volta ao que a org permite. Sem restrição ⇒ 404. */
+export function removerRestricaoRemota(dispositivo: string): Promise<void> {
+  return pedir<void>(`/me/remoto/dispositivos/${encodeURIComponent(dispositivo)}`, { method: "DELETE" });
 }
 
 export function obterPerfil(): Promise<Perfil> {

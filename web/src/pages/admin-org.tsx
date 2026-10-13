@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState, type ReactElement } from "reac
 import { Navigate } from "react-router-dom";
 import { Modal } from "@/components/modal";
 import { Alerta, RegiaoDeStatus } from "@/components/alerta";
+import { CaixasDeCapacidades } from "@/components/caixas-de-capacidades";
 import {
   DICIONARIOS,
   type Idioma,
@@ -20,7 +21,6 @@ import {
 import {
   ATALHOS,
   CAMINHOS_REMOTO,
-  CAPACIDADES,
   CAPACIDADES_DO_ATALHO,
   MODOS_APROVACAO,
   atalhoDe,
@@ -1031,33 +1031,6 @@ function FormConceder({
         </button>
       </div>
     </form>
-  );
-}
-
-/** As 5 capacidades como caixas de marcar, no padrão de controle bool do `config.tsx`. */
-function CaixasDeCapacidades({
-  t,
-  valor,
-  aoMudar,
-}: {
-  t: Dicionario;
-  valor: CapacidadesRemotas;
-  aoMudar: (c: CapacidadesRemotas) => void;
-}) {
-  return (
-    <div className="flex flex-col">
-      {CAPACIDADES.map((k) => (
-        <label key={k} className="flex items-center justify-between gap-4 py-1">
-          <span className="text-neutral-700">{t.remotoCapacidade[k]}</span>
-          <input
-            type="checkbox"
-            checked={valor[k]}
-            onChange={(e) => aoMudar({ ...valor, [k]: e.target.checked })}
-            className="size-4"
-          />
-        </label>
-      ))}
-    </div>
   );
 }
 

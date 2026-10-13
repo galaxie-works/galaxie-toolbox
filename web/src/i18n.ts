@@ -167,6 +167,18 @@ export interface Dicionario {
   remotoRevogando: string;
   remotoRevogarAviso: string;
   remotoFalhou: string;
+  // #1756 — a secção do membro na `/conta` (copy do card, `remote.me.*`). As
+  // capacidades, o ID e o aviso reusam as chaves do #1472 acima.
+  /** remote.me.titulo */
+  remotoMeTitulo: string;
+  /** remote.me.explica — diz que SÓ reduz: o membro não vê o teto da org. */
+  remotoMeExplica: string;
+  /** remote.me.adicionar */
+  remotoMeAdicionar: string;
+  /** remote.me.remover */
+  remotoMeRemover: string;
+  /** remote.me.vazio */
+  remotoMeVazio: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -284,6 +296,12 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     remotoRevogando: "Revogando…",
     remotoRevogarAviso: "A concessão fica no histórico como revogada.",
     remotoFalhou: "Não foi possível salvar. Tente novamente.",
+    remotoMeTitulo: "Acesso remoto ao meu dispositivo",
+    remotoMeExplica:
+      "Limite o que podem fazer no seu dispositivo. Isto só reduz o que a sua organização permite; nunca o alarga.",
+    remotoMeAdicionar: "Adicionar dispositivo",
+    remotoMeRemover: "Remover restrição",
+    remotoMeVazio: "Ainda não limitou nenhum dispositivo.",
   },
   en: {
     email: "Email",
@@ -396,6 +414,12 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     remotoRevogando: "Revoking…",
     remotoRevogarAviso: "The grant stays in the history as revoked.",
     remotoFalhou: "Couldn't save. Please try again.",
+    remotoMeTitulo: "Remote access to my device",
+    remotoMeExplica:
+      "Limit what others can do on your device. This only narrows what your organization allows; it never widens it.",
+    remotoMeAdicionar: "Add device",
+    remotoMeRemover: "Remove restriction",
+    remotoMeVazio: "You haven't limited any device yet.",
   },
 };
 
