@@ -45,7 +45,13 @@ foreach ($papel in $papeis) {
     $payload = $novos | ForEach-Object {
       # url de API -> url humana aproximada (issues/pulls)
       $hurl = $_.subject.url -replace 'api\.github\.com/repos','github.com' -replace '/pulls/','/pull/'
-      [pscustomobject]@{ id=$_.id; motivo=$_.reason; tipo=$_.subject.type; titulo=$_.subject.title; url=$hurl; repo=$_.repository.full_name; quando=$_.updated_at }
+      # item com +7 dias ganha etiqueta de IDADE (sem julgamento, sem supressao): depois do apagao
+      # de 1 mes (set-out/26) o resgate re-entregou velharia como se fosse urgencia e o time perdeu
+      # tempo triando — o destinatario decide, mas decide informado
+      $tit = $_.subject.title
+      try { $idade = ((Get-Date).ToUniversalTime() - [datetime]$_.updated_at).TotalDays
+            if ($idade -gt 7) { $tit = ("[ANTIGO {0:dd/MM}] {1}" -f [datetime]$_.updated_at, $tit) } } catch { }
+      [pscustomobject]@{ id=$_.id; motivo=$_.reason; tipo=$_.subject.type; titulo=$tit; url=$hurl; repo=$_.repository.full_name; quando=$_.updated_at }
     }
     # lote IMUTAVEL por rodada (papel_<carimboUTC>.json): nunca anexa a arquivo existente.
     # Escreve em .tmp e renomeia — o consumidor (Porteiro) so ve arquivos completos e
