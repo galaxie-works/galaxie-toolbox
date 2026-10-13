@@ -68,9 +68,14 @@ function semComentarios(src: string): string {
 
 test("#1728 a sidebar do Bridge nasce com o LITERAL 256 px (decisão do #466)", () => {
   const fonte = semComentarios(readFileSync(BRIDGE_SPLIT, "utf8"));
+  // Âncora no `;` terminal — NÃO `256\b`. O `\b` casava o `256` dentro de
+  // `256.5`, `256 + 64`, `256 * 2` (achado da @galaxie-lumen: os 4 mutantes
+  // sobreviviam na #1741). `=\s*256\s*;` exige o literal COMPLETO: logo após o
+  // `256` só pode vir espaço opcional e o `;`, por isso todo mutante aritmético/
+  // float/string morde.
   assert.match(
     fonte,
-    /LARGURA_SIDEBAR_PX\s*=\s*256\b/,
+    /LARGURA_SIDEBAR_PX\s*=\s*256\s*;/,
     "`LARGURA_SIDEBAR_PX` deixou de ser 256 px. Isto é a decisão de produto do " +
       "#466 (a sidebar do Bridge nasce com 256 px) — mudá-la tem de ser DELIBERADO, " +
       "não efeito colateral. Se a mudança é intencional, atualize este literal E " +
