@@ -71,11 +71,27 @@ describe("#1491 ConfigPage", () => {
 
   it("save OK (todas gravadas) → mostra 'Salvo'", async () => {
     vi.mocked(api.salvarConfig).mockResolvedValue({ ok: ["app.notificacoes"], falhas: [] });
+    // LATÊNCIA na leitura: o salvar dispara uma RELEITURA, e com o mock instantâneo
+    // o `carregando` dela nunca pintava. O teste passava enquanto, no runtime, o
+    // formulário (e a região dentro dele) desmontava e voltava já com o texto.
+    vi.mocked(api.obterConfig).mockImplementation(
+      () => new Promise((ok) => setTimeout(() => ok(COM_DESCONHECIDA.map((i) => ({ ...i }))), 5)),
+    );
     const u = userEvent.setup();
     montar("pt-BR");
+    const t = DICIONARIOS["pt-BR"];
     await u.click(await screen.findByRole("checkbox"));
-    await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
-    expect(await screen.findByText(DICIONARIOS["pt-BR"].salvo)).toBeTruthy();
+    // #1752 (pedido da @Íris): a região viva existe ANTES do 1.º Salvar, vazia.
+    // Uma região que nasce já com o texto é anunciada de forma inconsistente.
+    const antes = screen.getByRole("status", { name: t.resultadoSalvar });
+    expect(antes.textContent).toBe("");
+    await u.click(screen.getByRole("button", { name: t.salvar }));
+    // Espera a releitura TERMINAR e assentar, e só então afirma.
+    await waitFor(() => expect(api.obterConfig).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    // …é o MESMO nó, e o texto chegou a ele: só o conteúdo mudou.
+    expect(screen.getByRole("status", { name: t.resultadoSalvar })).toBe(antes);
+    expect(antes.textContent).toBe(t.salvo);
   });
 
   it("save PARCIAL → reporta POR CHAVE pelo RÓTULO (nunca a chave crua), e nunca 'Salvo' global (#1588)", async () => {
@@ -91,6 +107,25 @@ describe("#1491 ConfigPage", () => {
     expect(await screen.findByText(`${t.naoGuardado}: ${t.configChave["app.notificacoes"]}`)).toBeTruthy();
     expect(container.textContent).not.toContain("app.notificacoes");
     expect(screen.queryByText(t.salvo)).toBeNull();
+    // #1752: a falha também é anunciada, na mesma região de nome estável…
+    const regiao = screen.getByRole("status", { name: t.resultadoSalvar });
+    expect(regiao.textContent).toBe("Não salvo: Notificações");
+    // …e em pt-BR. "Não guardado" era pt-PT; o literal acima amarra a copy, não o dicionário.
+    expect(container.textContent).not.toMatch(/guardado/i);
+  });
+
+  it("#1752 en: a falha é anunciada em inglês, com o nome da região em inglês", async () => {
+    vi.mocked(api.salvarConfig).mockResolvedValue({
+      ok: [],
+      falhas: [{ chave: "app.notificacoes", status: 400 }],
+    });
+    const u = userEvent.setup();
+    montar("en");
+    await u.click(await screen.findByRole("checkbox"));
+    await u.click(screen.getByRole("button", { name: DICIONARIOS.en.salvar }));
+    // Literais: amarram a copy do card, não o que o dicionário disser.
+    const regiao = await screen.findByRole("status", { name: "Save result" });
+    expect(regiao.textContent).toBe("Not saved: Notifications");
   });
 
   it("401 durante o SAVE (sessão morta a meio) → redireciona pro login", async () => {
@@ -153,9 +188,15 @@ describe("#1749 — rótulos da config vêm do dicionário (contra o formato REA
     await waitFor(() => expect(api.salvarConfig).toHaveBeenCalledWith({ "app.tema": "claro" }));
   });
 
-  it.each(["pt-BR", "en"] as const)("chave que o FE não conhece → o fallback, nunca a chave crua (%s)", async (idioma) => {
+  it.each([
+    ["pt-BR", "Preferência"],
+    ["en", "Preference"],
+  ] as const)("chave que o FE não conhece → o fallback, nunca a chave crua (%s)", async (idioma, literal) => {
     const { container } = montar(idioma); // beforeEach: inclui `app.apelido`
-    expect(await screen.findByText(DICIONARIOS[idioma].configChaveDesconhecida)).toBeTruthy();
+    // O LITERAL, não `DICIONARIOS[idioma].configChaveDesconhecida`: lendo o próprio
+    // dicionário, um "Preference" que regredisse para "Preferência" no `en`
+    // passava verde (achado da @Lúmen no gate do #1749, mutante R8).
+    expect(await screen.findByText(literal)).toBeTruthy();
     expect(container.textContent).not.toContain("app.apelido");
   });
 

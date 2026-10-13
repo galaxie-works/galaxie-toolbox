@@ -12,7 +12,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { Alerta } from "./alerta";
+import { Alerta, RegiaoDeStatus } from "./alerta";
 
 afterEach(cleanup);
 
@@ -123,5 +123,27 @@ describe("#1614 — a caixa de aviso tem um ponto único", () => {
     const dono = readFileSync(join(WEB_SRC, "components", DONO), "utf8");
     expect(ROLE_STATUS.test(dono)).toBe(true);
     expect(dono).toContain("aria-label={titulo}");
+    // #1752: a região sempre montada também mora AQUI, com o nome obrigatório.
+    expect(dono).toContain("aria-label={rotulo}");
+  });
+});
+
+describe("#1752 — `RegiaoDeStatus`: a região existe ANTES do resultado", () => {
+  it("monta VAZIA, com nome, e é o MESMO nó quando o resultado chega", () => {
+    const { rerender } = render(<RegiaoDeStatus rotulo="Resultado do salvamento" aviso={null} />);
+    const antes = screen.getByRole("status", { name: "Resultado do salvamento" });
+    expect(antes.textContent).toBe("");
+
+    rerender(<RegiaoDeStatus rotulo="Resultado do salvamento" aviso={{ tom: "simples", titulo: "Salvo" }} />);
+    const depois = screen.getByRole("status", { name: "Resultado do salvamento" });
+    // O mesmo nó: o leitor de ecrã já conhecia a região quando o texto mudou.
+    expect(depois).toBe(antes);
+    expect(depois.textContent).toBe("Salvo");
+  });
+
+  it("a caixa dentro dela NÃO é outra região (aninhar anunciaria duas vezes)", () => {
+    render(<RegiaoDeStatus rotulo="r" aviso={{ tom: "erro", titulo: "Não salvo: Tema", detalhe: "x" }} />);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status").firstElementChild!.className).toContain("bg-destructive/10");
   });
 });

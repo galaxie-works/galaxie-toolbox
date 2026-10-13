@@ -1,5 +1,7 @@
 // i18n mínimo pt/en da plataforma web (#1484). Espelha a doutrina do app Tauri:
 // dicionário por idioma, idioma detectado do navegador. Módulo puro (testável).
+import type { Atalho, Capacidade, ModoAprovacao } from "@/lib/remoto";
+
 export type Idioma = "pt-BR" | "en";
 
 /** Chaves da allowlist de config que a UI sabe rotular (#1749). O BE não manda texto de UI. */
@@ -42,6 +44,8 @@ export interface Dicionario {
   configuracoes: string;
   semConfig: string;
   naoGuardado: string;
+  /** #1752 — nome ESTÁVEL da região viva do resultado de salvar (o texto dela muda). */
+  resultadoSalvar: string;
   // #1749 — rótulos da allowlist de config. O BE devolve só `chave`/valores (sem
   // texto de UI, regra 7 do AGENTS): a copy mora aqui, indexada por eles. O TIPO
   // das chaves faz o `tsc` reprovar um idioma que esqueça uma tradução.
@@ -123,6 +127,46 @@ export interface Dicionario {
   suspenderConfirmacao: string;
   suspenderAviso: string;
   cancelar: string;
+  // #1472 — painel do Remote. As chaves com `remote.*` ao lado são a copy do
+  // CARD (proposta da Mira; o PO valida). As outras o card não trazia: copy
+  // proposta no próprio card pelo @Castor, com o mesmo aviso. As três `Record`
+  // são TIPADAS pelas listas do `lib/remoto.ts`: capacidade, atalho ou modo sem
+  // tradução não compila, e um 6.º valor também não.
+  remoto: string;
+  /** remote.notApplied — fixo e visível até a ponte #1729 existir. */
+  remotoNaoAplicado: string;
+  /** remote.cap.* */
+  remotoCapacidade: Record<Capacidade, string>;
+  /** remote.preset.* */
+  remotoAtalho: Record<Atalho, string>;
+  /** remote.approval.* */
+  remotoAprovacao: Record<ModoAprovacao, string>;
+  /** remote.unattended */
+  remotoNaoSupervisionado: string;
+  /** remote.grant */
+  remotoConceder: string;
+  /** remote.revoke */
+  remotoRevogar: string;
+  /** remote.deviceId */
+  remotoDeviceId: string;
+  /** remote.member */
+  remotoMembro: string;
+  /** remote.deviceLabel — `{id}` é trocado pelo id do device (dado, não tradução). */
+  remotoDispositivo: string;
+  remotoConcessoes: string;
+  remotoTeto: string;
+  remotoCapacidadesMaximas: string;
+  remotoAprovacaoTitulo: string;
+  remotoAcesso: string;
+  remotoAtiva: string;
+  remotoRevogada: string;
+  remotoSemConcessoes: string;
+  remotoEscolhaMembro: string;
+  remotoDeviceIdInvalido: string;
+  remotoConcedendo: string;
+  remotoRevogando: string;
+  remotoRevogarAviso: string;
+  remotoFalhou: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -158,7 +202,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sair",
     configuracoes: "Configurações",
     semConfig: "Nada para configurar",
-    naoGuardado: "Não guardado",
+    // pt-BR: o par de "Salvo" é "Não salvo". "Não guardado" era pt-PT (#1752).
+    naoGuardado: "Não salvo",
+    resultadoSalvar: "Resultado do salvamento",
     configChave: { "app.tema": "Tema", "app.notificacoes": "Notificações" },
     configOpcao: { claro: "Claro", escuro: "Escuro", sistema: "Sistema" },
     configChaveDesconhecida: "Preferência",
@@ -203,6 +249,41 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     suspenderConfirmacao: "Isto vai suspender a organização",
     suspenderAviso: "A ação é destrutiva e fica registrada em auditoria.",
     cancelar: "Cancelar",
+    remoto: "Acesso remoto",
+    remotoNaoAplicado: "Configuração salva, mas ainda não é aplicada às sessões remotas.",
+    remotoCapacidade: {
+      screen: "Ver a tela",
+      input: "Controlar teclado e mouse",
+      fileTransfer: "Transferir arquivos",
+      clipboard: "Área de transferência",
+      audio: "Ouvir o áudio",
+    },
+    remotoAtalho: { ver: "Só ver", total: "Acesso total", personalizado: "Personalizado" },
+    remotoAprovacao: {
+      clique: "Aceitar com um clique",
+      senha: "Aceitar com senha",
+      senha_ou_clique: "Senha ou clique",
+    },
+    remotoNaoSupervisionado: "Permitir acesso sem ninguém no computador",
+    remotoConceder: "Conceder acesso",
+    remotoRevogar: "Revogar acesso",
+    remotoDeviceId: "ID do dispositivo",
+    remotoMembro: "Membro",
+    remotoDispositivo: "Dispositivo {id}",
+    remotoConcessoes: "Concessões de acesso",
+    remotoTeto: "Limites da organização",
+    remotoCapacidadesMaximas: "Permitido nas sessões",
+    remotoAprovacaoTitulo: "Aprovação da sessão",
+    remotoAcesso: "Acesso",
+    remotoAtiva: "Ativa",
+    remotoRevogada: "Revogada",
+    remotoSemConcessoes: "Nenhuma concessão ainda.",
+    remotoEscolhaMembro: "Escolha um membro",
+    remotoDeviceIdInvalido: "Use até 128 caracteres: letras, números e . _ - : @",
+    remotoConcedendo: "Concedendo…",
+    remotoRevogando: "Revogando…",
+    remotoRevogarAviso: "A concessão fica no histórico como revogada.",
+    remotoFalhou: "Não foi possível salvar. Tente novamente.",
   },
   en: {
     email: "Email",
@@ -237,6 +318,7 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     configuracoes: "Settings",
     semConfig: "Nothing to configure",
     naoGuardado: "Not saved",
+    resultadoSalvar: "Save result",
     configChave: { "app.tema": "Theme", "app.notificacoes": "Notifications" },
     configOpcao: { claro: "Light", escuro: "Dark", sistema: "System" },
     configChaveDesconhecida: "Preference",
@@ -279,6 +361,41 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     suspenderConfirmacao: "This will suspend the organization",
     suspenderAviso: "This action is destructive and is recorded in the audit log.",
     cancelar: "Cancel",
+    remoto: "Remote access",
+    remotoNaoAplicado: "Settings saved, but not yet applied to remote sessions.",
+    remotoCapacidade: {
+      screen: "View screen",
+      input: "Control keyboard and mouse",
+      fileTransfer: "Transfer files",
+      clipboard: "Clipboard",
+      audio: "Hear audio",
+    },
+    remotoAtalho: { ver: "View only", total: "Full access", personalizado: "Custom" },
+    remotoAprovacao: {
+      clique: "Accept with a click",
+      senha: "Accept with password",
+      senha_ou_clique: "Password or click",
+    },
+    remotoNaoSupervisionado: "Allow unattended access",
+    remotoConceder: "Grant access",
+    remotoRevogar: "Revoke access",
+    remotoDeviceId: "Device ID",
+    remotoMembro: "Member",
+    remotoDispositivo: "Device {id}",
+    remotoConcessoes: "Access grants",
+    remotoTeto: "Organization limits",
+    remotoCapacidadesMaximas: "Allowed in sessions",
+    remotoAprovacaoTitulo: "Session approval",
+    remotoAcesso: "Access",
+    remotoAtiva: "Active",
+    remotoRevogada: "Revoked",
+    remotoSemConcessoes: "No grants yet.",
+    remotoEscolhaMembro: "Choose a member",
+    remotoDeviceIdInvalido: "Use up to 128 characters: letters, numbers and . _ - : @",
+    remotoConcedendo: "Granting…",
+    remotoRevogando: "Revoking…",
+    remotoRevogarAviso: "The grant stays in the history as revoked.",
+    remotoFalhou: "Couldn't save. Please try again.",
   },
 };
 

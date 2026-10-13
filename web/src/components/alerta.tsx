@@ -50,12 +50,65 @@ export function Alerta({
    * origem anotada. Requisito do @Altair: as duas superfícies dizem a mesma
    * coisa da mesma cor **sem uma linha de código partilhada**.
    */
-  tom: "aviso" | "erro" | "simples";
+  tom: Tom;
   /** Também é o NOME acessível da região viva. Obrigatório de propósito. */
   titulo: string;
   detalhe?: ReactNode;
   className?: string;
 }) {
+  const { caixa } = estilos(tom);
+  return (
+    <div
+      role="status"
+      aria-label={titulo}
+      className={className ? `${caixa} ${className}` : caixa}
+    >
+      <Corpo tom={tom} titulo={titulo} detalhe={detalhe} />
+    </div>
+  );
+}
+
+/**
+ * Uma região viva **sempre montada**, com nome ESTÁVEL, cujo CONTEÚDO muda (#1752).
+ *
+ * ## Porque não basta o `Alerta`
+ * O `Alerta` entra no DOM já com o texto. Para um aviso que está lá desde a
+ * carga (org suspensa) isso basta. Para um RESULTADO, que aparece depois de um
+ * clique, não: a orientação publicada para regiões vivas (MDN, *ARIA live
+ * regions*) pede que o `role` esteja no elemento ANTES de o conteúdo mudar, e
+ * uma região que nasce já com o texto é anunciada de forma inconsistente entre
+ * leitores de ecrã (achado da @Íris no gate do #1752). Aqui a região existe
+ * vazia desde a montagem e só o que está DENTRO dela muda.
+ *
+ * Dentro dela a caixa é a mesma do `Alerta` (os mesmos tons e cores), mas SEM
+ * `role` próprio: duas regiões vivas aninhadas anunciariam o mesmo texto duas
+ * vezes. Por isso a caixa sem região não é exportada: só existe aqui dentro.
+ */
+export function RegiaoDeStatus({
+  rotulo,
+  aviso,
+  className,
+}: {
+  /** O nome da região: estável, não muda com o resultado ("Resultado do salvamento"). */
+  rotulo: string;
+  /** O que mostrar agora; `null` = região vazia (montada, à espera). */
+  aviso: { tom: Tom; titulo: string; detalhe?: ReactNode } | null;
+  className?: string;
+}) {
+  return (
+    <div role="status" aria-label={rotulo} className={className}>
+      {aviso ? (
+        <div className={estilos(aviso.tom).caixa}>
+          <Corpo tom={aviso.tom} titulo={aviso.titulo} detalhe={aviso.detalhe} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type Tom = "aviso" | "erro" | "simples";
+
+function estilos(tom: Tom) {
   const caixa =
     tom === "aviso"
       ? "rounded-2xl border border-warning/30 bg-warning/10 p-4"
@@ -78,17 +131,17 @@ export function Alerta({
         ? "text-red-800"
         : "text-neutral-900";
   const corDetalhe = tom === "simples" ? "text-neutral-500" : corTitulo;
+  return { caixa, corTitulo, corDetalhe };
+}
 
+function Corpo({ tom, titulo, detalhe }: { tom: Tom; titulo: string; detalhe?: ReactNode }) {
+  const { corTitulo, corDetalhe } = estilos(tom);
   return (
-    <div
-      role="status"
-      aria-label={titulo}
-      className={className ? `${caixa} ${className}` : caixa}
-    >
+    <>
       <p className={`text-sm font-medium ${corTitulo}`}>{titulo}</p>
       {detalhe !== undefined ? (
         <p className={`mt-1 text-sm ${corDetalhe}`}>{detalhe}</p>
       ) : null}
-    </div>
+    </>
   );
 }
