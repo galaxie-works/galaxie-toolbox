@@ -79,11 +79,18 @@ export function RemoteScreen() {
   const [copiado, setCopiado] = useState(false);
   const [codigoInput, setCodigoInput] = useState("");
   const [screenInfo, setScreenInfo] = useState<ScreenInfo | null>(null);
-  // #1148 (fatia C): relógio do TTL da credencial TURN. `horizonte` guarda o
-  // primeiro `expiresAt` e o TTL efetivo (medido no relógio do cliente); o
-  // `avisoExpiracao` acende no último 1/4 dele. Lógica pura em `remote-ttl.ts`.
+  // #1148: relógio do TTL da credencial TURN. `horizonte` guarda o primeiro
+  // `expiresAt` e o TTL efetivo (medido no relógio do cliente). O `avisoExpiracao`
+  // já NÃO acende no último 1/4 — o +retry (@Altair, #1148) muda o sentido: ele
+  // acende quando a renovação está pendente além da carência (ou ≤1/5 restante
+  // como piso). Lógica pura em `remote-ttl.ts`.
   const [horizonte, setHorizonte] = useState<HorizonteTtl | null>(null);
   const [avisoExpiracao, setAvisoExpiracao] = useState(false);
+  // #1148 (+retry): instante (relógio do cliente, s) em que a renovação da
+  // credencial passou a pendente — `null` quando não há renovação a decorrer. É
+  // o sinal PRIMÁRIO do aviso: só acende se a pendência passar da carência, então
+  // o caminho feliz (renovação que volta em segundos) não pisca o banner.
+  const [renovacaoPendenteDesde, setRenovacaoPendenteDesde] = useState<number | null>(null);
 
   // Refs de sessão (não disparam render; lidos nos callbacks assíncronos).
   const sinalizadorRef = useRef<SinalizadorS0 | null>(null);
@@ -102,6 +109,7 @@ export function RemoteScreen() {
     iceServersRef.current = [];
     setHorizonte(null);
     setAvisoExpiracao(false);
+    setRenovacaoPendenteDesde(null);
     setEstado(null);
     setConectandoS0(false);
     setErro(null);
@@ -128,32 +136,42 @@ export function RemoteScreen() {
     };
   }, []);
 
-  // #1148 (fatia C): registra o horizonte de expiração dos ICE servers e zera o
-  // aviso. `ttlEfetivo` é relativo ao relógio do cliente (expira − agora, medido
-  // AGORA), então o gatilho de 1/4 é imune a skew entre servidor e cliente.
+  // #1148: registra o horizonte de expiração dos ICE servers e LIMPA a pendência
+  // da renovação — esta função corre tanto no arranque da sessão como na chegada
+  // de credencial fresca (`onIceServersRenovados`), que é o SUCESSO da renovação:
+  // limpar a pendência aqui é o que apaga o aviso no caminho feliz. `ttlEfetivo` é
+  // relativo ao relógio do cliente (expira − agora, medido AGORA).
   function registrarExpiracao(iceServers: IceServer[]): void {
     setHorizonte(horizonteTtl(iceServers, Math.floor(Date.now() / 1000)));
     setAvisoExpiracao(false);
+    setRenovacaoPendenteDesde(null);
   }
 
-  // #1148 (fatia C): o relógio. Acende o aviso quando resta ≤ 1/4 do TTL efetivo,
-  // durante uma sessão viva. Só AVISA — a renovação viva da credencial
-  // (re-aplicar no transporte str0m) é a fatia B, que pende do seam do #1527.
+  // #1148 (+retry): o relógio. Acende o aviso quando a renovação está pendente
+  // além da carência (sinal primário) OU resta ≤1/5 do TTL (piso), durante uma
+  // sessão viva. O aviso significa "a renovação não está a resultar", não "o TTL
+  // está perto" — por isso o caminho feliz (renovação resolvida em segundos) não
+  // pisca. A renovação viva em si é a fatia B/A-2; o backoff que re-tenta é a
+  // camada 1 (Rust, @Mizar). Lógica pura em `remote-ttl.ts`.
   useEffect(() => {
     const emSessao =
       estado != null && estado !== "ended" && estado !== "error";
-    if (!emSessao || horizonte == null) {
+    // Nada a vigiar: nem horizonte nem renovação pendente.
+    if (!emSessao || (horizonte == null && renovacaoPendenteDesde == null)) {
       setAvisoExpiracao(false);
       return;
     }
     const avaliar = (): void =>
       setAvisoExpiracao(
-        deveAvisarExpiracao(horizonte, Math.floor(Date.now() / 1000)),
+        deveAvisarExpiracao(
+          { horizonte, renovacaoPendenteDesdeSeg: renovacaoPendenteDesde },
+          Math.floor(Date.now() / 1000),
+        ),
       );
     avaliar();
     const id = setInterval(avaliar, 15_000);
     return () => clearInterval(id);
-  }, [estado, horizonte]);
+  }, [estado, horizonte, renovacaoPendenteDesde]);
 
   function traduzErro(code: ErrorCodeS0, message: string): string {
     if (
@@ -193,6 +211,13 @@ export function RemoteScreen() {
         // de expirar e pede credencial fresca. O FE detém o socket de signaling —
         // busca-a; a resposta chega em `onIceServersRenovados`, que a forwarda de
         // volta ao Rust pelo comando `remote_session_renew_ice`.
+        //
+        // #1148 (+retry): marca a renovação como pendente na PRIMEIRA tentativa.
+        // O backoff do Rust (camada 1) re-emite este evento se a renovação falhar;
+        // o `?? agora` mantém a pendência no instante inicial, para a carência
+        // contar desde o começo da falha, não desde a última retentativa. O
+        // sucesso (`registrarExpiracao`) é quem volta a `null`.
+        setRenovacaoPendenteDesde((desde) => desde ?? Math.floor(Date.now() / 1000));
         sinalizadorRef.current?.renovarIceServers();
         break;
     }
