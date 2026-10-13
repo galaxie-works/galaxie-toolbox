@@ -1,12 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Navigate } from "react-router-dom";
 import {
   atualizarPerfil,
+  definirRestricaoRemota,
+  ehNaoAutenticado,
   listarDispositivos,
+  listarRestricoesRemotas,
   obterAssinatura,
   obterPerfil,
+  removerRestricaoRemota,
   revogarDispositivo,
 } from "@/lib/api-me";
+import { Alerta, RegiaoDeStatus } from "@/components/alerta";
+import { CaixasDeCapacidades } from "@/components/caixas-de-capacidades";
+import {
+  CAPACIDADES_DO_ATALHO,
+  deviceIdValido,
+  ligadas,
+  type CapacidadesRemotas,
+} from "@/lib/remoto";
 import { useCarregar } from "@/lib/use-carregar";
 import { DICIONARIOS, type Dicionario, type Idioma } from "@/i18n";
 import { useIdiomaAtivo } from "@/idioma-contexto";
@@ -176,6 +188,190 @@ function BlocoDispositivos({ t, idioma }: { t: Dicionario; idioma: Idioma }) {
   );
 }
 
+/**
+ * #1756 — o membro limita o acesso remoto ao SEU device (a fatia do AC3 do #1472).
+ *
+ * Só reduz: o efetivo de uma sessão é concessão ∩ teto da org ∩ esta restrição
+ * (#1683). O membro não vê o teto da org (não tem acesso a ele), por isso a
+ * secção diz o que a restrição faz em vez de mostrar números que ele não tem.
+ * Nada disto é aplicado às sessões até a ponte #1729: o aviso diz isso, como no
+ * painel da org.
+ *
+ * Duas armadilhas já pagas noutras entregas, aqui evitadas de propósito:
+ * - "Carregando…" só na PRIMEIRA carga. A releitura depois de uma escrita volta a
+ *   `carregando`; se isso desmontasse o formulário, levaria o que o membro
+ *   escreveu (#1752, #1472).
+ * - O resultado vai para uma `RegiaoDeStatus` sempre montada, não para um
+ *   `<span>` nem para uma região que nasce com o texto (gate da @Íris no #1752).
+ */
+function BlocoRemotoMeuDevice({ t }: { t: Dicionario }) {
+  const ids = useId();
+  const lista = useCarregar(listarRestricoesRemotas);
+  const [dispositivo, setDispositivo] = useState("");
+  // Parte de TUDO permitido, e o membro desmarca o que quer proibir: é a forma
+  // de "só reduz" que se lê no próprio formulário.
+  const [capacidades, setCapacidades] = useState<CapacidadesRemotas>(CAPACIDADES_DO_ATALHO.total);
+  const [enviando, setEnviando] = useState(false);
+  const [aRemover, setARemover] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<"salvo" | "falhou" | null>(null);
+  const [sessaoMorta, setSessaoMorta] = useState(false);
+
+  if (lista.estado === "nao-autenticado" || sessaoMorta) return <Navigate to="/login" replace />;
+
+  // Validado CRU, sem `trim`: o servidor recusa o espaço, e apará-lo em silêncio
+  // mandaria um id diferente do que o membro vê no campo.
+  const dispositivoInvalido = dispositivo !== "" && !deviceIdValido(dispositivo);
+  const podeEnviar = deviceIdValido(dispositivo) && !enviando && aRemover === null;
+
+  /** Escreve, diz o resultado na região e relê SEMPRE do servidor (nada otimista). */
+  async function escrever(acao: () => Promise<unknown>): Promise<boolean> {
+    setResultado(null);
+    let ok = false;
+    try {
+      await acao();
+      ok = true;
+      setResultado("salvo");
+    } catch (e) {
+      // 401 a meio = sessão morta → login, como no resto da `/conta`.
+      if (ehNaoAutenticado(e)) {
+        setSessaoMorta(true);
+        return false;
+      }
+      setResultado("falhou");
+    }
+    lista.recarregar();
+    return ok;
+  }
+
+  return (
+    <Secao titulo={t.remotoMeTitulo}>
+      <p className="text-sm text-neutral-600">{t.remotoMeExplica}</p>
+      <Alerta tom="aviso" titulo={t.remotoNaoAplicado} className="mt-4" />
+      <RegiaoDeStatus
+        rotulo={t.resultadoSalvar}
+        aviso={
+          resultado === "salvo"
+            ? { tom: "simples", titulo: t.salvo }
+            : resultado === "falhou"
+              ? { tom: "erro", titulo: t.remotoFalhou }
+              : null
+        }
+        className="mt-4"
+      />
+
+      <div className="mt-4">
+        {lista.estado === "carregando" && lista.dados === null && (
+          <p className="text-sm text-neutral-500">{t.carregando}</p>
+        )}
+        {lista.estado === "erro" && (
+          <button className="text-sm text-red-600 underline" onClick={lista.recarregar}>
+            {t.erroCarregar} — {t.tentarNovamente}
+          </button>
+        )}
+        {lista.estado !== "erro" && lista.dados && lista.dados.length === 0 && (
+          <p className="text-sm text-neutral-500">{t.remotoMeVazio}</p>
+        )}
+        {lista.estado !== "erro" && lista.dados && lista.dados.length > 0 && (
+          <ul className="flex flex-col divide-y divide-neutral-100">
+            {lista.dados.map((r) => {
+              const permitidas = ligadas(r.capacidades);
+              return (
+                <li key={r.dispositivo_id} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    {/* "Dispositivo {id}": o id é DADO, e a tela não afirma que o
+                        device existe nem que está online (sem registo até #1729). */}
+                    <p className="truncate text-sm font-medium text-neutral-900">
+                      {t.remotoDispositivo.replace("{id}", r.dispositivo_id)}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      {permitidas.length > 0 ? permitidas.map((k) => t.remotoCapacidade[k]).join(", ") : "—"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={aRemover !== null || enviando}
+                    onClick={() => {
+                      setARemover(r.dispositivo_id);
+                      void escrever(() => removerRestricaoRemota(r.dispositivo_id)).finally(() =>
+                        setARemover(null),
+                      );
+                    }}
+                    className="shrink-0 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:border-red-400 hover:text-red-600 disabled:opacity-50"
+                  >
+                    {t.remotoMeRemover}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <form
+        className="mt-4 flex flex-col gap-3 rounded-xl border border-neutral-200 p-4 text-sm"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!podeEnviar) return;
+          setEnviando(true);
+          void escrever(() => definirRestricaoRemota(dispositivo, capacidades))
+            .then((ok) => {
+              if (ok) {
+                setDispositivo("");
+                setCapacidades(CAPACIDADES_DO_ATALHO.total);
+              }
+            })
+            .finally(() => setEnviando(false));
+        }}
+      >
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`${ids}-device`} className="text-neutral-700">
+            {t.remotoDeviceId}
+          </label>
+          <input
+            id={`${ids}-device`}
+            value={dispositivo}
+            onChange={(e) => {
+              setDispositivo(e.target.value);
+              setResultado(null);
+            }}
+            aria-invalid={dispositivoInvalido}
+            aria-describedby={dispositivoInvalido ? `${ids}-device-erro` : undefined}
+            maxLength={128}
+            autoComplete="off"
+            spellCheck={false}
+            className="rounded-lg border border-neutral-300 px-3 py-2 outline-none focus:border-neutral-900"
+          />
+          {dispositivoInvalido ? (
+            <span id={`${ids}-device-erro`} className="text-red-800">
+              {t.remotoDeviceIdInvalido}
+            </span>
+          ) : null}
+        </div>
+        <fieldset>
+          <legend className="mb-1 text-neutral-700">{t.remotoAcesso}</legend>
+          <CaixasDeCapacidades
+            t={t}
+            valor={capacidades}
+            aoMudar={(c) => {
+              setCapacidades(c);
+              setResultado(null);
+            }}
+          />
+        </fieldset>
+        <div>
+          <button
+            type="submit"
+            disabled={!podeEnviar}
+            className="rounded-lg bg-neutral-900 px-4 py-2 font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {t.remotoMeAdicionar}
+          </button>
+        </div>
+      </form>
+    </Secao>
+  );
+}
+
 export function ContaPage({ idioma: explicito }: { idioma?: Idioma }) {
   const idioma = useIdiomaAtivo(explicito);
   const t = DICIONARIOS[idioma];
@@ -185,6 +381,7 @@ export function ContaPage({ idioma: explicito }: { idioma?: Idioma }) {
       <BlocoPerfil t={t} />
       <BlocoAssinatura t={t} />
       <BlocoDispositivos t={t} idioma={idioma} />
+      <BlocoRemotoMeuDevice t={t} />
     </main>
   );
 }

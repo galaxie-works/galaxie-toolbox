@@ -181,6 +181,42 @@ UI só renderiza o que vier). Corrigido de `/orgs/{org}/config` para:
 > Crate de config ainda não landou; a rota entra agora (desbloqueia FE) e a borda a liga quando o
 > crate expuser a operação.
 
+### 4.6 Remote: configuração — `#1683`/`platform-remoto` (servida desde a PR #1735)
+**Guarda, não aplica.** Estas rotas gravam o teto, as concessões e as restrições; **nada disto chega
+ainda às sessões remotas** (essa ponte é o #1729). Quem consome tem de dizê-lo na tela (#1472).
+
+| Método | Rota | Muta? | Ação | Sucesso | Notas |
+|---|---|---|---|---|---|
+| `GET` | `/orgs/{org}/remoto/politica` | não | `VerPoliticaRemota` | `200` `{ capacidades_maximas: Capabilities, modo_aprovacao: "clique"\|"senha"\|"senha_ou_clique", permitir_nao_supervisionado: bool }` | o teto da org; nunca gravado ⇒ o default (as 5 a `true`, `clique`, `false`) |
+| `PUT` | `/orgs/{org}/remoto/politica` | sim | `DefinirPoliticaRemota` | `200` (ecoa o mesmo shape) | substitui o teto **inteiro**: os 3 campos são obrigatórios (um PUT parcial não apaga restrição em silêncio) |
+| `GET` | `/orgs/{org}/remoto/concessoes` | não | `ListarConcessoesRemotas` | `200` `[{ id, sujeito: Sujeito, objeto: Objeto, capacidades: Capabilities, concedida_por, concedida_em: u64, revogada_em: u64\|null, ativa: bool }]` | ativas **e** revogadas (o rasto fica visível) |
+| `POST` | `/orgs/{org}/remoto/concessoes` | sim | `ConcederAcessoRemoto` | `201` (uma concessão, como no `GET`) | corpo `sujeito`, `objeto`, `capacidades`. Sujeito que não é membro desta org ⇒ `404` |
+| `DELETE` | `/orgs/{org}/remoto/concessoes/{id}` | sim | `RevogarAcessoRemoto` | `204` | idempotente (revogar 2× ⇒ `204`); id de outra org ⇒ `404` |
+| `GET` | `/me/remoto/dispositivos` | não | `ConfigurarProprioDispositivo` | `200` `[{ dispositivo_id, capacidades: Capabilities }]` | as restrições que o utilizador pôs nos SEUS devices (não é um inventário de devices) |
+| `PUT` | `/me/remoto/dispositivos/{device_id}` | sim | `ConfigurarProprioDispositivo` | `200` (uma restrição, como no `GET`) | corpo `capacidades`. Só restringe (entra por interseção) |
+| `DELETE` | `/me/remoto/dispositivos/{device_id}` | sim | `ConfigurarProprioDispositivo` | `204` | sem restrição gravada ⇒ `404` (espaço do próprio, não é oráculo) |
+
+> **As formas aninhadas.** `Capabilities` = `screen`, `input`, `fileTransfer`, `clipboard`, `audio`, todos
+> `bool`, em **camelCase** (o tipo nasce no `galaxie-remote-capabilities`, que é o que a plataforma importa;
+> o `remote-net` reexporta-o). Chave ausente = `false`; chave desconhecida ⇒ `400`
+> (`deny_unknown_fields`). `Sujeito` = `{ tipo: "utilizador", uid }` e `Objeto` = `{ tipo: "dispositivo",
+> id }`: etiquetados por `tipo` para os grupos (D2) entrarem como variante nova sem partir o fio.
+> Os corpos de entrada recusam campo desconhecido (`400 payload_invalido`).
+>
+> **`DeviceId`.** Formato `^[A-Za-z0-9\-_.:@]{1,128}$` (a regra do `remote-net`); fora dele ⇒ `400`. A
+> **existência** do device **não** é conferida: a plataforma ainda não tem registo de devices (vem com
+> o #1729). A UI não pode afirmar que o device existe nem que está online.
+>
+> **Erros.** A autorização corre **antes** do corpo nas rotas de org: um `member` com um corpo inválido
+> recebe `403`, **não** `400`, e a validação não é sondável por quem não pode (o cliente não deve esperar
+> um `400` de quem não gere). `member` ⇒ `403 negado`; org alheia ⇒ `404`; limite do ARMAZÉM atingido (10 000
+> concessões por org, contando as revogadas; 64 restrições por dono) ⇒ `409 conflito`. Não é o teto
+> da política: o `POST` não confere a concessão contra o teto (aceita-a); o corte é a interseção
+> concessão ∩ teto ∩ device do #1683, que só a ponte (#1729) aplica.
+> Armazém indisponível ⇒ `500`. **Suspensão:** o `GET`/`PUT` da política e o `POST` de concessão ⇒
+> `403 org_suspensa`; **listar e revogar concessões atravessam a suspensão** (revogar acesso nunca pode
+> ficar bloqueado); as rotas `/me/remoto/*` também sobrevivem (são do utilizador, não da org).
+
 ### 4.5 Back-office (staff) — `#1474` (`Operacao::ProvisionarOrg`, staff-only)
 Toda rota aqui é **auditada** (invariante 4): registra `staff_id` + ação + alvo. **Provisionar e
 suspender são rotas SEPARADAS (fix do @Altair):** colapsá-las tornaria a auditoria dependente de
@@ -236,6 +272,11 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 
 `v1` é este documento + `platform-web/src/contrato.rs`. Mudança incompatível ⇒ `/api/v2` + nova
 tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bump.
+
+**v1.5 (13/10):** §4.6 Remote, as 8 rotas que a PR #1735 (#1683) **já servia** e que não tinham entrado
+nem aqui nem no `contrato.rs`. Achado do @Castor ao consumi-las no #1472: a guarda do FE
+(`pollux-1490-contrato-fe.test.ts`) barra rota que este doc não declara, e com razão. Linhas medidas
+no `platform-http/src/remoto.rs` (handlers e DTOs) e nos testes `remoto_*` do `router.rs`. Append, sem bump.
 
 **v1.4 (25/08):** o PO decidiu que **suspender DERRUBA o acesso** (#1544). Esta v1.4 fecha o
 **CONTRATO + o TIPO**, NÃO o enforcement: entra `CodigoErro::OrgSuspensa` (`403`, slug `org_suspensa`,

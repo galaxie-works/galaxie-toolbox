@@ -69,6 +69,15 @@ pub const CONTRATO: &[Rota] = &[
     // 4.4 Config do app — user-scoped (/me/config), NÃO org (fix @Castor)
     Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/config",                           muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me/config",                           muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    // 4.6 Remote — config (#1683, servida desde a #1735). GUARDA, não aplica: o efeito nas sessões é a ponte #1729.
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/remoto/politica",          muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Put,    caminho: "/api/v1/orgs/{org}/remoto/politica",          muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/remoto/concessoes",        muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/remoto/concessoes",        muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/orgs/{org}/remoto/concessoes/{id}",   muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/remoto/dispositivos",              muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Put,    caminho: "/api/v1/me/remoto/dispositivos/{device_id}",  muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/me/remoto/dispositivos/{device_id}",  muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // 4.5 Back-office (staff, auditado). Provisionar e suspender SEPARADOS (fix @Altair; suspender é destrutivo).
     Rota { metodo: Metodo::Get,    caminho: "/api/v1/admin/orgs",                          muta: false, sucesso: 200, autenticada: true,  so_staff: true,  auditada: true,  csrf_por_state: false },
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/provisionamento",    muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true,  csrf_por_state: false },

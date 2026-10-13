@@ -65,6 +65,12 @@ const SUPERFICIES = [
   "/orgs/{org}/dominios/{dom}/verificacao",
   "/orgs/{org}/settings",
   "/orgs/{org}/assinatura",
+  // §4.6 Remote: o painel da org (#1472) e a secção do membro na `/conta` (#1756).
+  "/me/remoto/dispositivos",
+  "/me/remoto/dispositivos/{device_id}",
+  "/orgs/{org}/remoto/politica",
+  "/orgs/{org}/remoto/concessoes",
+  "/orgs/{org}/remoto/concessoes/{id}",
   "/admin/orgs",
   "/admin/orgs/{org}/provisionamento",
   "/admin/orgs/{org}/suspensao",
