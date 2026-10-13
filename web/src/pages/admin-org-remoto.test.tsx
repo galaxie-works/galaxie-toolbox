@@ -64,6 +64,11 @@ function borda(
   };
   const pedidos: Pedido[] = [];
   const suspensa = () => json({ erro: "org_suspensa" }, 403);
+  // LATÊNCIA de rede, de propósito. Com `Promise.resolve` o `carregando` da releitura e a
+  // resposta caíam no MESMO lote do React e o estado intermediário nunca renderizava: o duplo,
+  // mais rápido que qualquer servidor, escondia o defeito de a releitura desmontar os formulários
+  // (o mutante M6 sobreviveu assim). 5 ms bastam para o React pintar entre os dois.
+  const chega = (r: Response) => new Promise<Response>((ok) => setTimeout(() => ok(r), 5));
 
   vi.stubGlobal("fetch", (entrada: string, init?: RequestInit) => {
     const url = String(entrada);
@@ -71,20 +76,20 @@ function borda(
     const corpo: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
     pedidos.push({ metodo, url, corpo });
 
-    if (opts.negar) return Promise.resolve(json({ erro: opts.negar }, 403));
+    if (opts.negar) return chega(json({ erro: opts.negar }, 403));
 
     if (url === "/api/v1/orgs/acme/membros") {
-      return Promise.resolve(opts.suspensa ? suspensa() : json(MEMBROS));
+      return chega(opts.suspensa ? suspensa() : json(MEMBROS));
     }
     if (url === "/api/v1/orgs/acme/remoto/politica") {
-      if (opts.suspensa) return Promise.resolve(suspensa());
+      if (opts.suspensa) return chega(suspensa());
       if (metodo === "PUT") estado.politica = corpo as PoliticaRemota;
-      return Promise.resolve(json(estado.politica));
+      return chega(json(estado.politica));
     }
     if (url === "/api/v1/orgs/acme/remoto/concessoes") {
-      if (metodo === "GET") return Promise.resolve(json(estado.concessoes));
-      if (opts.suspensa) return Promise.resolve(suspensa());
-      if (opts.falharPost) return Promise.resolve(json({ erro: opts.erroPost ?? "x" }, opts.falharPost));
+      if (metodo === "GET") return chega(json(estado.concessoes));
+      if (opts.suspensa) return chega(suspensa());
+      if (opts.falharPost) return chega(json({ erro: opts.erroPost ?? "x" }, opts.falharPost));
       const novo = corpo as Pick<ConcessaoRemota, "sujeito" | "objeto" | "capacidades">;
       const c: ConcessaoRemota = {
         id: `cr-${++estado.seq}`,
@@ -95,17 +100,17 @@ function borda(
         ativa: true,
       };
       estado.concessoes.push(c);
-      return Promise.resolve(json(c, 201));
+      return chega(json(c, 201));
     }
     const revogar = url.match(/^\/api\/v1\/orgs\/acme\/remoto\/concessoes\/([^/]+)$/);
     if (revogar && metodo === "DELETE") {
       const c = estado.concessoes.find((x) => x.id === revogar[1]);
-      if (!c) return Promise.resolve(json({ erro: "nao_encontrado" }, 404));
+      if (!c) return chega(json({ erro: "nao_encontrado" }, 404));
       c.revogada_em ??= 1_700_000_100;
       c.ativa = false;
-      return Promise.resolve(vazio(204));
+      return chega(vazio(204));
     }
-    return Promise.resolve(json({ erro: "nao_encontrado" }, 404));
+    return chega(json({ erro: "nao_encontrado" }, 404));
   });
   return { estado, pedidos };
 }
@@ -222,7 +227,7 @@ describe("#1472 painel do Remote", () => {
     borda();
     const u = await abrirRemoto();
     const t = DICIONARIOS["pt-BR"];
-    await screen.findByText(t.remotoTeto);
+    await screen.findByRole("button", { name: t.salvar }); // o TETO chegou (o título vem antes dele)
     // O teto mostra as caixas sempre; o "Conceder" só em "Personalizado".
     await u.click(screen.getByRole("radio", { name: t.remotoAtalho.personalizado }));
     const rotulos = new Set(screen.getAllByRole("checkbox").map((c) => c.closest("label")?.textContent));
@@ -341,7 +346,7 @@ describe("#1472 painel do Remote", () => {
     const { pedidos } = borda();
     const u = await abrirRemoto();
     const t = DICIONARIOS["pt-BR"];
-    await screen.findByText(t.remotoTeto);
+    await screen.findByRole("button", { name: t.salvar }); // o TETO chegou (o título vem antes dele)
     const salvar = screen.getByRole("button", { name: t.salvar }) as HTMLButtonElement;
     // Sem edição não há o que mandar.
     expect(salvar.disabled).toBe(true);
@@ -415,7 +420,7 @@ describe("#1472 AC5 — i18n: nenhuma string do outro idioma no painel", () => {
     borda({ concessoes: [ativa("cr-1", "membro-2", "pc-bia", TODAS), { ...ativa("cr-2", "membro-2", "pc-2", TODAS), ativa: false, revogada_em: 1 }] });
     const u = await abrirRemoto(idioma);
     const t = DICIONARIOS[idioma];
-    await screen.findByText(t.remotoTeto);
+    await screen.findByRole("button", { name: t.salvar }); // o TETO chegou (o título vem antes dele)
     // Abre o que só aparece por interação: as caixas do "Personalizado" e o diálogo.
     await u.click(screen.getByRole("radio", { name: t.remotoAtalho.personalizado }));
     await u.click(screen.getByRole("button", { name: t.remotoRevogar }));
