@@ -6,7 +6,7 @@ import { useCarregar } from "@/lib/use-carregar";
 import { DICIONARIOS, type Idioma } from "@/i18n";
 import { rotuloDaChave, rotuloDaOpcao } from "@/lib/rotulos-config";
 import { useIdiomaAtivo } from "@/idioma-contexto";
-import { Alerta } from "@/components/alerta";
+import { RegiaoDeStatus } from "@/components/alerta";
 
 // #1491 — UI de config do app. DATA-DRIVEN: renderiza só as chaves que o BE
 // devolve (a allowlist do #1471); a UI não inventa chave. A barreira é
@@ -148,19 +148,24 @@ export function ConfigPage({ idioma: explicito }: { idioma?: Idioma }) {
                 {t.salvar}
               </button>
               {/* Reporte POR CHAVE — nunca "salvo" global quando uma ficou pra trás.
-                  #1752: numa região viva (`Alerta`, `role="status"`), com nome
-                  ESTÁVEL. Num `<span>` o leitor de ecrã não anunciava nada: quem
-                  não vê carregava em Salvar sem saber se gravou (WCAG 4.1.3). */}
-              {resultado && resultado.falhas.length === 0 && resultado.ok.length > 0 && (
-                <Alerta tom="simples" titulo={t.salvo} rotulo={t.resultadoSalvar} />
-              )}
-              {resultado && resultado.falhas.length > 0 && (
-                <Alerta
-                  tom="erro"
-                  titulo={`${t.naoGuardado}: ${resultado.falhas.map((f) => rotuloDaChave(t, f.chave)).join(", ")}`}
-                  rotulo={t.resultadoSalvar}
-                />
-              )}
+                  #1752: numa região viva SEMPRE MONTADA, com nome estável, e só o
+                  conteúdo a mudar (o submit limpa-o, o resultado volta a pô-lo).
+                  Num `<span>` o leitor de ecrã não anunciava nada (WCAG 4.1.3); e
+                  uma região que nascesse já com o texto anunciaria de forma
+                  inconsistente (achado da @Íris no gate). */}
+              <RegiaoDeStatus
+                rotulo={t.resultadoSalvar}
+                aviso={
+                  resultado && resultado.falhas.length > 0
+                    ? {
+                        tom: "erro",
+                        titulo: `${t.naoGuardado}: ${resultado.falhas.map((f) => rotuloDaChave(t, f.chave)).join(", ")}`,
+                      }
+                    : resultado && resultado.ok.length > 0
+                      ? { tom: "simples", titulo: t.salvo }
+                      : null
+                }
+              />
             </div>
           </form>
         )}

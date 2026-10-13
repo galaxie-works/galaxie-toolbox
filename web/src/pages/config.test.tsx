@@ -73,13 +73,16 @@ describe("#1491 ConfigPage", () => {
     vi.mocked(api.salvarConfig).mockResolvedValue({ ok: ["app.notificacoes"], falhas: [] });
     const u = userEvent.setup();
     montar("pt-BR");
-    await u.click(await screen.findByRole("checkbox"));
-    await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].salvar }));
-    // #1752: o resultado mora numa região VIVA com nome estável (num `<span>`,
-    // o leitor de ecrã não anunciava nada).
     const t = DICIONARIOS["pt-BR"];
-    const regiao = await screen.findByRole("status", { name: t.resultadoSalvar });
-    expect(regiao.textContent).toBe(t.salvo);
+    await u.click(await screen.findByRole("checkbox"));
+    // #1752 (pedido da @Íris): a região viva existe ANTES do 1.º Salvar, vazia.
+    // Uma região que nasce já com o texto é anunciada de forma inconsistente.
+    const antes = screen.getByRole("status", { name: t.resultadoSalvar });
+    expect(antes.textContent).toBe("");
+    await u.click(screen.getByRole("button", { name: t.salvar }));
+    await waitFor(() => expect(antes.textContent).toBe(t.salvo));
+    // …e é o MESMO nó depois: só o conteúdo mudou.
+    expect(screen.getByRole("status", { name: t.resultadoSalvar })).toBe(antes);
   });
 
   it("save PARCIAL → reporta POR CHAVE pelo RÓTULO (nunca a chave crua), e nunca 'Salvo' global (#1588)", async () => {
