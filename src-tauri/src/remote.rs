@@ -461,9 +461,9 @@ struct RuntimeSession {
     /// `0.0.0.0`, logo `local_addr` = `0.0.0.0:porta` — que o str0m NÃO casa com nenhum candidato. No
     /// `receive_udp` o destino REAL é resolvido por rota contra esta lista (ver [`resolver_destino`]).
     ips_locais: Vec<IpAddr>,
-    /// #1716: cache do destino resolvido por `source.ip()` (map curto — poucos peers por sessão); evita
-    /// re-perguntar a rota a cada datagrama.
-    cache_destino: HashMap<IpAddr, SocketAddr>,
+    /// #1716: cache do destino resolvido por `source.ip()`, COM TETO (ver [`CacheDestino`]) — evita
+    /// re-perguntar a rota a cada datagrama sem virar memória ilimitada sob origens forjadas.
+    cache_destino: CacheDestino,
     next_timeout: Option<Instant>,
     last_stats: Instant,
     pressed_keys: HashSet<galaxie_remote_transport::Tecla>,
@@ -885,7 +885,7 @@ impl RuntimeSession {
             socket,
             local_addr,
             ips_locais: ips_locais.clone(),
-            cache_destino: HashMap::new(),
+            cache_destino: CacheDestino::default(),
             next_timeout: None,
             last_stats: Instant::now(),
             pressed_keys: HashSet::new(),
@@ -1114,21 +1114,19 @@ impl RuntimeSession {
     /// destino vira o `IP_real:porta` que o peer viu no SDP. Fallback (rota fora da lista anunciada) é
     /// logado em `debug` — nunca entrega um IP que o peer não viu.
     fn resolver_destino_cache(&mut self, source: SocketAddr) -> SocketAddr {
-        if let Some(d) = self.cache_destino.get(&source.ip()) {
-            return *d;
-        }
         let porta = self.local_addr.port();
-        let destino = match resolver_destino(source, &self.ips_locais, porta, rota_local) {
-            Destino::Rota(a) => a,
-            Destino::Fallback(a) => {
-                log::debug!(
-                    "[remote #1716] rota pra {source} não deu um IP anunciado; destino cai no 1º candidato {a}"
-                );
-                a
+        let ips_locais = &self.ips_locais;
+        self.cache_destino.obter_ou(source.ip(), || {
+            match resolver_destino(source, ips_locais, porta, rota_local) {
+                Destino::Rota(a) => a,
+                Destino::Fallback(a) => {
+                    log::debug!(
+                        "[remote #1716] rota pra {source} não deu um IP anunciado; destino cai no 1º candidato {a}"
+                    );
+                    a
+                }
             }
-        };
-        self.cache_destino.insert(source.ip(), destino);
-        destino
+        })
     }
 
     /// #1527 A-2: drena o socket DEDICADO de UM relay (o da renovação; no-op se `socket=None`,
@@ -1842,6 +1840,35 @@ fn ips_de_interface_validos(brutos: &[IpAddr]) -> Vec<IpAddr> {
         .collect()
 }
 
+/// #1716 (review do @Altair): teto do cache de destino. O `receive_udp` resolve o destino ANTES de
+/// qualquer autenticação, então UDP com origens forjadas faria o mapa crescer sem limite, com um
+/// `bind`+`connect` por IP novo. Uma sessão real fala com poucos peers (direto + srflx + relay), logo
+/// 64 sobra; acima do teto o destino continua correto, só deixa de ser guardado.
+const TETO_CACHE_DESTINO: usize = 64;
+
+/// Cache `source.ip()` → destino resolvido, com [`TETO_CACHE_DESTINO`]. Ao chegar ao teto **não
+/// guarda** entradas novas (em vez de limpar): as primeiras a entrar são as do peer legítimo, que
+/// fala logo no início, e um flood forjado não as expulsa. Uma origem fora do cache paga a rota a
+/// cada pacote, e o destino continua certo.
+#[derive(Debug, Default)]
+struct CacheDestino {
+    mapa: HashMap<IpAddr, SocketAddr>,
+}
+
+impl CacheDestino {
+    /// O destino em cache para `ip`, ou o que `resolver` devolve (guardado só se houver vaga).
+    fn obter_ou(&mut self, ip: IpAddr, resolver: impl FnOnce() -> SocketAddr) -> SocketAddr {
+        if let Some(d) = self.mapa.get(&ip) {
+            return *d;
+        }
+        let d = resolver();
+        if self.mapa.len() < TETO_CACHE_DESTINO {
+            self.mapa.insert(ip, d);
+        }
+        d
+    }
+}
+
 /// Descobre os IPs de interface REAIS desta máquina (todas as interfaces up) e
 /// devolve só os válidos pra candidato ICE host. Isola o toque na rede
 /// (`if_addrs::get_if_addrs`) da regra pura `ips_de_interface_validos`. Falha de
@@ -2180,6 +2207,92 @@ mod tests {
     use super::*;
     use galaxie_remote_transport::{BotaoMouse, CodedFrame, Tecla};
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    // ---- #1716 AC2: guarda de regressão do caminho DIRETO com bind 0.0.0.0, NO CI ----
+    // (review do @Altair) O `e2e_dummy` é um example e o CI não corre examples, então a guarda
+    // tinha de virar `#[test]` aqui: corre em `cargo test --features remote`, onde o str0m compila
+    // com OpenSSL vendored. Dois peers no MESMO processo, por UDP loopback real, sem coturn. Cada
+    // um vincula em `0.0.0.0` como a produção e anuncia `127.0.0.1` (o str0m aceita loopback; o bug
+    // era só o `0.0.0.0`). O destino passa pela resolução PARTILHADA do `IoDriver` (a mesma
+    // `resolver_destino` do `receive_udp`). Sem o fix o destino entregue é `0.0.0.0:P`, o str0m
+    // descarta o STUN e o teste esgota o prazo. Com o fix conecta em milissegundos.
+    fn driver_bind_producao(papel: Papel) -> galaxie_remote_transport::driver::IoDriver {
+        let socket = UdpSocket::bind("0.0.0.0:0").expect("bind 0.0.0.0 (reproduz produção)");
+        let (cmd, _rx) = canal_de_comandos();
+        let transport = Transport::novo(SessionConfig::new(papel, vec![]), cmd);
+        galaxie_remote_transport::driver::IoDriver::novo(socket, transport)
+            .expect("driver")
+            .com_ips_locais(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])
+    }
+
+    fn sdp_de(msg: SignalMessage) -> String {
+        match msg {
+            SignalMessage::Offer { sdp } | SignalMessage::Answer { sdp } => sdp,
+            SignalMessage::IceCandidate { candidate } => candidate,
+        }
+    }
+
+    #[test]
+    fn ac2_caminho_direto_conecta_com_bind_0000() {
+        let mut host = driver_bind_producao(Papel::Host);
+        let mut ctrl = driver_bind_producao(Papel::Controlador);
+        // Candidato anunciado = loopback REAL na porta do bind (não o `0.0.0.0:P` do local_addr).
+        let cand_h = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), host.local_addr().port());
+        let cand_c = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), ctrl.local_addr().port());
+        assert!(host.local_addr().ip().is_unspecified(), "o teste TEM de reproduzir o bind 0.0.0.0");
+
+        let offer = host.transport().criar_offer().expect("criar_offer");
+        let answer = ctrl.transport().responder_offer(&sdp_de(offer)).expect("responder_offer");
+        host.transport().aceitar_answer(&sdp_de(answer)).expect("aceitar_answer");
+        host.transport().candidato_local(cand_h).expect("cand local h");
+        ctrl.transport().candidato_local(cand_c).expect("cand local c");
+        host.transport().candidato_remoto(cand_c).expect("cand rem h");
+        ctrl.transport().candidato_remoto(cand_h).expect("cand rem c");
+
+        let (mut host_ok, mut ctrl_ok) = (false, false);
+        // Com o fix conecta em ~5 ms; 10 s só existe pra o teste nunca pendurar o CI sem o fix.
+        let prazo = Instant::now() + std::time::Duration::from_secs(10);
+        while !(host_ok && ctrl_ok) && Instant::now() < prazo {
+            let agora = Instant::now();
+            host_ok |= host
+                .bombear(agora)
+                .expect("host.bombear")
+                .iter()
+                .any(|ev| matches!(ev, EventoSessao::Conectada));
+            ctrl_ok |= ctrl
+                .bombear(agora)
+                .expect("ctrl.bombear")
+                .iter()
+                .any(|ev| matches!(ev, EventoSessao::Conectada));
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            host_ok && ctrl_ok,
+            "caminho DIRETO com bind 0.0.0.0 não conectou (host={host_ok}, ctrl={ctrl_ok}) — o destino \
+             entregue ao str0m voltou a ser o 0.0.0.0:P? (#1716)"
+        );
+    }
+
+    // ---- #1716 (review do @Altair): o cache de destino tem TETO contra origens forjadas ----
+    #[test]
+    fn cache_destino_tem_teto_contra_origens_forjadas() {
+        let mut cache = CacheDestino::default();
+        let mut resolucoes = 0usize;
+        let origens = TETO_CACHE_DESTINO + 50;
+        for i in 0..origens {
+            let ip = IpAddr::V4(Ipv4Addr::from(0x0a00_0000_u32 + i as u32));
+            let d = cache.obter_ou(ip, || {
+                resolucoes += 1;
+                SocketAddr::new(ip, 1)
+            });
+            assert_eq!(d, SocketAddr::new(ip, 1), "o destino é sempre o resolvido, com ou sem vaga");
+        }
+        assert_eq!(resolucoes, origens, "cada origem nova resolveu uma vez");
+        assert_eq!(cache.mapa.len(), TETO_CACHE_DESTINO, "o mapa para no teto (flood não o cresce)");
+        // As primeiras (o peer legítimo fala primeiro) ficam: nova consulta não re-resolve.
+        let primeira = IpAddr::V4(Ipv4Addr::from(0x0a00_0000_u32));
+        cache.obter_ou(primeira, || panic!("a 1ª origem devia estar em cache"));
+    }
 
     // ---- #1527: relógio da CREDENCIAL — antecedência 3/4 do TTL (duração, imune a skew) ----
     #[test]
