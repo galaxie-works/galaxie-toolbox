@@ -18,6 +18,7 @@ import {
   Maximize,
   Monitor,
   MonitorUp,
+  TriangleAlert,
 } from "lucide-react";
 
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
@@ -413,6 +414,12 @@ export function RemoteScreen() {
           antecedência, não interrupção assertiva (a @Íris nomeou o status certo). */}
       {avisoExpiracao && (
         <Alert variant="warning" role="status" className="shrink-0">
+          {/* #1148: o ícone sobe a saliência do aviso (a tinta `bg-warning/4` é
+              quase invisível — achado da @Íris no passe pós-A-2). O `Alert` já o
+              posiciona no grid e o colore (`[&>svg]:text-warning`); é usar o
+              componente como desenhado, não inventar UI. `aria-hidden` porque o
+              título já carrega o texto do aviso (role="status"). */}
+          <TriangleAlert aria-hidden="true" />
           <AlertTitle>{t.remote.avisoExpiracaoTitulo}</AlertTitle>
           <AlertDescription>{t.remote.avisoExpiracaoDetalhe}</AlertDescription>
         </Alert>
