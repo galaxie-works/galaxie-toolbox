@@ -2570,6 +2570,28 @@ mod tests {
         assert_eq!(s, StatusCode::OK, "o /me do device sobrevive à suspensão");
     }
 
+    #[tokio::test]
+    async fn remoto_limite_do_armazem_e_409_conflito() {
+        // #1759 (mutante B10 da Lúmen): o §4.6 promete `409 conflito` no limite do ARMAZÉM, e nada o
+        // fixava (trocar por 500 no `erro_remoto` passava verde). Pelo /me, porque o limite é 64 (o das
+        // concessões é 10 000); o mapeamento `erro_remoto` é o mesmo para os dois armazéns.
+        let (estado, _, cookie_u2) = borda_admin_e_alvo();
+        let corpo = r#"{"capacidades":{}}"#;
+        for i in 0..galaxie_platform_remoto::MAX_RESTRICOES_POR_DONO {
+            let caminho = format!("/api/v1/me/remoto/dispositivos/pc-{i}");
+            let (s, _) = requisicao(estado.clone(), "PUT", &caminho, &cookie_u2, corpo).await;
+            assert_eq!(s, StatusCode::OK, "{caminho}");
+        }
+        let (s, c) =
+            requisicao(estado.clone(), "PUT", "/api/v1/me/remoto/dispositivos/pc-a-mais", &cookie_u2, corpo).await;
+        assert_eq!(s, StatusCode::CONFLICT, "acima do limite do armazém");
+        assert!(String::from_utf8_lossy(&c).contains("\"conflito\""), "{}", String::from_utf8_lossy(&c));
+        // Substituir a restrição de um device que JÁ está gravado não cresce o armazém: continua a dar.
+        let (s, _) =
+            requisicao(estado, "PUT", "/api/v1/me/remoto/dispositivos/pc-0", &cookie_u2, r#"{"capacidades":{"screen":true}}"#).await;
+        assert_eq!(s, StatusCode::OK, "regravar um device existente não conta para o limite");
+    }
+
     // #1545 — REMOVER revoga a sessão do alvo NA HORA (não em 12h). u2 logado ⇒ /me/orgs 200; admin
     // remove u2 ⇒ /me/orgs de u2 vira 401. Mutante que pule `invalidar_do_usuario` deixa u2 em 200 ⇒ morre.
     #[tokio::test]
