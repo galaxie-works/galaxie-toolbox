@@ -57,7 +57,7 @@ pub fn carregar(
             (None, None, None) => {}
             // Config completa — liga. O `client_secret` NUNCA é logado (só viaja pro `CorpoTroca`).
             (Some(client_id), Some(client_secret), Some(redirect_uri)) => {
-                if !redirect_uri_aceitavel(&redirect_uri) {
+                if !url_https_ou_localhost(&redirect_uri) {
                     bail!(
                         "{pfx}_REDIRECT_URI tem de ser https:// (ou http://localhost p/ o live-QA de \
                          dev) — recebido: {redirect_uri}"
@@ -80,27 +80,32 @@ pub fn carregar(
 /// `Some("")`; sem esta normalização cairia no braço "completo" e o provedor ligaria com um campo VAZIO,
 /// rebentando só em runtime — pior que o fail-closed no boot. O valor não-vazio é mantido como veio (não
 /// se apara o miolo).
-fn ler_var(env: &impl Fn(&str) -> Option<String>, chave: &str) -> Option<String> {
+pub(crate) fn ler_var(env: &impl Fn(&str) -> Option<String>, chave: &str) -> Option<String> {
     env(chave).filter(|v| !v.trim().is_empty())
 }
 
-/// `redirect_uri` tem de ser `https://` (prod, atrás do Traefik com TLS) OU `http://localhost` /
-/// `http://127.0.0.1` — a exceção de dev que MS e Google também concedem, e de que o live-QA da fatia 5
-/// precisa (`localhost:8080`). Plain `http://` para qualquer OUTRO host é um downgrade recusado no boot
-/// (@Altair). O host é EXATO: `http://localhost.evil.com` NÃO passa (o resto após o host tem de ser
-/// vazio, `:porta` ou `/caminho`).
-fn redirect_uri_aceitavel(uri: &str) -> bool {
-    if uri.starts_with("https://") {
-        return true;
+/// Uma URL de configuração do servidor (o `redirect_uri` do OAuth, o endpoint do dreno de auditoria)
+/// tem de ser `https://` (prod, atrás do Traefik com TLS) OU `http://localhost` / `http://127.0.0.1` —
+/// a exceção de dev que MS e Google também concedem, e de que o live-QA da fatia 5 precisa
+/// (`localhost:8080`). Plain `http://` para qualquer OUTRO host é um downgrade recusado no boot
+/// (@Altair).
+///
+/// **Parse de verdade, não prefixo** (nit do @Altair no #1723, fechado no 1º toque seguinte a este
+/// ficheiro, #1565): `http://localhost:8080@evil.com/cb` passava o `starts_with`, mas o host REAL é
+/// `evil.com` (o `localhost:8080` é userinfo). Aqui o host vem do `Url::host_str`, e qualquer userinfo
+/// (utilizador ou senha na URL) é recusado — nunca é legítimo numa URL de config, e é a forma do engano.
+pub(crate) fn url_https_ou_localhost(uri: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(uri) else {
+        return false;
+    };
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
     }
-    for host in ["http://localhost", "http://127.0.0.1"] {
-        if let Some(resto) = uri.strip_prefix(host) {
-            if resto.is_empty() || resto.starts_with(':') || resto.starts_with('/') {
-                return true;
-            }
-        }
+    match url.scheme() {
+        "https" => url.host_str().is_some(),
+        "http" => matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")),
+        _ => false,
     }
-    false
 }
 
 /// O `client_secret`, preferindo `<pfx>_CLIENT_SECRET_FILE` (caminho do cofre — lê o ficheiro e apara
@@ -311,7 +316,18 @@ mod tests {
         ));
         assert!(msg.contains("https://"), "http arbitrário recusado: {msg}");
         // E `localhost.evil.com` NÃO é a exceção de localhost (host exato).
-        assert!(!redirect_uri_aceitavel("http://localhost.evil.com/cb"), "localhost.evil.com não passa");
+        assert!(!url_https_ou_localhost("http://localhost.evil.com/cb"), "localhost.evil.com não passa");
+    }
+
+    #[test]
+    fn userinfo_nao_disfarca_o_host() {
+        // Nit do @Altair (#1723): com prefixo, `http://localhost:8080@evil.com/cb` passava, mas o host
+        // REAL é evil.com (o `localhost:8080` é userinfo). Com parse, recusa — e qualquer userinfo também.
+        assert!(!url_https_ou_localhost("http://localhost:8080@evil.com/cb"), "userinfo disfarçando o host");
+        assert!(!url_https_ou_localhost("http://localhost@evil.com/cb"), "userinfo sem porta");
+        assert!(!url_https_ou_localhost("https://user:pass@plat.example/cb"), "userinfo em https também");
+        assert!(!url_https_ou_localhost("ftp://plat.example/cb"), "outro esquema");
+        assert!(!url_https_ou_localhost("não é url"), "lixo");
     }
 
     #[test]
@@ -327,7 +343,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got.len(), 1, "http://localhost é aceite pro live-QA de dev");
-        assert!(redirect_uri_aceitavel("http://127.0.0.1:8080/cb"), "127.0.0.1 também");
-        assert!(redirect_uri_aceitavel("https://plat.example/cb"), "https sempre");
+        assert!(url_https_ou_localhost("http://127.0.0.1:8080/cb"), "127.0.0.1 também");
+        assert!(url_https_ou_localhost("http://localhost/cb"), "localhost sem porta");
+        assert!(url_https_ou_localhost("https://plat.example/cb"), "https sempre");
     }
 }

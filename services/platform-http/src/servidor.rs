@@ -16,7 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
-use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_back_office::AuditorBuffer;
+use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz};
 use galaxie_platform_conta::ArmazemPerfilMemoria;
 use galaxie_platform_config::{ArmazemPrefMemoria, RegistroFormasMemoria};
 use galaxie_platform_identity::armazem::{
@@ -44,26 +45,11 @@ fn agora_unix() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// O evento de auditoria como sai no log (linha JSON). 🔑 NUNCA carrega claim — só ator/ação/
-/// resultado/alvo (o id da org). Serializado por `serde_json`, NÃO interpolado (achado do @Altair,
-/// #1539): o `ator` vai nascer do `subject` do provedor OAuth (fatia 3) — dado EXTERNO por desenho.
-/// Interpolar deixaria um `subject` com `"` FORJAR entradas de auditoria (injeção de log). Dado que
-/// vem de fora não se interpola, se serializa — a mesma regra dos DTOs (`MembroDto`).
-#[derive(serde::Serialize)]
-struct EventoAuditoriaLog<'a> {
-    tipo: &'a str,
-    ator: &'a str,
-    acao: &'a str,
-    resultado: &'a str,
-    /// O TIPO do alvo (`org`/`usuario`/`""`) — #1591: sem isto o log achataria org e usuário no
-    /// mesmo id e a distribuição sobre alvos (a forma da enumeração) sumiria.
-    alvo_tipo: &'a str,
-    alvo: &'a str,
-}
-
-/// Auditor de produção **INTERINO**: emite o evento como linha JSON estruturada, que o coletor
-/// (OpenObserve) raspa do stdout. O DESTINO próprio (fatia (b) do #1505, cardada com a @Mira) troca
-/// isto por um emissor que sai da caixa; até lá, stdout estruturado já é a direção certa.
+/// Auditor de **stdout**: emite cada decisão como linha JSON estruturada, para visibilidade LOCAL de
+/// ops (`docker logs`). ⚠️ **Não é o trilho de auditoria.** Medido no #1565: no repo não há coletor que
+/// leve este stdout ao OpenObserve (a afirmação anterior, "o coletor raspa do stdout", não tinha base).
+/// O trilho é o dreno do `AuditorBuffer` → stream `galaxie_auditoria` (fatia B, ver `auditoria_dreno`).
+/// A linha sai do construtor PARTILHADO [`crate::auditoria_dreno`] — a mesma forma que o trilho.
 ///
 /// **Saída INJETÁVEL (`W`, #1594 — achado da @Lúmen):** o destino é genérico pra o teste OBSERVAR o
 /// que o `registrar` DE PRODUÇÃO de fato emite. Sem isso, o `registrar` podia chamar `linha_de_auditoria`
@@ -80,6 +66,29 @@ impl AuditorLog {
     }
 }
 
+/// Teto do buffer do trilho de auditoria (#1565). Com o dreno a cada 5 s, antecipado quando chega a meio, o
+/// buffer só enche se chegarem mais de ~5 000 decisões de autz entre dois POSTs, o que no regime normal
+/// da plataforma é inundação, não tráfego. Cada evento retido são umas centenas de bytes, logo o teto
+/// custa poucos MB no pior caso. Acima dele entra a política da fatia A: não cresce, não bloqueia a
+/// autz, e o excedente vira `auditoria_perdida` contada.
+const CAPACIDADE_BUFFER_AUDITORIA: usize = 10_000;
+
+/// O auditor de produção quando o dreno está ligado (#1565, decisão 2 do @Altair): **composto**. O
+/// `AuditorBuffer` alimenta o trilho AUTORITATIVO (`galaxie_auditoria`, pelo dreno); o `AuditorLog` é a
+/// cópia NÃO autoritativa no stdout (visibilidade local de ops, e a que sobrevive a um encerramento em
+/// que o dreno não chega a tempo). Os dois são síncronos e sem rede, então o AC2 fica de pé.
+struct AuditorComposto {
+    log: AuditorLog,
+    buffer: Arc<AuditorBuffer>,
+}
+
+impl Auditor for AuditorComposto {
+    fn registrar(&self, evento: &EventoAutz) {
+        self.log.registrar(evento);
+        self.buffer.registrar(evento);
+    }
+}
+
 /// A LINHA de auditoria (JSON) a partir do evento — a função PURA que o `registrar` de PRODUÇÃO
 /// usa. Extraída (#1594) porque o teste anti-injeção tem de provar o CAMINHO DE PRODUÇÃO: montar o
 /// struct + chamar `serde_json` À MÃO prova que o serde escapa, NÃO que o nosso `registrar` o usa —
@@ -88,27 +97,15 @@ impl AuditorLog {
 /// teste. `None` se a serialização falhar (não deve; campos são `&str`) — não emitir é melhor que
 /// emitir lixo.
 fn linha_de_auditoria(e: &EventoAutz) -> Option<String> {
-    let resultado = match e.resultado {
-        ResultadoAutz::Permitido => "permitido",
-        ResultadoAutz::Negado => "negado",
-    };
     // O alvo (#1591): tipo + id, pra org e usuário não colapsarem no mesmo campo plano.
     let (alvo_tipo, alvo) = match e.alvo {
         Alvo::Org(o) => ("org", o.0.as_str()),
         Alvo::Usuario(u) => ("usuario", u.0.as_str()),
         Alvo::SemAlvo => ("", ""),
     };
-    let ev = EventoAuditoriaLog {
-        // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* /
-        // org_admin.*, #1571) — este auditor serve TODA superfície de autz, não só back-office.
-        tipo: "autz",
-        ator: &e.ator.0,
-        acao: e.acao,
-        resultado,
-        alvo_tipo,
-        alvo,
-    };
-    serde_json::to_string(&ev).ok()
+    // `acao` já vem NOMEADA e namespaced do `acao_nome()` do enum dono (back_office.* / org_admin.*,
+    // #1571). A serialização é a PARTILHADA com o dreno (#1565) — uma forma só, um guard só.
+    crate::auditoria_dreno::linha_json(&e.ator.0, e.acao, e.resultado, alvo_tipo, alvo)
 }
 
 impl<W: std::io::Write + Send> Auditor for AuditorLog<W> {
@@ -161,13 +158,31 @@ pub async fn serve(config: Config) -> Result<()> {
             TTL_FLUXO_OAUTH_SEG,
         ))
     };
+    // Trilho de auditoria (#1565): com a config do dreno completa, o auditor é o COMPOSTO e a task do
+    // dreno leva o buffer ao `galaxie_auditoria`. Sem config, o dreno fica desligado e o boot AVISA
+    // ALTO: só sobra o stdout, que não é o trilho. Config parcial já abortou no `?` (fail-closed).
+    let (auditor, dreno): (Arc<dyn Auditor + Send + Sync>, _) = match crate::auditoria_config::do_ambiente()? {
+        None => {
+            tracing::warn!(
+                "[boot] dreno de auditoria DESLIGADO (sem GALAXIE_AUDITORIA_OTLP_*): o trilho {} não recebe \
+                 nada; só a cópia NÃO autoritativa no stdout",
+                crate::auditoria_config::STREAM_AUDITORIA
+            );
+            (Arc::new(AuditorLog::novo()), None)
+        }
+        Some(cfg) => {
+            tracing::info!(stream = crate::auditoria_config::STREAM_AUDITORIA, "[boot] dreno de auditoria LIGADO");
+            let buffer = Arc::new(AuditorBuffer::novo(CAPACIDADE_BUFFER_AUDITORIA));
+            (Arc::new(AuditorComposto { log: AuditorLog::novo(), buffer: buffer.clone() }), Some((cfg, buffer)))
+        }
+    };
     // Um só ponto de montagem (os 9 stores não se duplicam entre "com/sem OAuth"): `montar` recebe o
     // `Option` que ESTE boot computou. Registro de formas VAZIO em produção: o binário serve o que
     // EXISTE (mesmo padrão dos stores vazios); o registro real vem da config do PO, não do código.
     let borda = Borda::montar(
         ArmazemMemoria::novo(),
         agora_unix,
-        Arc::new(AuditorLog::novo()),
+        auditor,
         Arc::new(ArmazemOrgMemoria::novo()),
         Arc::new(ArmazemMembroMemoria::novo()),
         Arc::new(ArmazemDominioMemoria::novo()),
@@ -176,8 +191,19 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(RegistroFormasMemoria::novo()),
         oauth,
     );
+    // O dreno corre numa task à parte (fora do caminho síncrono) até o servidor parar.
+    let (encerrar_dreno, sinal_dreno) = tokio::sync::watch::channel(false);
+    let tarefa_dreno =
+        dreno.map(|(cfg, buffer)| tokio::spawn(crate::auditoria_dreno::rodar(cfg, buffer, sinal_dreno, agora_unix)));
     // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
-    servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await
+    let servido = servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await;
+    // ORDEM do encerramento: primeiro o servidor deixa de aceitar pedidos (nada mais é registado) e só
+    // depois o dreno faz a última passada — senão um evento registado durante o flush ficava de fora.
+    let _ = encerrar_dreno.send(true);
+    if let Some(t) = tarefa_dreno {
+        let _ = t.await;
+    }
+    servido
 }
 
 /// Relógio de produção exposto: o `dev-server` (fatia 2) usa o MESMO `SystemTime` — a sessão
@@ -201,14 +227,46 @@ pub async fn servir(borda: crate::EstadoBorda, addr: SocketAddr) -> Result<()> {
         .await
         .with_context(|| format!("bind em {addr}"))?;
     tracing::info!("plataforma web servindo em {addr}");
-    axum::serve(listener, app).await.context("axum::serve")?;
+    // Encerramento GRACIOSO (#1565): o `docker stop` manda SIGTERM; sem isto o processo morria a meio
+    // e o dreno de auditoria não tinha a sua última passada.
+    axum::serve(listener, app)
+        .with_graceful_shutdown(sinal_de_encerramento())
+        .await
+        .context("axum::serve")?;
     Ok(())
+}
+
+/// Espera por SIGTERM (o `docker stop`) ou Ctrl-C. Se o SO não deixar instalar o handler, espera
+/// para sempre em vez de devolver logo — um handler que falha não pode encerrar o serviço no arranque.
+async fn sinal_de_encerramento() {
+    let ctrl_c = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = term => {}
+    }
+    tracing::info!("[encerramento] sinal recebido: a parar de aceitar pedidos");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use galaxie_platform_identity::auditoria::ResultadoAutz;
     use galaxie_platform_identity::{OrgId, UserId};
 
     // Achado do @Altair (#1539) provado agora pelo CONSUMIDOR DE PRODUÇÃO (#1594 AC2, achado da @Lúmen):
