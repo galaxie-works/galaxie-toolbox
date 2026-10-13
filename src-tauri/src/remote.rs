@@ -2330,9 +2330,14 @@ mod tests {
         let cand_h = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), host.local_addr.port());
         let cand_c = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), ctrl.local_addr().port());
 
-        let offer = host.transport.criar_offer().expect("criar_offer");
-        let answer = ctrl.transport().responder_offer(&sdp_de(offer)).expect("responder_offer");
-        host.transport.aceitar_answer(&sdp_de(answer)).expect("aceitar_answer");
+        // Os papéis da PRODUÇÃO: o Controller faz o offer (ICE controlling) e o host responde
+        // (controlled). Isto importa para a guarda: o lado controlling casa as respostas STUN pela
+        // transação e nomeia o par mesmo descartando os PEDIDOS, por isso um host que fizesse o offer
+        // conectava com o bug (medido: o mutante A2 sobreviveu assim). Como controlled, o host só
+        // conecta se ACEITAR os pedidos do controlador, e é aí que o destino errado os descarta.
+        let offer = ctrl.transport().criar_offer().expect("criar_offer");
+        let answer = host.transport.responder_offer(&sdp_de(offer)).expect("responder_offer");
+        ctrl.transport().aceitar_answer(&sdp_de(answer)).expect("aceitar_answer");
         host.transport.candidato_local(cand_h).expect("cand local h");
         ctrl.transport().candidato_local(cand_c).expect("cand local c");
         host.transport.candidato_remoto(cand_c).expect("cand rem h");
