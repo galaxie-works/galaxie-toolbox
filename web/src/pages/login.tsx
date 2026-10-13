@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
+import { Alerta } from "@/components/alerta";
+import { lerLoginFalhou, semLoginFalhou } from "@/lib/login-falhou";
 
 // Tela de login/onboarding (#1484). Auth = IDENTIDADE FEDERADA multi-provedor —
 // os MESMOS provedores do app desktop (microsoft / microsoft-personal / google,
@@ -25,11 +28,24 @@ function iniciarLogin(provedor: Provedor) {
 
 export function LoginPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
   const t = DICIONARIOS[idioma];
+  // Login falhado (contrato #1734): lido UMA vez na montagem — o `useState` guarda o
+  // sinal, porque o efeito abaixo o tira da URL logo em seguida (condição do Altair:
+  // o link não fica a repetir o aviso num refresh/compartilhamento).
+  const [loginFalhou] = useState(() => lerLoginFalhou(window.location.search));
+  useEffect(() => {
+    if (!loginFalhou) return;
+    window.history.replaceState(window.history.state, "", semLoginFalhou(window.location.href));
+  }, [loginFalhou]);
   return (
     <main className="flex min-h-screen items-center justify-center bg-neutral-50 p-4">
       <section className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
         <h1 className="text-xl font-semibold text-neutral-900">{t.bemVindo}</h1>
         <p className="mt-1 text-sm text-neutral-500">{t.subtitulo}</p>
+
+        {/* Texto FIXO do i18n — nunca algo da query (qualquer um monta o link). */}
+        {loginFalhou ? (
+          <Alerta tom="aviso" titulo={t.loginFalhou} detalhe={t.loginFalhouDetalhe} className="mt-4" />
+        ) : null}
 
         <div className="mt-6 flex flex-col gap-3">
           {PROVEDORES.map((p) => (

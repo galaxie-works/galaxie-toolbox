@@ -10,6 +10,10 @@ export interface Dicionario {
   subtitulo: string;
   entrarCom: Record<"microsoft" | "microsoft-personal" | "google", string>;
   semSenha: string;
+  // #1484 + contrato #1734 — o callback OAuth falhou (qualquer causa, inclusive
+  // "cancelei no provedor": o sinal é ÚNICO). Texto FIXO — nada da URL é mostrado.
+  loginFalhou: string;
+  loginFalhouDetalhe: string;
   // #1489 — conta/perfil
   minhaConta: string;
   perfil: string;
@@ -120,6 +124,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
       google: "Entrar com Google",
     },
     semSenha: "A Galaxie usa sua conta federada — sem senha própria.",
+    loginFalhou: "Não foi possível entrar",
+    loginFalhouDetalhe: "O login não foi concluído. Escolha a conta e tente de novo.",
     minhaConta: "Minha conta",
     perfil: "Perfil",
     nome: "Nome",
@@ -193,6 +199,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
       google: "Sign in with Google",
     },
     semSenha: "Galaxie uses your federated account — no password of its own.",
+    loginFalhou: "We couldn't sign you in",
+    loginFalhouDetalhe: "Sign-in didn't complete. Choose your account and try again.",
     minhaConta: "My account",
     perfil: "Profile",
     nome: "Name",
