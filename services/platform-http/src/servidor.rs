@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
+use galaxie_platform_back_office::AuditorBuffer;
 use galaxie_platform_identity::auditoria::{Alvo, Auditor, EventoAutz};
 use galaxie_platform_conta::ArmazemPerfilMemoria;
 use galaxie_platform_config::{ArmazemPrefMemoria, RegistroFormasMemoria};
@@ -62,6 +63,29 @@ struct AuditorLog<W = std::io::Stdout> {
 impl AuditorLog {
     fn novo() -> Self {
         Self { saida: std::sync::Mutex::new(std::io::stdout()) }
+    }
+}
+
+/// Teto do buffer do trilho de auditoria (#1565). Com o dreno a cada 5 s, antecipado quando chega a meio, o
+/// buffer só enche se chegarem mais de ~5 000 decisões de autz entre dois POSTs, o que no regime normal
+/// da plataforma é inundação, não tráfego. Cada evento retido são umas centenas de bytes, logo o teto
+/// custa poucos MB no pior caso. Acima dele entra a política da fatia A: não cresce, não bloqueia a
+/// autz, e o excedente vira `auditoria_perdida` contada.
+const CAPACIDADE_BUFFER_AUDITORIA: usize = 10_000;
+
+/// O auditor de produção quando o dreno está ligado (#1565, decisão 2 do @Altair): **composto**. O
+/// `AuditorBuffer` alimenta o trilho AUTORITATIVO (`galaxie_auditoria`, pelo dreno); o `AuditorLog` é a
+/// cópia NÃO autoritativa no stdout (visibilidade local de ops, e a que sobrevive a um encerramento em
+/// que o dreno não chega a tempo). Os dois são síncronos e sem rede, então o AC2 fica de pé.
+struct AuditorComposto {
+    log: AuditorLog,
+    buffer: Arc<AuditorBuffer>,
+}
+
+impl Auditor for AuditorComposto {
+    fn registrar(&self, evento: &EventoAutz) {
+        self.log.registrar(evento);
+        self.buffer.registrar(evento);
     }
 }
 
@@ -134,13 +158,31 @@ pub async fn serve(config: Config) -> Result<()> {
             TTL_FLUXO_OAUTH_SEG,
         ))
     };
+    // Trilho de auditoria (#1565): com a config do dreno completa, o auditor é o COMPOSTO e a task do
+    // dreno leva o buffer ao `galaxie_auditoria`. Sem config, o dreno fica desligado e o boot AVISA
+    // ALTO: só sobra o stdout, que não é o trilho. Config parcial já abortou no `?` (fail-closed).
+    let (auditor, dreno): (Arc<dyn Auditor + Send + Sync>, _) = match crate::auditoria_config::do_ambiente()? {
+        None => {
+            tracing::warn!(
+                "[boot] dreno de auditoria DESLIGADO (sem GALAXIE_AUDITORIA_OTLP_*): o trilho {} não recebe \
+                 nada; só a cópia NÃO autoritativa no stdout",
+                crate::auditoria_config::STREAM_AUDITORIA
+            );
+            (Arc::new(AuditorLog::novo()), None)
+        }
+        Some(cfg) => {
+            tracing::info!(stream = crate::auditoria_config::STREAM_AUDITORIA, "[boot] dreno de auditoria LIGADO");
+            let buffer = Arc::new(AuditorBuffer::novo(CAPACIDADE_BUFFER_AUDITORIA));
+            (Arc::new(AuditorComposto { log: AuditorLog::novo(), buffer: buffer.clone() }), Some((cfg, buffer)))
+        }
+    };
     // Um só ponto de montagem (os 9 stores não se duplicam entre "com/sem OAuth"): `montar` recebe o
     // `Option` que ESTE boot computou. Registro de formas VAZIO em produção: o binário serve o que
     // EXISTE (mesmo padrão dos stores vazios); o registro real vem da config do PO, não do código.
     let borda = Borda::montar(
         ArmazemMemoria::novo(),
         agora_unix,
-        Arc::new(AuditorLog::novo()),
+        auditor,
         Arc::new(ArmazemOrgMemoria::novo()),
         Arc::new(ArmazemMembroMemoria::novo()),
         Arc::new(ArmazemDominioMemoria::novo()),
@@ -149,8 +191,19 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(RegistroFormasMemoria::novo()),
         oauth,
     );
+    // O dreno corre numa task à parte (fora do caminho síncrono) até o servidor parar.
+    let (encerrar_dreno, sinal_dreno) = tokio::sync::watch::channel(false);
+    let tarefa_dreno =
+        dreno.map(|(cfg, buffer)| tokio::spawn(crate::auditoria_dreno::rodar(cfg, buffer, sinal_dreno, agora_unix)));
     // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
-    servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await
+    let servido = servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await;
+    // ORDEM do encerramento: primeiro o servidor deixa de aceitar pedidos (nada mais é registado) e só
+    // depois o dreno faz a última passada — senão um evento registado durante o flush ficava de fora.
+    let _ = encerrar_dreno.send(true);
+    if let Some(t) = tarefa_dreno {
+        let _ = t.await;
+    }
+    servido
 }
 
 /// Relógio de produção exposto: o `dev-server` (fatia 2) usa o MESMO `SystemTime` — a sessão
@@ -174,8 +227,39 @@ pub async fn servir(borda: crate::EstadoBorda, addr: SocketAddr) -> Result<()> {
         .await
         .with_context(|| format!("bind em {addr}"))?;
     tracing::info!("plataforma web servindo em {addr}");
-    axum::serve(listener, app).await.context("axum::serve")?;
+    // Encerramento GRACIOSO (#1565): o `docker stop` manda SIGTERM; sem isto o processo morria a meio
+    // e o dreno de auditoria não tinha a sua última passada.
+    axum::serve(listener, app)
+        .with_graceful_shutdown(sinal_de_encerramento())
+        .await
+        .context("axum::serve")?;
     Ok(())
+}
+
+/// Espera por SIGTERM (o `docker stop`) ou Ctrl-C. Se o SO não deixar instalar o handler, espera
+/// para sempre em vez de devolver logo — um handler que falha não pode encerrar o serviço no arranque.
+async fn sinal_de_encerramento() {
+    let ctrl_c = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = term => {}
+    }
+    tracing::info!("[encerramento] sinal recebido: a parar de aceitar pedidos");
 }
 
 #[cfg(test)]
