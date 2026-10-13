@@ -274,6 +274,27 @@ export function idiomaAtual(
 }
 
 /**
+ * O `idioma` guardado na conta (`/me.idioma`) como um `Idioma` suportado, ou `null`
+ * se vier ausente ou fora do que a UI fala. Aceita a tag com região (`pt-PT`,
+ * `en-GB`) e sem caixa fixa — o que importa é a língua.
+ */
+export function idiomaDaConta(valor: string | null | undefined): Idioma | null {
+  const v = valor?.trim().toLowerCase();
+  if (!v) return null;
+  if (v === "pt" || v.startsWith("pt-")) return "pt-BR";
+  if (v === "en" || v.startsWith("en-")) return "en";
+  return null;
+}
+
+/**
+ * Precedência do #1732 (recomendação da Mira): **conta > navegador > pt-BR**. Sem
+ * sessão (ex.: `/login`) não há conta, e vale o navegador — que já cai em pt-BR.
+ */
+export function resolverIdioma(conta: string | null | undefined, navegador?: string): Idioma {
+  return idiomaDaConta(conta) ?? idiomaAtual(navegador);
+}
+
+/**
  * Alinha o idioma DECLARADO da página (`<html lang>`) ao idioma RENDERIZADO —
  * WCAG 3.1.1 (#1484, achado da @Íris). O `index.html` nasce `pt-BR` (o mesmo
  * default do `idiomaAtual`); sem isto, num navegador em inglês a UI inteira sai

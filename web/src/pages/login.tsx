@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
+import { DICIONARIOS, type Idioma } from "@/i18n";
+import { useIdiomaAtivo } from "@/idioma-contexto";
 import { Alerta } from "@/components/alerta";
 import { lerLoginFalhou, semLoginFalhou } from "@/lib/login-falhou";
 
@@ -26,7 +27,8 @@ function iniciarLogin(provedor: Provedor) {
   window.location.assign(`/api/v1/auth/${provedor}`);
 }
 
-export function LoginPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
+export function LoginPage({ idioma: explicito }: { idioma?: Idioma }) {
+  const idioma = useIdiomaAtivo(explicito);
   const t = DICIONARIOS[idioma];
   // Login falhado (contrato #1734): lido UMA vez na montagem — o `useState` guarda o
   // sinal, porque o efeito abaixo o tira da URL logo em seguida (condição do Altair:
