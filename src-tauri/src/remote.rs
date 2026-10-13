@@ -79,6 +79,29 @@ fn antecedencia_reemissao(ttl_seconds: u64) -> Duration {
     Duration::from_secs(ttl_seconds.saturating_mul(3) / 4)
 }
 
+/// #1148 (AC do Altair "há nova tentativa"): backoff da RE-emissão do `RenewIceNeeded` quando a
+/// renovação não chega (pedido perdido, signaling a responder com erro, apply que falhou). Começa
+/// em 60s e duplica até 5 min. Cobre a falha TRANSITÓRIA com o signaling ligado; com o WebSocket
+/// fechado nenhuma tentativa chega ao servidor (retoma de sessão = card próprio).
+const BACKOFF_REEMISSAO_INICIAL: Duration = Duration::from_secs(60);
+const BACKOFF_REEMISSAO_MAX: Duration = Duration::from_secs(300);
+
+/// #1148: depois de um disparo do `RenewIceNeeded`, quando disparar DE NOVO se a credencial nova
+/// não chegar — e o backoff da tentativa seguinte. Antes era `None` (dispara UMA vez): uma única
+/// falha transitória aos 3/4 do TTL desarmava a renovação e a sessão caía no TTL. Tenta enquanto
+/// a credencial ATUAL vale (`proxima < credencial_expira_em`); depois disso, `None` (desiste —
+/// o banner do FE fica aceso, AC3). O sucesso não passa por aqui: o `aplicar_renew_ice` monta um
+/// `RelayState` novo (rearme a 3/4 do TTL novo, backoff de volta ao inicial).
+fn proxima_retentativa(
+    agora: Instant,
+    credencial_expira_em: Option<Instant>,
+    backoff: Duration,
+) -> (Option<Instant>, Duration) {
+    let proxima = agora + backoff;
+    let agendada = credencial_expira_em.filter(|&expira| proxima < expira).map(|_| proxima);
+    (agendada, backoff.saturating_mul(2).min(BACKOFF_REEMISSAO_MAX))
+}
+
 #[derive(Default)]
 pub struct RemoteRuntime {
     active: Mutex<Option<ActiveSession>>,
@@ -332,6 +355,12 @@ struct RelayState {
     /// porque a alocação é amarrada ao username que a criou). `None` = sem `ttl_seconds` no
     /// `IceServer` (o FE ainda não forwarda a duração — fatia B) ⇒ relógio desarmado.
     reemitir_em: Option<Instant>,
+    /// #1148: quando a credencial ATUAL expira (agora + `ttl_seconds`, relógio do cliente). Limita
+    /// as re-tentativas do `RenewIceNeeded` (`proxima_retentativa`). `None` = sem `ttl_seconds`.
+    credencial_expira_em: Option<Instant>,
+    /// #1148: backoff da PRÓXIMA re-tentativa (60s, duplica até 5 min). Volta ao inicial no
+    /// sucesso porque o `aplicar_renew_ice` monta um `RelayState` novo.
+    backoff_reemissao: Duration,
     /// Peers com CreatePermission instalada → quando REEMITIR (a permissão do coturn
     /// expira em ~300s; sem reemitir, o relay dropa o peer no meio da sessão). Chave =
     /// IP do peer (a permissão é por IP, RFC 5766 §9).
@@ -351,6 +380,23 @@ struct RelayState {
     /// fecha o socket (teto de 41 portas no coturn, #1165 — não segurar duas portas por 10 min).
     /// O overlap mantém o caminho antigo vivo enquanto o ICE valida o novo candidato relay.
     liberar_em: Option<Instant>,
+}
+
+impl RelayState {
+    /// #1527/#1148: o relógio da credencial venceu? Se sim, devolve `true` (o loop emite o
+    /// `RenewIceNeeded`) e REAGENDA a próxima tentativa com backoff — nunca desarma enquanto a
+    /// credencial atual vale (antes: `reemitir_em = None` ⇒ uma falha transitória matava a
+    /// renovação até ao fim da sessão).
+    fn disparar_reemissao(&mut self, agora: Instant) -> bool {
+        if !self.reemitir_em.is_some_and(|t| agora >= t) {
+            return false;
+        }
+        let (proxima, backoff) =
+            proxima_retentativa(agora, self.credencial_expira_em, self.backoff_reemissao);
+        self.reemitir_em = proxima;
+        self.backoff_reemissao = backoff;
+        true
+    }
 }
 
 /// #1000 (AC1/AC3) — veredito de autorização de UM frame de controle no host.
@@ -1426,9 +1472,10 @@ impl RuntimeSession {
         }
         // #1527: relógio da CREDENCIAL (distinto do Refresh do lifetime). Dispara a 3/4 do
         // `ttl_seconds` (duração, imune a skew) e sinaliza que precisa de credencial NOVA — o
-        // `Refresh` não a salva (a alocação é amarrada ao username que a criou, AC3). Limpa
-        // pra sinalizar UMA vez; quando a credencial nova chega (fatia B → comando), a fatia 2
-        // faz o Allocate NOVO sobrepondo + troca o data-path + libera o antigo.
+        // `Refresh` não a salva (a alocação é amarrada ao username que a criou, AC3). #1148: NÃO
+        // limpa — reagenda com backoff (`RelayState::disparar_reemissao`) enquanto a credencial
+        // atual vale; quando a credencial nova chega (fatia B → comando), o apply faz o Allocate
+        // NOVO sobrepondo + troca o data-path + libera o antigo, e o `RelayState` novo zera tudo.
         //
         // ⚠️ REQUISITO DA FATIA B (Altair, review do #1700 — o aviso mora AQUI, no site onde a
         // credencial nova é aplicada, não só no card): ao reaplicar a credencial nova, REARMAR
@@ -1439,20 +1486,18 @@ impl RuntimeSession {
         // deixa de ser estado desenhado e vira ANOMALIA real (o FE devia forwardar e não o fez).
         //
         // O disparo emite o `RenewIceNeeded` (seam com o #1148-B do Pollux) ANTES do refresh
-        // (que pode `return` cedo neste tick). O `match` solta o borrow de `relay` para o
+        // (que pode `return` cedo neste tick). O `and_then` solta o borrow de `relay` para o
         // `self.send_event` (que toma `&self`) poder correr sem conflito.
-        let reemissao = match self.relay.as_mut() {
-            Some(relay) if relay.reemitir_em.is_some_and(|t| agora >= t) => {
-                relay.reemitir_em = None;
-                true
-            }
-            _ => false,
-        };
-        if reemissao {
+        let reemissao = self.relay.as_mut().and_then(|relay| {
+            relay
+                .disparar_reemissao(agora)
+                .then(|| relay.reemitir_em.map(|t| t.saturating_duration_since(agora)))
+        });
+        if let Some(proxima) = reemissao {
             log::warn!(
-                "[remote] #1527: credencial TURN a 3/4 do TTL — emito RenewIceNeeded (o FE \
+                "[remote] #1527/#1148: credencial TURN a renovar — emito RenewIceNeeded (o FE \
                  busca credencial nova e devolve via remote_session_renew_ice; o Refresh nao \
-                 salva credencial expirada)"
+                 salva credencial expirada). Nova tentativa se nao chegar: {proxima:?}"
             );
             self.send_event(RemoteSessionEvent::RenewIceNeeded {})?;
         }
@@ -2155,6 +2200,8 @@ fn gather_relay(
         // (fatia B) ⇒ relógio DESARMADO — escolhido por HONESTIDADE, não por segurança
         // (o desarmado falha sempre; o `warn` abaixo torna o estado encontrável).
         reemitir_em: ttl_seconds.map(|ttl| Instant::now() + antecedencia_reemissao(ttl)),
+        credencial_expira_em: ttl_seconds.map(|ttl| Instant::now() + Duration::from_secs(ttl)),
+        backoff_reemissao: BACKOFF_REEMISSAO_INICIAL,
         permitidos: HashMap::new(),
         ultimo_txid: [0u8; 12],
         // `None` = usa o `session.socket` (relay inicial, via provada). A RENOVAÇÃO sobrescreve
@@ -2401,6 +2448,52 @@ mod tests {
         assert_eq!(antecedencia_reemissao(1000), Duration::from_secs(750));
         assert_eq!(antecedencia_reemissao(80), Duration::from_secs(60)); // 3/4 de 80
         assert_eq!(antecedencia_reemissao(0), Duration::ZERO); // sem TTL restante -> reemitir já
+    }
+
+    // ---- #1148: nova tentativa da reemissão (AC do Altair) — backoff enquanto a credencial vale ----
+    fn relay_de_teste(agora: Instant, ttl: u64) -> RelayState {
+        let endereco: SocketAddr = "127.0.0.1:3478".parse().unwrap();
+        RelayState {
+            turn_server: endereco,
+            relayed: endereco,
+            username: String::new(),
+            realm: String::new(),
+            nonce: String::new(),
+            key: [0u8; 16],
+            lifetime_s: 600,
+            refresh_em: agora + Duration::from_secs(450),
+            reemitir_em: Some(agora + antecedencia_reemissao(ttl)),
+            credencial_expira_em: Some(agora + Duration::from_secs(ttl)),
+            backoff_reemissao: BACKOFF_REEMISSAO_INICIAL,
+            permitidos: HashMap::new(),
+            ultimo_txid: [0u8; 12],
+            socket: None,
+            liberar_em: None,
+        }
+    }
+
+    #[test]
+    fn reemissao_sem_sucesso_volta_a_disparar_com_backoff_ate_a_credencial_expirar() {
+        let t0 = Instant::now();
+        let mut relay = relay_de_teste(t0, 3600); // dispara aos 2700s, credencial morre aos 3600s
+        let s = Duration::from_secs;
+
+        assert!(!relay.disparar_reemissao(t0 + s(2699)), "antes dos 3/4 não dispara");
+        assert!(relay.disparar_reemissao(t0 + s(2700)), "1º disparo aos 3/4 do TTL");
+        // Sem a credencial nova, NÃO desarma (o defeito do Rejected): volta em 60s, 120s, 240s,
+        // e depois satura em 5 min — enquanto a próxima tentativa cair antes da expiração.
+        assert_eq!(relay.reemitir_em, Some(t0 + s(2760)));
+        assert!(!relay.disparar_reemissao(t0 + s(2759)), "não antecipa o backoff");
+        assert!(relay.disparar_reemissao(t0 + s(2760)));
+        assert_eq!(relay.reemitir_em, Some(t0 + s(2880)));
+        assert!(relay.disparar_reemissao(t0 + s(2880)));
+        assert_eq!(relay.reemitir_em, Some(t0 + s(3120)));
+        assert!(relay.disparar_reemissao(t0 + s(3120)));
+        assert_eq!(relay.reemitir_em, Some(t0 + s(3420)), "backoff satura em 5 min");
+        // 3420 + 300 = 3720 ≥ 3600: a credencial atual já morreu — desiste (banner fica aceso).
+        assert!(relay.disparar_reemissao(t0 + s(3420)));
+        assert_eq!(relay.reemitir_em, None, "não tenta com a credencial expirada");
+        assert!(!relay.disparar_reemissao(t0 + s(3599)));
     }
 
     // ---- #1000 (AC1/AC3): autorização por-frame do host -----------------------
