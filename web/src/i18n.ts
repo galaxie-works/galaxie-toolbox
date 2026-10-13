@@ -42,6 +42,8 @@ export interface Dicionario {
   configuracoes: string;
   semConfig: string;
   naoGuardado: string;
+  /** #1752 — nome ESTÁVEL da região viva do resultado de salvar (o texto dela muda). */
+  resultadoSalvar: string;
   // #1749 — rótulos da allowlist de config. O BE devolve só `chave`/valores (sem
   // texto de UI, regra 7 do AGENTS): a copy mora aqui, indexada por eles. O TIPO
   // das chaves faz o `tsc` reprovar um idioma que esqueça uma tradução.
@@ -158,7 +160,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sair",
     configuracoes: "Configurações",
     semConfig: "Nada para configurar",
-    naoGuardado: "Não guardado",
+    // pt-BR: o par de "Salvo" é "Não salvo". "Não guardado" era pt-PT (#1752).
+    naoGuardado: "Não salvo",
+    resultadoSalvar: "Resultado do salvamento",
     configChave: { "app.tema": "Tema", "app.notificacoes": "Notificações" },
     configOpcao: { claro: "Claro", escuro: "Escuro", sistema: "Sistema" },
     configChaveDesconhecida: "Preferência",
@@ -237,6 +241,7 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     configuracoes: "Settings",
     semConfig: "Nothing to configure",
     naoGuardado: "Not saved",
+    resultadoSalvar: "Save result",
     configChave: { "app.tema": "Theme", "app.notificacoes": "Notifications" },
     configOpcao: { claro: "Light", escuro: "Dark", sistema: "System" },
     configChaveDesconhecida: "Preference",

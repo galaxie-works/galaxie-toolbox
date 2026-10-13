@@ -36,6 +36,7 @@ import type { ReactNode } from "react";
 export function Alerta({
   tom,
   titulo,
+  rotulo,
   detalhe,
   className,
 }: {
@@ -53,6 +54,13 @@ export function Alerta({
   tom: "aviso" | "erro" | "simples";
   /** Também é o NOME acessível da região viva. Obrigatório de propósito. */
   titulo: string;
+  /**
+   * Nome acessível quando ele NÃO deve ser o título (#1752): o resultado de
+   * salvar do `/config` muda de texto ("Salvo" / "Não salvo: …") e a região tem
+   * de manter um nome estável ("Resultado do salvamento"). Sem isto, o nome cai
+   * no título, como antes, e continua impossível esquecê-lo.
+   */
+  rotulo?: string;
   detalhe?: ReactNode;
   className?: string;
 }) {
@@ -82,7 +90,7 @@ export function Alerta({
   return (
     <div
       role="status"
-      aria-label={titulo}
+      aria-label={rotulo ?? titulo}
       className={className ? `${caixa} ${className}` : caixa}
     >
       <p className={`text-sm font-medium ${corTitulo}`}>{titulo}</p>

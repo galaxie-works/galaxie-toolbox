@@ -122,6 +122,9 @@ describe("#1614 — a caixa de aviso tem um ponto único", () => {
   it("o dono do padrão realmente o carrega (senão a varredura acima é decoração)", () => {
     const dono = readFileSync(join(WEB_SRC, "components", DONO), "utf8");
     expect(ROLE_STATUS.test(dono)).toBe(true);
-    expect(dono).toContain("aria-label={titulo}");
+    // #1752: o nome pode vir de um `rotulo` estável, mas CAI SEMPRE no `titulo`,
+    // que é obrigatório. Um `aria-label={rotulo}` sozinho deixaria a região sem
+    // nome quando ninguém o passa, e é isso que esta linha não deixa voltar.
+    expect(dono).toContain("aria-label={rotulo ?? titulo}");
   });
 });

@@ -6,6 +6,7 @@ import { useCarregar } from "@/lib/use-carregar";
 import { DICIONARIOS, type Idioma } from "@/i18n";
 import { rotuloDaChave, rotuloDaOpcao } from "@/lib/rotulos-config";
 import { useIdiomaAtivo } from "@/idioma-contexto";
+import { Alerta } from "@/components/alerta";
 
 // #1491 — UI de config do app. DATA-DRIVEN: renderiza só as chaves que o BE
 // devolve (a allowlist do #1471); a UI não inventa chave. A barreira é
@@ -146,14 +147,19 @@ export function ConfigPage({ idioma: explicito }: { idioma?: Idioma }) {
               >
                 {t.salvar}
               </button>
-              {/* Reporte POR CHAVE — nunca "salvo" global quando uma ficou pra trás. */}
+              {/* Reporte POR CHAVE — nunca "salvo" global quando uma ficou pra trás.
+                  #1752: numa região viva (`Alerta`, `role="status"`), com nome
+                  ESTÁVEL. Num `<span>` o leitor de ecrã não anunciava nada: quem
+                  não vê carregava em Salvar sem saber se gravou (WCAG 4.1.3). */}
               {resultado && resultado.falhas.length === 0 && resultado.ok.length > 0 && (
-                <span className="text-sm text-green-600">{t.salvo}</span>
+                <Alerta tom="simples" titulo={t.salvo} rotulo={t.resultadoSalvar} />
               )}
               {resultado && resultado.falhas.length > 0 && (
-                <span className="text-sm text-red-600">
-                  {t.naoGuardado}: {resultado.falhas.map((f) => rotuloDaChave(t, f.chave)).join(", ")}
-                </span>
+                <Alerta
+                  tom="erro"
+                  titulo={`${t.naoGuardado}: ${resultado.falhas.map((f) => rotuloDaChave(t, f.chave)).join(", ")}`}
+                  rotulo={t.resultadoSalvar}
+                />
               )}
             </div>
           </form>
