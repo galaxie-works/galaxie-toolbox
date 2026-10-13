@@ -12,6 +12,9 @@
 
 #![forbid(unsafe_code)]
 
+/// Config do DRENO de auditoria → OpenObserve (#1565 fatia B): endpoint + email + token ingest-only do
+/// cofre (`_FILE`), stream fixo no código (AC4). Parcial aborta o boot; ausente desliga o dreno.
+pub mod auditoria_config;
 pub mod erro;
 /// Carga da config OAuth do AMBIENTE (#1695 fatia 5): `client_id`/`redirect_uri` por env +
 /// `client_secret` do cofre via `_FILE` (nunca no código). Provedor só liga se completo; parcial
