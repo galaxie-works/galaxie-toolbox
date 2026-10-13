@@ -88,20 +88,30 @@ export function ConfigPage({ idioma: explicito }: { idioma?: Idioma }) {
   const valorDe = (item: ItemConfig): ValorConfig =>
     item.chave in patch ? patch[item.chave] : item.valor;
 
+  // #1752: "Carregando…" só na PRIMEIRA carga. O salvar dispara uma releitura, e o
+  // `recarregar` volta a `carregando`: antes isto desmontava o formulário inteiro,
+  // com a região viva do resultado dentro, e ela voltava já com o texto, que é o
+  // padrão que anuncia de forma inconsistente. Medido no runtime (a região deixava
+  // de ser o mesmo nó); o mock instantâneo do teste não o via. Numa releitura fica
+  // o que o servidor devolveu da última vez, até chegar o novo (não é otimismo).
+  const pronto = cfg.estado === "ok" || (cfg.estado === "carregando" && cfg.dados !== null);
+
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 bg-neutral-50 p-6">
       <h1 className="text-2xl font-semibold text-neutral-900">{t.configuracoes}</h1>
       <section className="rounded-2xl border border-neutral-200 bg-white p-6">
-        {cfg.estado === "carregando" && <p className="text-sm text-neutral-500">{t.carregando}</p>}
+        {cfg.estado === "carregando" && cfg.dados === null && (
+          <p className="text-sm text-neutral-500">{t.carregando}</p>
+        )}
         {cfg.estado === "erro" && (
           <button className="text-sm text-red-600 underline" onClick={cfg.recarregar}>
             {t.erroCarregar} — {t.tentarNovamente}
           </button>
         )}
-        {cfg.estado === "ok" && cfg.dados && cfg.dados.length === 0 && (
+        {pronto && cfg.dados && cfg.dados.length === 0 && (
           <p className="text-sm text-neutral-500">{t.semConfig}</p>
         )}
-        {cfg.estado === "ok" && cfg.dados && cfg.dados.length > 0 && (
+        {pronto && cfg.dados && cfg.dados.length > 0 && (
           <form
             className="flex flex-col divide-y divide-neutral-100"
             onSubmit={(e) => {

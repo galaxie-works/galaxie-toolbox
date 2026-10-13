@@ -71,6 +71,12 @@ describe("#1491 ConfigPage", () => {
 
   it("save OK (todas gravadas) → mostra 'Salvo'", async () => {
     vi.mocked(api.salvarConfig).mockResolvedValue({ ok: ["app.notificacoes"], falhas: [] });
+    // LATÊNCIA na leitura: o salvar dispara uma RELEITURA, e com o mock instantâneo
+    // o `carregando` dela nunca pintava. O teste passava enquanto, no runtime, o
+    // formulário (e a região dentro dele) desmontava e voltava já com o texto.
+    vi.mocked(api.obterConfig).mockImplementation(
+      () => new Promise((ok) => setTimeout(() => ok(COM_DESCONHECIDA.map((i) => ({ ...i }))), 5)),
+    );
     const u = userEvent.setup();
     montar("pt-BR");
     const t = DICIONARIOS["pt-BR"];
@@ -80,9 +86,12 @@ describe("#1491 ConfigPage", () => {
     const antes = screen.getByRole("status", { name: t.resultadoSalvar });
     expect(antes.textContent).toBe("");
     await u.click(screen.getByRole("button", { name: t.salvar }));
-    await waitFor(() => expect(antes.textContent).toBe(t.salvo));
-    // …e é o MESMO nó depois: só o conteúdo mudou.
+    // Espera a releitura TERMINAR e assentar, e só então afirma.
+    await waitFor(() => expect(api.obterConfig).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    // …é o MESMO nó, e o texto chegou a ele: só o conteúdo mudou.
     expect(screen.getByRole("status", { name: t.resultadoSalvar })).toBe(antes);
+    expect(antes.textContent).toBe(t.salvo);
   });
 
   it("save PARCIAL → reporta POR CHAVE pelo RÓTULO (nunca a chave crua), e nunca 'Salvo' global (#1588)", async () => {
