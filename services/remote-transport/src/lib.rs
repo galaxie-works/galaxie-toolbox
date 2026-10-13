@@ -14,6 +14,9 @@ pub mod bitrate;
 pub mod bridge;
 pub mod command;
 pub mod control;
+// Resolução do destino do datagrama recebido (#1716) — PURA (std only, sem str0m/OpenSSL); fica no
+// núcleo pra o `cargo test` default exercitar e pra o app (src-tauri) e o driver a PARTILHAREM.
+pub mod destino;
 pub mod frame;
 pub mod input;
 pub mod signaling;
@@ -50,6 +53,7 @@ pub mod driver;
 pub use bitrate::AplicadorBitrate;
 pub use bridge::{FrameBridge, FrameFim};
 pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
+pub use destino::{resolver_destino, rota_local, Destino};
 pub use control::{
     decode, encode_chunk, encode_control, encode_input, CapabilityPolicy, ControlError,
     ControlMessage, Frame,

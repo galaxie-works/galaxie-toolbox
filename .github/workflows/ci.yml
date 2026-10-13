@@ -175,8 +175,13 @@ jobs:
   #     código (session/driver) NÃO fica sem cobertura: é compilado no CI pelo passo
   #     `src-tauri --features remote` (liga vendored+NASM, o caminho provado do
   #     release.yml). Testá-lo standalone quebraria o job.
-  #   • WebRTC ponta-a-ponta (2 máquinas + coturn/TURN, DTLS-SRTP real): precisa de
-  #     rede/coturn; o example `e2e_dummy` (webrtc) não roda no runner.
+  #   • WebRTC ponta-a-ponta ENTRE 2 MÁQUINAS (coturn/TURN, NAT real): precisa de rede/
+  #     coturn. O example `e2e_dummy` (webrtc) não roda no runner (o CI não corre examples).
+  #     ⚠️ Mas o pipe em LOOPBACK (2 peers no mesmo processo, bind `0.0.0.0` como a
+  #     produção, ICE+DTLS reais) ESTÁ coberto: `remote::tests::ac2_caminho_direto_conecta_
+  #     com_bind_0000` corre no `cargo test --features remote` abaixo (#1716 AC2 — guarda
+  #     de regressão do caminho direto; antes o harness vinculava 127.0.0.1 e o bug do
+  #     destino `0.0.0.0:P` escondia-se atrás de verde).
   #   • Captura de tela / encode ao vivo: precisa de GPU/desktop interativo
   #     (windows-capture + Media Foundation) — só o probe #[ignore] cobre.
   #   • remote-system-helper (binário SYSTEM) e o broker Delphi: exigem privilégio
