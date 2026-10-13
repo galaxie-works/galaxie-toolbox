@@ -78,6 +78,9 @@ function borda(
 
     if (opts.negar) return chega(json({ erro: opts.negar }, 403));
 
+    if (url === "/api/v1/me/orgs") {
+      return chega(json([{ org: "acme", papel: "org_admin", estado: opts.suspensa ? "suspensa" : "provisionada" }]));
+    }
     if (url === "/api/v1/orgs/acme/membros") {
       return chega(opts.suspensa ? suspensa() : json(MEMBROS));
     }
@@ -126,9 +129,11 @@ const ativa = (id: string, uid: string, dispositivo: string, capacidades: Capaci
   ativa: true,
 });
 
-async function abrirRemoto(idioma: Idioma = "pt-BR") {
+async function abrirRemoto(idioma: Idioma = "pt-BR", { descobrir = false } = {}) {
   const u = userEvent.setup();
-  render(<AdminOrgPage idioma={idioma} org="acme" />);
+  // `descobrir`: sem a org injetada, a página pergunta ao `/me/orgs`, que é o
+  // caminho de produção, e de onde vem a FAIXA de org suspensa.
+  render(descobrir ? <AdminOrgPage idioma={idioma} /> : <AdminOrgPage idioma={idioma} org="acme" />);
   await u.click(screen.getByRole("button", { name: DICIONARIOS[idioma].remoto }));
   return u;
 }
@@ -253,6 +258,74 @@ describe("#1472 painel do Remote", () => {
     expect(pedidos.some((p) => p.metodo === "POST")).toBe(false);
   });
 
+  it("Personalizado com NENHUMA capacidade ⇒ não há o que conceder, e nada sai (F4 da Lúmen)", async () => {
+    const { pedidos } = borda();
+    const u = await abrirRemoto();
+    const t = DICIONARIOS["pt-BR"];
+    await u.selectOptions(await screen.findByRole("combobox", { name: t.remotoMembro }), "membro-2");
+    await u.type(screen.getByRole("textbox", { name: t.remotoDeviceId }), "pc-bia");
+    await u.click(screen.getByRole("radio", { name: t.remotoAtalho.personalizado }));
+    const form = screen.getByRole("button", { name: t.remotoConceder }).closest("form") as HTMLElement;
+    // Parte de "Só ver": desmarca a única marcada.
+    await u.click(within(form).getByRole("checkbox", { name: t.remotoCapacidade.screen }));
+    const botao = screen.getByRole("button", { name: t.remotoConceder }) as HTMLButtonElement;
+    expect(botao.disabled).toBe(true);
+    await u.click(botao);
+    expect(pedidos.some((p) => p.metodo === "POST")).toBe(false);
+  });
+
+  it("org suspensa pela FAIXA (`/me/orgs`): o formulário e o teto dão lugar ao aviso, sem a tela gaguejar (F5 da Lúmen)", async () => {
+    borda({ suspensa: true, concessoes: [ativa("cr-1", "membro-2", "pc-bia", TODAS)] });
+    await abrirRemoto("pt-BR", { descobrir: true });
+    const t = DICIONARIOS["pt-BR"];
+    // A faixa anuncia a suspensão UMA vez, e as áreas dizem só o que é delas.
+    await waitFor(() => expect(screen.getAllByText(t.orgSuspensaPainel)).toHaveLength(2));
+    expect(screen.getAllByText(t.orgSuspensa)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: t.remotoConceder })).toBeNull();
+    expect(screen.queryByRole("button", { name: t.salvar })).toBeNull();
+    // A lista continua: ela atravessa a suspensão (§4.6).
+    expect(screen.getByText(t.remotoDispositivo.replace("{id}", "pc-bia"))).toBeTruthy();
+  });
+
+  it("as regiões vivas das 3 áreas existem VAZIAS antes de qualquer escrita (gate da Íris)", async () => {
+    borda();
+    await abrirRemoto();
+    const t = DICIONARIOS["pt-BR"];
+    await screen.findByRole("button", { name: t.salvar }); // o teto chegou
+    for (const nome of [t.remotoRevogar, t.remotoConceder, t.resultadoSalvar]) {
+      expect(screen.getByRole("status", { name: nome }).textContent).toBe("");
+    }
+  });
+
+  it("teto: o 'Salvo' chega à MESMA região que já lá estava, depois de a releitura assentar", async () => {
+    const { pedidos } = borda();
+    const u = await abrirRemoto();
+    const t = DICIONARIOS["pt-BR"];
+    const salvar = (await screen.findByRole("button", { name: t.salvar })) as HTMLButtonElement;
+    const antes = screen.getByRole("status", { name: t.resultadoSalvar });
+    await u.click(within(salvar.closest("form") as HTMLElement).getByRole("checkbox", { name: t.remotoCapacidade.audio }));
+    await u.click(salvar);
+    await waitFor(() =>
+      expect(pedidos.filter((p) => p.metodo === "GET" && p.url.endsWith("/remoto/politica")).length).toBe(2),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    // O formulário remonta (`key`) com o que o servidor devolveu; a região, não.
+    expect(screen.getByRole("status", { name: t.resultadoSalvar })).toBe(antes);
+    expect(antes.textContent).toBe(t.salvo);
+  });
+
+  it("conceder recusado: a falha chega à região de 'Conceder acesso' que já existia", async () => {
+    borda({ falharPost: 409 });
+    const u = await abrirRemoto();
+    const t = DICIONARIOS["pt-BR"];
+    await u.selectOptions(await screen.findByRole("combobox", { name: t.remotoMembro }), "membro-2");
+    const antes = screen.getByRole("status", { name: t.remotoConceder });
+    await u.type(screen.getByRole("textbox", { name: t.remotoDeviceId }), "pc-bia");
+    await u.click(screen.getByRole("button", { name: t.remotoConceder }));
+    await waitFor(() => expect(antes.textContent).toBe(t.remotoFalhou));
+    expect(screen.getByRole("status", { name: t.remotoConceder })).toBe(antes);
+  });
+
   it("sem membro escolhido, não há o que conceder", async () => {
     borda();
     const u = await abrirRemoto();
@@ -277,7 +350,8 @@ describe("#1472 painel do Remote", () => {
     await waitFor(() => expect(leiturasDaLista()).toBe(2));
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(screen.getByRole("status", { name: t.remotoFalhou })).toBeTruthy();
+    // A região da área ("Conceder acesso") tem a falha como conteúdo.
+    expect(screen.getByRole("status", { name: t.remotoConceder }).textContent).toBe(t.remotoFalhou);
     expect(screen.getByText(t.remotoSemConcessoes)).toBeTruthy();
     // O que o admin escreveu FICA, para corrigir e tentar de novo.
     expect((screen.getByRole("textbox", { name: t.remotoDeviceId }) as HTMLInputElement).value).toBe("pc-bia");
@@ -293,8 +367,9 @@ describe("#1472 painel do Remote", () => {
     await u.type(screen.getByRole("textbox", { name: t.remotoDeviceId }), "pc-bia");
     await u.click(screen.getByRole("button", { name: t.remotoConceder }));
 
-    expect(await screen.findByRole("status", { name: t.orgSuspensa })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: t.remotoFalhou })).toBeNull();
+    const regiao = screen.getByRole("status", { name: t.remotoConceder });
+    await waitFor(() => expect(regiao.textContent).toContain(t.orgSuspensa));
+    expect(regiao.textContent).not.toContain(t.remotoFalhou);
   });
 
   it("AC2: revogar pede confirmação NOMEADA e, confirmado, a lista mostra 'Revogada'", async () => {

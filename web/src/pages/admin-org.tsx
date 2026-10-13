@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState, type ReactElement } from "react";
 import { Navigate } from "react-router-dom";
 import { Modal } from "@/components/modal";
-import { Alerta } from "@/components/alerta";
+import { Alerta, RegiaoDeStatus } from "@/components/alerta";
 import {
   DICIONARIOS,
   type Idioma,
@@ -631,12 +631,24 @@ function recusaDe(r: ResultadoEscritaRemota): RecusaRemota | null {
   }
 }
 
-function AlertaDaRecusa({ recusa, t }: { recusa: RecusaRemota | null; t: Dicionario }) {
-  if (recusa === "orgSuspensa") {
-    return <Alerta tom="aviso" titulo={t.orgSuspensa} detalhe={t.orgSuspensaPainel} className="mb-4" />;
-  }
-  if (recusa === "erro") return <Alerta tom="erro" titulo={t.remotoFalhou} className="mb-4" />;
+/** O que a recusa mostra, para dentro de uma `RegiaoDeStatus`. */
+function avisoDaRecusa(recusa: RecusaRemota | null, t: Dicionario) {
+  if (recusa === "orgSuspensa") return { tom: "aviso" as const, titulo: t.orgSuspensa, detalhe: t.orgSuspensaPainel };
+  if (recusa === "erro") return { tom: "erro" as const, titulo: t.remotoFalhou };
   return null;
+}
+
+/**
+ * A recusa de uma escrita numa região viva SEMPRE MONTADA (gate da @Íris no #1753,
+ * o mesmo mecanismo do #1752). Antes era um `Alerta` que entrava no DOM já com o
+ * texto, e uma região que nasce com o conteúdo é anunciada de forma inconsistente.
+ * O `rotulo` é o nome ESTÁVEL da área (a ação), não o texto da recusa.
+ */
+function RegiaoDaRecusa({ recusa, t, rotulo }: { recusa: RecusaRemota | null; t: Dicionario; rotulo: string }) {
+  const aviso = avisoDaRecusa(recusa, t);
+  // A margem só quando há o que mostrar: vazia, a região não ocupa espaço. Trocar
+  // a classe não remonta o nó (o que importa para o leitor de ecrã).
+  return <RegiaoDeStatus rotulo={rotulo} aviso={aviso} className={aviso ? "mb-4" : undefined} />;
 }
 
 /** "Dispositivo {id}" — o id é DADO, entra por substituição e não por tradução. */
@@ -750,7 +762,7 @@ function ListaConcessoes({
 
   return (
     <div>
-      <AlertaDaRecusa recusa={recusa} t={t} />
+      <RegiaoDaRecusa recusa={recusa} t={t} rotulo={t.remotoRevogar} />
       {concessoes.length === 0 ? (
         <p className="text-sm text-neutral-500">{t.remotoSemConcessoes}</p>
       ) : (
@@ -933,7 +945,7 @@ function FormConceder({
         if (podeEnviar) void enviar();
       }}
     >
-      <AlertaDaRecusa recusa={recusa} t={t} />
+      <RegiaoDaRecusa recusa={recusa} t={t} rotulo={t.remotoConceder} />
       {/* `htmlFor`, não `<label>` envolvendo: envolvido, o valor do controle
           entra no NOME acessível ("Membro Escolha um membro"), e o leitor de
           ecrã anuncia o rótulo misturado com o dado. */}
@@ -1082,29 +1094,37 @@ function SecaoTeto({
   }
 
   return (
-    <FormTeto
-      // Remonta com o que o SERVIDOR devolveu: o rascunho nunca sobrevive a
-      // uma releitura que o contradiga.
-      key={JSON.stringify(politica.dados)}
-      t={t}
-      inicial={politica.dados}
-      resultado={resultado}
-      aoEditar={() => setResultado(null)}
-      aoSalvar={salvar}
-    />
+    <>
+      <FormTeto
+        // Remonta com o que o SERVIDOR devolveu: o rascunho nunca sobrevive a
+        // uma releitura que o contradiga.
+        key={JSON.stringify(politica.dados)}
+        t={t}
+        inicial={politica.dados}
+        aoEditar={() => setResultado(null)}
+        aoSalvar={salvar}
+      />
+      {/* A região do resultado mora AQUI, fora do formulário: ele remonta (a
+          `key` acima) a cada releitura, e uma região lá dentro nasceria de novo
+          já com o "Salvo", que é o padrão que anuncia de forma inconsistente
+          (gate da @Íris). Aqui ela monta vazia e só o conteúdo muda. */}
+      <RegiaoDeStatus
+        rotulo={t.resultadoSalvar}
+        aviso={resultado === "salvo" ? { tom: "simples", titulo: t.salvo } : avisoDaRecusa(resultado, t)}
+        className="pt-2"
+      />
+    </>
   );
 }
 
 function FormTeto({
   t,
   inicial,
-  resultado,
   aoEditar,
   aoSalvar,
 }: {
   t: Dicionario;
   inicial: PoliticaRemota;
-  resultado: "salvo" | RecusaRemota | null;
   aoEditar: () => void;
   aoSalvar: (p: PoliticaRemota) => Promise<void>;
 }) {
@@ -1127,9 +1147,6 @@ function FormTeto({
         void aoSalvar(rascunho).finally(() => setSalvando(false));
       }}
     >
-      {resultado === "salvo" ? null : (
-        <AlertaDaRecusa recusa={resultado} t={t} />
-      )}
       <fieldset>
         <legend className="mb-1 text-neutral-700">{t.remotoCapacidadesMaximas}</legend>
         <CaixasDeCapacidades
@@ -1172,7 +1189,6 @@ function FormTeto({
         >
           {t.salvar}
         </button>
-        {resultado === "salvo" ? <span className="text-green-700">{t.salvo}</span> : null}
       </div>
     </form>
   );

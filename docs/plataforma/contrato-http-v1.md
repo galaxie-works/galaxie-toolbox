@@ -197,7 +197,8 @@ ainda às sessões remotas** (essa ponte é o #1729). Quem consome tem de dizê-
 | `DELETE` | `/me/remoto/dispositivos/{device_id}` | sim | `ConfigurarProprioDispositivo` | `204` | sem restrição gravada ⇒ `404` (espaço do próprio, não é oráculo) |
 
 > **As formas aninhadas.** `Capabilities` = `screen`, `input`, `fileTransfer`, `clipboard`, `audio`, todos
-> `bool`, em **camelCase** (é o tipo do `remote-net`). Chave ausente = `false`; chave desconhecida ⇒ `400`
+> `bool`, em **camelCase** (o tipo nasce no `galaxie-remote-capabilities`, que é o que a plataforma importa;
+> o `remote-net` reexporta-o). Chave ausente = `false`; chave desconhecida ⇒ `400`
 > (`deny_unknown_fields`). `Sujeito` = `{ tipo: "utilizador", uid }` e `Objeto` = `{ tipo: "dispositivo",
 > id }`: etiquetados por `tipo` para os grupos (D2) entrarem como variante nova sem partir o fio.
 > Os corpos de entrada recusam campo desconhecido (`400 payload_invalido`).
@@ -206,7 +207,9 @@ ainda às sessões remotas** (essa ponte é o #1729). Quem consome tem de dizê-
 > **existência** do device **não** é conferida: a plataforma ainda não tem registo de devices (vem com
 > o #1729). A UI não pode afirmar que o device existe nem que está online.
 >
-> **Erros.** `member` ⇒ `403 negado`; org alheia ⇒ `404`; limite do ARMAZÉM atingido (10 000
+> **Erros.** A autorização corre **antes** do corpo nas rotas de org: um `member` com um corpo inválido
+> recebe `403`, **não** `400`, e a validação não é sondável por quem não pode (o cliente não deve esperar
+> um `400` de quem não gere). `member` ⇒ `403 negado`; org alheia ⇒ `404`; limite do ARMAZÉM atingido (10 000
 > concessões por org, contando as revogadas; 64 restrições por dono) ⇒ `409 conflito`. Não é o teto
 > da política: o `POST` não confere a concessão contra o teto (aceita-a); o corte é a interseção
 > concessão ∩ teto ∩ device do #1683, que só a ponte (#1729) aplica.
