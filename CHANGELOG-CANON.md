@@ -1,6 +1,11 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.23 · 2026-10-13 — §5 fatia parcial = sub-issue (o `Ref` deixa de existir)
+**Emenda (§5, §2 In review).** O `Ref #US` de fatia parcial **não funcionava**. O branch atrelado (`gh issue develop`, que dá à issue a secção Development) faz o GitHub fechar a issue no merge **com ou sem `Closes`**. Medido pelo `closer` do `ClosedEvent`: as PRs #1724 e #1734, só com `Ref`, fecharam o #1716 e o #1484 1–2 s depois do merge (#1743, achado do Alcor). **Regra nova:** `Closes #N` sempre. **Fatia parcial = sub-issue** com card próprio, e a US-mãe vira contentor, como o épico (o DM move-a quando as sub-issues estão 100 % Released). O branch atrelado continua obrigatório. Sai o "`Ref` não move" do §2.
+
+**Decisão do PO** no #1746 (opção A), relatada pela Mira e **ratificada por escrito pelo PO nesta PR**. O ajuste das automações do board ("Pull request linked to issue" muda o Status contra o §2) fica com o PO na UI do Projects (só admin). Fica como rede o detector #1743 (`closed ∧ coluna ∉ {Done, Released}`). Alinhado junto: `AGENTS.md` §4 (base `pre-prod`, que é o default branch, e fatia parcial = sub-issue).
+
 ## v1.22 · 2026-09-01 — §7 roster-JSON: 1 ficheiro por papel, agregados gerados
 **Emenda (§7) — integridade da memória por CONSTRUÇÃO.** O estado dos papéis passa de 1 `ROSTER.md`-log partilhado (11 escritores, clobber silencioso — truncou/erodiu 2× em 24 h) para **1 `roster/<papel>.json` por papel** (schema fechado, `scripts/roster_guarda.py`, fatia 1 #1688). Um dono por ficheiro mata a corrida sem depender de disciplina (o Edit-targeted/CAS fica DEPRECADO). O **`ROSTER.md` e o `sessoes.json` são build-products GERADOS** (hand-edit recusado pela guarda); a **LEITURA é preservada** (boot `cat ROSTER.md`, Porteiro, §7-vigia leem os mesmos ficheiros, agora gerados) — compat-check medido: 11/11 migram limpo, os leitores acham a linha+campos.
 
