@@ -196,14 +196,25 @@ fn valor_cookie(header_cookie: &str, nome: &str) -> Option<String> {
     })
 }
 
+/// Para onde a [`falha_login`] manda o browser: CONSTANTE, relativa, e a mesma para toda a causa de
+/// falha. É o contrato com o FE (#1484): a presença de `login=falhou` dispara o aviso fixo do i18n.
+pub(crate) const DESTINO_FALHA_LOGIN: &str = "/?login=falhou";
+
 /// A falha de login UNIFORME no fio (anti-oráculo — @Altair): TODA falha (state inválido, provedor
 /// recusou, rede, assinatura, claim, infra) devolve a MESMA resposta — 302 pro app SEM cookie de
 /// sessão + expurgo da amarra. O browser não distingue "recusou" de "rede" de "inválido"; a distinção
 /// vive só no LOG (infra loga `warn`).
+///
+/// O destino leva **um valor ÚNICO**, [`DESTINO_FALHA_LOGIN`] (#1484, aprovado pelo @Altair, comment
+/// 6137035527), para o FE poder avisar *"o login não concluiu"* em vez de voltar ao `/login` calado.
+/// Não abre oráculo: só diz o que o cliente já sabe (não recebeu sessão), e é IGUAL para todas as
+/// causas — incluindo "cancelei no provedor". As 3 condições do Altair: é constante e **não reflete
+/// nada** (nem o `error` do provedor, nem o `state`), com o `Location` fixo e relativo; o FE mostra uma
+/// string FIXA do i18n e nunca renderiza a query; e limpa o parâmetro com `history.replaceState`.
 fn falha_login() -> Response {
     Response::builder()
         .status(StatusCode::FOUND)
-        .header(header::LOCATION, "/")
+        .header(header::LOCATION, DESTINO_FALHA_LOGIN)
         .header(header::SET_COOKIE, montar_cookie_amarra_expurgo())
         .body(Body::empty())
         .expect("resposta 302 é sempre construível")
@@ -1608,7 +1619,8 @@ mod tests {
     /// Confere a FALHA DE LOGIN UNIFORME (anti-oráculo): 302 pro app, expurga a amarra, SEM sessão.
     fn e_falha_login(status: StatusCode, headers: &[(String, String)]) {
         assert_eq!(status, StatusCode::FOUND, "falha de login é 302 pro app");
-        assert_eq!(header_de(headers, "location"), Some("/"), "redireciona pro app");
+        // #1484: TODA falha vai para o MESMO destino constante (uniforme = anti-oráculo).
+        assert_eq!(header_de(headers, "location"), Some(DESTINO_FALHA_LOGIN), "redireciona pro app com o sinal único");
         let cookies: Vec<&str> = headers.iter().filter(|(n, _)| n == "set-cookie").map(|(_, v)| v.as_str()).collect();
         assert!(
             cookies.iter().any(|c| c.contains(NOME_COOKIE_AMARRA_OAUTH) && c.contains("Max-Age=0")),
@@ -1642,6 +1654,24 @@ mod tests {
         let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
         let (status, headers, _) = resposta_crua(estado, "", "/api/v1/auth/microsoft/callback?error=access_denied").await;
         e_falha_login(status, &headers);
+    }
+
+    #[tokio::test]
+    async fn falha_de_login_nao_reflete_nada_do_pedido() {
+        // #1484 condição 1 do @Altair: o destino é CONSTANTE. Um `error` e um `state` hostis (qualquer
+        // pessoa monta o link do callback) não podem aparecer no `Location` — senão viravam um
+        // redirect/injeção controlado por quem fabricou o link.
+        let estado = borda_oauth(vec![(Provedor::Microsoft, cfg_provedor("microsoft"))]);
+        let (status, headers, _) = resposta_crua(
+            estado,
+            "",
+            "/api/v1/auth/microsoft/callback?error=%22%3E%3Cscript%3Eevil&state=https%3A%2F%2Fevil.example",
+        )
+        .await;
+        e_falha_login(status, &headers);
+        let destino = header_de(&headers, "location").unwrap();
+        assert!(destino.starts_with('/') && !destino.starts_with("//"), "relativo, nunca outro host");
+        assert!(!destino.contains("evil") && !destino.contains("script"), "nada do pedido refletido: {destino}");
     }
 
     #[tokio::test]
