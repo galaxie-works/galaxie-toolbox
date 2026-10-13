@@ -72,7 +72,9 @@ describe("#1732 — IdiomaProvider", () => {
       </IdiomaProvider>,
     );
     expect(await screen.findByText(DICIONARIOS["pt-BR"].minhaConta)).toBeTruthy();
-    expect(document.documentElement.lang).toBe("pt-BR"); // o <html lang> acompanha (AC3)
+    // O `<html lang>` é escrito num efeito à parte, DEPOIS do commit que pinta o texto:
+    // sob carga (CI) o findByText resolve antes. Espera-se a escrita, não se assume a ordem.
+    await waitFor(() => expect(document.documentElement.lang).toBe("pt-BR")); // AC3
   });
 
   it("sem sessão (401, ex.: /login): fica no navegador e não quebra", async () => {
@@ -84,7 +86,7 @@ describe("#1732 — IdiomaProvider", () => {
     );
     await waitFor(() => expect(api.obterPerfil).toHaveBeenCalled());
     expect(screen.getByText(DICIONARIOS.en.minhaConta)).toBeTruthy();
-    expect(document.documentElement.lang).toBe("en");
+    await waitFor(() => expect(document.documentElement.lang).toBe("en"));
   });
 
   it("o idioma explícito por prop vence o da conta", async () => {
