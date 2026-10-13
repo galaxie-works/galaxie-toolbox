@@ -1,0 +1,18 @@
+# Configuração do Remote guardada na plataforma (#1683, épico #1265): concessões de acesso, teto da org
+# (session-policy) e a restrição que o dono põe no PRÓPRIO device. Crate STANDALONE (padrão da casa
+# em services/*), DOMÍNIO PURO: tipos + resolução + armazéns em memória, sem I/O, sem rede, sem
+# OpenSSL → `cargo test` local e instantâneo. ⚠️ Este crate GUARDA a configuração e NÃO a aplica:
+# quem a aplica às sessões é a ponte #1729 (design do @Altair).
+[package]
+name = "galaxie-platform-remoto"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# UserId/OrgId da fundação (#1469): o sujeito e a org de uma concessão. Reusa, não redefine.
+galaxie-platform-identity = { path = "../platform-identity" }
+# O VOCABULÁRIO das capacidades (#1683 AC6): o tipo do contrato entre quem concede e quem aplica.
+# Usado TAL COMO É — o painel não pode expor um superconjunto do que o ticket carrega.
+galaxie-remote-capabilities = { path = "../remote-capabilities" }
