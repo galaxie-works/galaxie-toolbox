@@ -256,15 +256,23 @@ describe("#1472 painel do Remote", () => {
     expect((screen.getByRole("button", { name: t.remotoConceder }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("recusa do servidor no POST ⇒ a falha aparece, nada é dado como concedido", async () => {
-    borda({ falharPost: 404 }); // ex.: o membro saiu da org entretanto
+  it("recusa do servidor no POST ⇒ a falha aparece e SOBREVIVE à releitura; nada é dado como concedido", async () => {
+    const { pedidos } = borda({ falharPost: 404 }); // ex.: o membro saiu da org entretanto
     const u = await abrirRemoto();
     const t = DICIONARIOS["pt-BR"];
     await u.selectOptions(await screen.findByRole("combobox", { name: t.remotoMembro }), "membro-2");
     await u.type(screen.getByRole("textbox", { name: t.remotoDeviceId }), "pc-bia");
     await u.click(screen.getByRole("button", { name: t.remotoConceder }));
 
-    expect(await screen.findByRole("status", { name: t.remotoFalhou })).toBeTruthy();
+    // Espera a RELEITURA que se segue à escrita terminar e assentar. Sem isto o
+    // teste via a tela no instante entre a recusa e a releitura, e passava mesmo
+    // com a releitura a desmontar o formulário (mutante M6 sobreviveu assim).
+    const leiturasDaLista = () =>
+      pedidos.filter((p) => p.metodo === "GET" && p.url.endsWith("/remoto/concessoes")).length;
+    await waitFor(() => expect(leiturasDaLista()).toBe(2));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.getByRole("status", { name: t.remotoFalhou })).toBeTruthy();
     expect(screen.getByText(t.remotoSemConcessoes)).toBeTruthy();
     // O que o admin escreveu FICA, para corrigir e tentar de novo.
     expect((screen.getByRole("textbox", { name: t.remotoDeviceId }) as HTMLInputElement).value).toBe("pc-bia");
