@@ -3,7 +3,7 @@
 Instruções operacionais para agentes (Claude e afins) que trabalham neste repositório.
 Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paralelo de migração.
 
-> 🧭 **[`WORKFLOW.md`](./WORKFLOW.md) é a FONTE DE VERDADE do processo** (time/raias, hierarquia Épico→US→Task, board/colunas, gate de QA por coluna, regras de PR `Closes`/`Ref` + integração, DoD, release). Ele **supersede as seções de processo deste AGENTS.md (§2–§5)** e qualquer outro doc de workflow. Divergiu → o `WORKFLOW.md` vence. Leia primeiro.
+> 🧭 **[`WORKFLOW.md`](./WORKFLOW.md) é a FONTE DE VERDADE do processo** (time/raias, hierarquia Épico→US→Task, board/colunas, gate de QA por coluna, regras de PR `Closes` (fatia parcial = sub-issue) + integração, DoD, release). Ele **supersede as seções de processo deste AGENTS.md (§2–§5)** e qualquer outro doc de workflow. Divergiu → o `WORKFLOW.md` vence. Leia primeiro.
 
 > 📐 **[`Rules.md`](./Rules.md) é OBRIGATÓRIO** — regras de UI/UX, uso de componentes (não inventar UI), scrollbar/tema/persistência e **custo/eficiência do agente**. Leia antes de produzir UI ou entregar. Violou uma regra de lá → o PO reprova.
 
@@ -132,9 +132,9 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 
 ## 4. Fluxo de desenvolvimento (padrão exemplar)
 - **Assignee `galaxie-works`** em TODA issue criada.
-- **Branch ATRELADA à issue**, criada ANTES de editar, com **`gh issue develop <N> --base feat/bridge-email-client --name fix/N-slug`** (ou GraphQL `createLinkedBranch`). Isso liga a branch à issue na seção **Development**. ⚠️ **`git checkout -b` NÃO atrela** — só nomeia; toda issue precisa da branch aparecendo atrelada nela.
-- **PR atrelado** com `Closes #N` (fecha automático no merge). É adicional ao linked branch — juntos dão rastreabilidade issue ↔ branch ↔ PR.
-- PRs vão pra **`feat/bridge-email-client`**, que **É o default branch do repositório** (confirmado: `gh api repos/... --jq .default_branch`). Portanto **`Closes #<US>` preenche a caixa Development E auto-fecha a US no merge à `feat`** — não é preciso chegar à `main`. Ver [`WORKFLOW.md` §5](./WORKFLOW.md) para quando usar `Ref` em vez de `Closes`.
+- **Branch ATRELADA à issue**, criada ANTES de editar, com **`gh issue develop <N> --base pre-prod --name <papel>/N-slug`** (ou GraphQL `createLinkedBranch`). Isso liga a branch à issue na seção **Development**. ⚠️ **`git checkout -b` NÃO atrela** — só nomeia; toda issue precisa da branch aparecendo atrelada nela.
+- **PR atrelado** com `Closes #N` (fecha automático no merge). É adicional ao linked branch — juntos dão rastreabilidade issue ↔ branch ↔ PR. ⚠️ O branch atrelado fecha a issue no merge **com ou sem `Closes`**, por isso **não existe `Ref`**: **fatia parcial = sub-issue** da US, com card próprio (canon §5, v1.23).
+- PRs vão pra **`pre-prod`**, que **É o default branch do repositório** (confirmar: `gh api repos/... --jq .default_branch`). Portanto **`Closes #N` preenche a caixa Development E auto-fecha a issue no merge à `pre-prod`**; o card **não** fecha o gate, porque quem diz a verdade é a coluna (canon §1.4). Regra canônica: [`TEAM-CANON.md`](./TEAM-CANON.md) §5.
 
   ⚠️ *Até 2026-08-18 esta linha apontava a `main` como default branch e dizia que a issue só fecharia no merge a ela — **factualmente errado** (o default é a `feat`). Quem lesse isso usaria `Closes` achando que não fechava nada, e fechava a US antes do gate de QA. (Achado DOC-02 da auditoria #994, US #1018.)*
 - **NÃO deletar a branch após o merge** (⚠️ NÃO usar `--delete-branch`). O PO exige que a seção **Development** da issue continue mostrando a branch atrelada; deletar apaga esse vínculo (foi motivo de Rejected). Como toda branch é **atrelada a uma issue** (via `gh issue develop`), elas são rastreáveis — não são "órfãs". Só varrer branches genuinamente órfãs (sem issue, pré-era do linked-branch).
