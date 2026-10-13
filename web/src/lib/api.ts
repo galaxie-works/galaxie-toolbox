@@ -65,6 +65,11 @@ const SUPERFICIES = [
   "/orgs/{org}/dominios/{dom}/verificacao",
   "/orgs/{org}/settings",
   "/orgs/{org}/assinatura",
+  // §4.6 Remote (#1472). Só as que o painel consome; as `/me/remoto/*` estão no
+  // contrato, mas nenhuma tela as usa ainda.
+  "/orgs/{org}/remoto/politica",
+  "/orgs/{org}/remoto/concessoes",
+  "/orgs/{org}/remoto/concessoes/{id}",
   "/admin/orgs",
   "/admin/orgs/{org}/provisionamento",
   "/admin/orgs/{org}/suspensao",

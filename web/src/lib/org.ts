@@ -225,8 +225,11 @@ export function minhasOrgs(): Promise<Resultado<OrgDoPrincipal[]>> {
  *
  * Ler o corpo aqui é seguro quanto ao invariante 1 porque **só o `403` passa
  * por esta função**. O `404`, que é o que não pode vazar razão, nunca é lido.
+ *
+ * Exportada para o `remoto.ts` (#1472): as escritas do Remote leem o mesmo
+ * `403`, e uma segunda cópia desta escada divergiria na primeira razão nova.
  */
-async function razaoDo403(resposta: Response): Promise<{ estado: "naoEhAdmin" | "orgSuspensa" }> {
+export async function razaoDo403(resposta: Response): Promise<{ estado: "naoEhAdmin" | "orgSuspensa" }> {
   let corpo: unknown;
   try {
     corpo = await resposta.json();
