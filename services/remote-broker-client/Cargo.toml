@@ -2,7 +2,7 @@
 name = "galaxie-remote-broker-client"
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 
 # Cliente Rust do broker pipe CONGELADO do S7 (`\\.\pipe\Galaxie.Remote.System.v1`).
